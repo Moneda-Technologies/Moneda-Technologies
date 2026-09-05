@@ -22,6 +22,8 @@ def test_authentication_required(client):
 def test_password_login_accepts_username_and_user_id(client):
     response = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "123@Admin"})
     assert response.status_code == 200
+    cookie = "\n".join(response.headers.getlist("Set-Cookie"))
+    assert "session=" in cookie and "HttpOnly" in cookie and "SameSite=Lax" in cookie and "Path=/" in cookie
     assert response.json["data"]["next_step"] == "company-selection"
     me = client.get("/api/v1/me")
     assert me.status_code == 200
@@ -40,6 +42,28 @@ def test_password_login_rejects_invalid_credentials(client):
     response = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "wrong"})
     assert response.status_code == 401
     assert response.json["message"] == "Invalid username or password"
+
+
+def test_logout_invalidates_session(client):
+    assert client.post("/api/v1/auth/demo", json={}).status_code == 200
+    assert client.get("/api/v1/me").status_code == 200
+    assert client.post("/api/v1/auth/logout", json={}).status_code == 200
+    assert client.get("/api/v1/me").status_code == 401
+
+
+def test_otp_does_not_claim_delivery_when_smtp_fails(app, client):
+    class FailingProvider:
+        def send(self, **_kwargs):
+            raise RuntimeError("SMTP authentication rejected")
+
+    app.extensions["otp_service"].email_provider = FailingProvider()
+    user = app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {"email": "demo@moneda.example"})
+    response = client.post("/api/v1/auth/request-otp", json={"email": user["email"], "purpose": "login"})
+    assert response.status_code == 503
+    assert "could not be sent" in response.json["message"].lower()
+    assert app.extensions["store"].count("otp_challenges") == 1
+    challenge = app.extensions["store"].find_one("otp_challenges", {"email": user["email"].lower()})
+    assert challenge["used"] is True
 
 
 def test_demo_session_and_seeded_catalog(authenticated):

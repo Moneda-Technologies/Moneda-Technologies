@@ -15,6 +15,9 @@ class EmailProvider:
     def send(self, *, to: list[str], subject: str, html: str, attachments: list[dict[str, Any]] | None = None, from_address: str | None = None, cc: list[str] | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
+    def send_otp(self, *, to: list[str], html: str) -> dict[str, Any]:
+        return self.send(to=to, subject="Your Moneda verification code", html=html)
+
 
 class EmailService(EmailProvider):
     """Single application boundary for OTP, quotation, and order email delivery."""
@@ -35,6 +38,18 @@ class EmailService(EmailProvider):
         return self.send(to=to, subject=subject, html=html)
 
     def send_order_confirmation(self, *, to: list[str], subject: str, html: str) -> dict[str, Any]:
+        return self.send(to=to, subject=subject, html=html)
+
+    def send_order_team_email(self, *, to: list[str], subject: str, html: str) -> dict[str, Any]:
+        return self.send_order_team_notification(to=to, subject=subject, html=html)
+
+    def send_packing_update(self, *, to: list[str], subject: str, html: str) -> dict[str, Any]:
+        return self.send(to=to, subject=subject, html=html)
+
+    def send_shipment_update(self, *, to: list[str], subject: str, html: str) -> dict[str, Any]:
+        return self.send(to=to, subject=subject, html=html)
+
+    def send_delivery_update(self, *, to: list[str], subject: str, html: str) -> dict[str, Any]:
         return self.send(to=to, subject=subject, html=html)
 
 

@@ -20,13 +20,13 @@ class OtpService:
         self.store = store
         self.email_provider = email_provider
 
-    def request(self, email: str, purpose: str) -> None:
+    def request(self, email: str, purpose: str) -> bool:
         email = email.lower().strip()
         user = self.store.find_one("users", {"email": email})
         if purpose in {"login", "reset"} and not user:
-            return
+            return False
         if purpose == "signup" and user:
-            return
+            return False
         previous = self.store.find_one("otp_challenges", {"email": email, "purpose": purpose, "used": False})
         if previous and previous.get("resend_after") and previous["resend_after"] > utcnow():
             raise OtpError("Please wait before requesting another code")
@@ -40,15 +40,24 @@ class OtpService:
             self.store.update_one("otp_challenges", {"_id": previous["_id"]}, {"used": True})
         row = self.store.insert_one("otp_challenges", challenge)
         try:
-            self.email_provider.send(
-                to=[email], subject="Your Moneda verification code",
+            result = self.email_provider.send_otp(
+                to=[email],
                 html=("<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>"
                       f"<p>Your one-time verification code is <strong>{code}</strong>.</p>"
                       "<p>It expires in 10 minutes. If you did not request it, ignore this email.</p></div>"),
             )
+            self.store.insert_one("email_logs", {
+                "recipient": email, "subject": "Your Moneda verification code", "message_type": f"otp_{purpose}",
+                "status": "sent", "provider_id": result.get("id"), "channel": "email", "created_at": utcnow(),
+            })
         except Exception:
             self.store.update_one("otp_challenges", {"_id": row["_id"]}, {"used": True})
+            self.store.insert_one("email_logs", {
+                "recipient": email, "subject": "Your Moneda verification code", "message_type": f"otp_{purpose}",
+                "status": "failed", "channel": "email", "created_at": utcnow(),
+            })
             raise
+        return True
 
     def verify(self, email: str, purpose: str, code: str) -> dict[str, Any] | None:
         row = self.store.find_one("otp_challenges", {"email": email.lower().strip(), "purpose": purpose, "used": False})

@@ -224,6 +224,7 @@
 .profile-card { align-items: center; display: flex; flex-direction: column; padding: 27px; text-align: center; }
 .profile-avatar { align-items: center; background: #171717; border: 4px solid #eee; border-radius: 50%; color: #fff; display: flex; font-size: 1.3rem; font-weight: 800; height: 80px; justify-content: center; width: 80px; }
 .profile-card h2 { font-size: 1rem; margin: 13px 0 4px; }.profile-card > p { color: var(--text-muted); font-size: .7rem; }
+.profile-signout { border-color: #e6b7b4; color: var(--brand-red); margin-top: 12px; width: 100%; }
 .profile-stat { border-top: 1px solid var(--border); display: flex; font-size: .68rem; justify-content: space-between; margin-top: 16px; padding-top: 11px; width: 100%; }
 .profile-stat-button { background: transparent; border-left: 0; border-right: 0; border-bottom: 0; color: inherit; cursor: pointer; font: inherit; text-align: left; }
 .profile-stat-button:hover { color: var(--brand-red); }

@@ -47,7 +47,9 @@ def password_login():
 def request_otp():
     try:
         payload = OtpRequest.model_validate(request.get_json(silent=True) or {})
-        current_app.extensions["otp_service"].request(str(payload.email), payload.purpose)
+        delivered = current_app.extensions["otp_service"].request(str(payload.email), payload.purpose)
+        if not delivered:
+            return failure("Verification email could not be sent for this account.", status=503)
         audit("otp.request", "user", metadata={"purpose": payload.purpose})
         return success(message="If the account is eligible, a verification code has been sent")
     except ValidationError as exc:
@@ -55,6 +57,7 @@ def request_otp():
     except OtpError as exc:
         return failure(str(exc), status=429)
     except Exception:
+        current_app.logger.exception("OTP email delivery failed")
         return failure("Verification email could not be sent. Check email provider configuration.", status=503)
 
 

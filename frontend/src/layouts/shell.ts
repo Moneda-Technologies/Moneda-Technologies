@@ -5,6 +5,7 @@ import { escapeHtml } from "../utils/dom";
 import { refreshIcons } from "../components/icons";
 import { toast } from "../components/toast";
 import { hasCustomerContext, customerGuardMessage } from "../guards/customer-context";
+import { logout } from "../auth/logout";
 
 interface NavItem { label: string; path: string; icon: string; permission: string; section?: string }
 type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
@@ -89,7 +90,7 @@ export function renderShell(): HTMLElement {
           ${state.customer ? `<label class="compact-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer">${state.customers.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
           <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Currency</span><select id="currency-switcher" aria-label="Select quotation currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
           <div class="notification-control"><button class="icon-button" id="notification-button" aria-label="Notifications" title="Notifications" aria-expanded="false"><i data-lucide="bell"></i><span class="notification-dot" data-notification-count>${state.notificationCount || ""}</span></button><div id="notification-popover" class="notification-popover" role="dialog" aria-label="Notifications" hidden></div></div>
-          <button class="avatar avatar-button" aria-label="Open user menu">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button>
+          <div class="user-menu-control"><button class="avatar avatar-button" id="user-menu-button" aria-label="Open user menu" aria-expanded="false">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button><div id="user-menu" class="user-menu" role="menu" hidden><div class="user-menu-head"><strong>${escapeHtml(state.user?.name ?? "User")}</strong><span>${escapeHtml(state.user?.role_display_name ?? "User")}</span></div><a href="/profile" data-route="/profile" role="menuitem"><i data-lucide="user-round"></i>Profile</a><button type="button" data-open-notifications role="menuitem"><i data-lucide="bell"></i>Notifications</button><div class="user-menu-divider"></div><button type="button" data-sign-out role="menuitem"><i data-lucide="log-out"></i>Sign out</button></div></div>
         </div>
       </header>
       <main id="main-content" tabindex="-1"><div class="page-loading"><span></span><p>Loading workspace…</p></div></main>
@@ -103,6 +104,21 @@ export function renderShell(): HTMLElement {
   });
   root.querySelector(".mobile-menu")?.addEventListener("click", () => root.classList.add("mobile-nav-open"));
   root.querySelector(".mobile-scrim")?.addEventListener("click", () => root.classList.remove("mobile-nav-open"));
+  const userMenuButton = root.querySelector<HTMLButtonElement>("#user-menu-button");
+  const userMenu = root.querySelector<HTMLElement>("#user-menu");
+  const closeUserMenu = () => { if (userMenu) userMenu.hidden = true; userMenuButton?.setAttribute("aria-expanded", "false"); };
+  userMenuButton?.addEventListener("click", (event) => { event.stopPropagation(); if (!userMenu) return; userMenu.hidden = !userMenu.hidden; userMenuButton.setAttribute("aria-expanded", String(!userMenu.hidden)); });
+  userMenu?.addEventListener("click", (event) => event.stopPropagation());
+  document.addEventListener("click", closeUserMenu);
+  window.addEventListener("keydown", (event) => { if (event.key === "Escape") closeUserMenu(); });
+  root.querySelector<HTMLButtonElement>("[data-sign-out]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true; button.innerHTML = '<i data-lucide="loader-circle"></i>Signing out...'; refreshIcons(button);
+    await logout();
+  });
+  root.querySelector<HTMLButtonElement>("[data-open-notifications]")?.addEventListener("click", () => {
+    closeUserMenu(); root.querySelector<HTMLButtonElement>("#notification-button")?.click();
+  });
   root.querySelectorAll<HTMLAnchorElement>("a[data-customer-guard]").forEach((link) => link.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();

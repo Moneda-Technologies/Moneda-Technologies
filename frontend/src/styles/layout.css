@@ -16,6 +16,17 @@
 .sidebar-foot { align-items: center; border-top: 1px solid #2d2d2d; display: flex; gap: 9px; min-height: 70px; padding: 12px 15px; }
 .avatar { align-items: center; background: #efc509; border-radius: 8px; color: #141414; display: flex; flex: 0 0 auto; font-size: .68rem; font-weight: 850; height: 34px; justify-content: center; width: 34px; }
 .avatar-button { border: 0; }
+.user-menu-control { position: relative; }
+.user-menu { background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 34px rgba(20,20,18,.16); padding: 7px; position: absolute; right: 0; top: calc(100% + 9px); width: 240px; z-index: 90; }
+.user-menu[hidden] { display: none; }
+.user-menu-head { border-bottom: 1px solid var(--border); display: grid; gap: 3px; padding: 9px 10px 11px; }
+.user-menu-head strong { font-size: .75rem; }
+.user-menu-head span { color: var(--text-muted); font-size: .62rem; }
+.user-menu a, .user-menu button { align-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--text); cursor: pointer; display: flex; font: inherit; font-size: .7rem; gap: 8px; padding: 9px 10px; text-align: left; width: 100%; }
+.user-menu a:hover, .user-menu button:hover { background: #f3f3f0; }
+.user-menu svg { height: 14px; width: 14px; }
+.user-menu-divider { border-top: 1px solid var(--border); margin: 5px 3px; }
+.user-menu [data-sign-out] { color: var(--brand-red); }
 .sidebar-foot > div:nth-child(2) { min-width: 0; }
 .sidebar-foot strong, .sidebar-foot span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-foot strong { font-size: .71rem; }
