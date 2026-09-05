@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "product_types": [
+    {
+      "id": "blankets",
+      "name": "Printing Blankets",
+      "description": "Configure blanket or underlay dimensions, format and barring.",
+      "icon": "rectangle-horizontal",
+      "sort_order": 1
+    },
+    {
+      "id": "mpacks",
+      "name": "Underpacking",
+      "description": "Configure thickness, press size and underpacking type.",
+      "icon": "layers-3",
+      "sort_order": 2
+    },
+    {
+      "id": "chemicals",
+      "name": "Chemicals & Maintenance",
+      "description": "Select press-room chemicals and complete container quantities.",
+      "icon": "flask-conical",
+      "sort_order": 3
+    }
+  ]
+}

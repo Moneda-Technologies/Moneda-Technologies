@@ -1,0 +1,354 @@
+{
+  "schema_version": 3,
+  "products": [
+    {
+      "id": "image_sunrise",
+      "article_no": "101",
+      "sku": "MT-101",
+      "name": "Image Sunrise",
+      "category_ids": [
+        "mini_offset"
+      ],
+      "application": "Mini Offset / Single Colour / Flood Coating",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "101",
+          "standard_widths_mm": []
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "image_print_master_bl_gr",
+      "article_no": "102",
+      "sku": "MT-102",
+      "name": "Image Print Master BL / GR",
+      "category_ids": [
+        "mini_offset",
+        "commercial_sheetfed"
+      ],
+      "application": "Commercial Sheet Fed up to 4 Colour / 8000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "102",
+          "standard_widths_mm": [
+            690,
+            780,
+            840,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_active_sf",
+      "article_no": "103",
+      "sku": "MT-103",
+      "name": "MTech Active SF",
+      "category_ids": [
+        "mini_offset",
+        "commercial_sheetfed"
+      ],
+      "application": "Commercial Sheet Fed / Conventional Inks / 12000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "103",
+          "standard_widths_mm": [
+            690,
+            780,
+            840,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_active_prime",
+      "article_no": "104",
+      "sku": "MT-104",
+      "name": "MTech Active Prime",
+      "category_ids": [
+        "mini_offset",
+        "commercial_sheetfed",
+        "premium_packaging"
+      ],
+      "application": "Commercial Sheet Fed / Packaging / Conventional Inks / 12000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "104",
+          "standard_widths_mm": [
+            690,
+            780,
+            840,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_magnum_sf",
+      "article_no": "105",
+      "sku": "MT-105",
+      "name": "MTech Magnum SF",
+      "category_ids": [
+        "mini_offset",
+        "commercial_sheetfed",
+        "premium_packaging"
+      ],
+      "application": "Premium Packaging / Conventional and UV Inks / 18000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "105",
+          "standard_widths_mm": [
+            780,
+            915,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_sf_db6",
+      "article_no": "106",
+      "sku": "MT-106",
+      "name": "MTech SF DB6",
+      "category_ids": [
+        "premium_packaging"
+      ],
+      "application": "Premium Packaging / Conventional Inks / 18000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "106",
+          "standard_widths_mm": [
+            2140,
+            2340
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_active_uv",
+      "article_no": "107",
+      "sku": "MT-107",
+      "name": "MTech Active UV",
+      "category_ids": [
+        "premium_packaging"
+      ],
+      "application": "EPDM Sheet Fed / Packaging / UV Inks / 12000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "107",
+          "standard_widths_mm": [
+            690,
+            780,
+            840,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_magnum_uv",
+      "article_no": "108",
+      "sku": "MT-108",
+      "name": "MTech Magnum UV",
+      "category_ids": [
+        "premium_packaging"
+      ],
+      "application": "Premium EPDM Packaging / UV Inks / 18000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "108",
+          "standard_widths_mm": [
+            780,
+            915,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_web_x_press_g3",
+      "article_no": "109/110",
+      "sku": "MT-109-110",
+      "name": "MTech Web X Press G3",
+      "category_ids": [
+        "cold_hot_set"
+      ],
+      "application": "Cold Set & Heat Set Printing / Up to 60000 IPH",
+      "variants": [
+        {
+          "thickness_mm": 1.7,
+          "article_no": "109",
+          "standard_widths_mm": [
+            1600,
+            1770,
+            2160
+          ]
+        },
+        {
+          "thickness_mm": 1.96,
+          "article_no": "110",
+          "standard_widths_mm": [
+            1600,
+            1770,
+            2160
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_web_x_press_g8",
+      "article_no": "109/110",
+      "sku": "MT-109-110",
+      "name": "MTech Web X Press G8",
+      "category_ids": [
+        "cold_set_only"
+      ],
+      "application": "Cold Set Printing / Up to 65000 IPH",
+      "variants": [
+        {
+          "thickness_mm": 1.93,
+          "article_no": "109",
+          "standard_widths_mm": [
+            1600,
+            1770,
+            2160
+          ]
+        },
+        {
+          "thickness_mm": 1.96,
+          "article_no": "110",
+          "standard_widths_mm": [
+            1600,
+            1770,
+            2160
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_kleber_bf",
+      "article_no": "119/114/115",
+      "sku": "MT-119-114-115",
+      "name": "MTech Kleber BF",
+      "category_ids": [
+        "conventional_label_printing"
+      ],
+      "application": "Conventional Label Printing / Computer Stationery / Conventional Inks",
+      "variants": [
+        {
+          "thickness_mm": 0.95,
+          "article_no": "119",
+          "standard_widths_mm": [
+            950,
+            1070
+          ]
+        },
+        {
+          "thickness_mm": 1.05,
+          "article_no": "114",
+          "standard_widths_mm": [
+            1060
+          ]
+        },
+        {
+          "thickness_mm": 1.95,
+          "article_no": "115",
+          "standard_widths_mm": [
+            1060
+          ]
+        }
+      ],
+      "active": true
+    }
+  ],
+  "underlay_products": [
+    {
+      "id": "mtech_underlay_lc",
+      "article_no": "116",
+      "sku": "MT-116",
+      "name": "MTech Underlay LC",
+      "category_ids": [
+        "underlay_premium_underlay"
+      ],
+      "application": "Underlay Blanket",
+      "variants": [
+        {
+          "thickness_mm": 1.0,
+          "article_no": "116",
+          "standard_widths_mm": [
+            1370
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "mtech_underlay_ch",
+      "article_no": "117/119/120",
+      "sku": "MT-117-119-120",
+      "name": "MTech Underlay CH",
+      "category_ids": [
+        "underlay_premium_underlay"
+      ],
+      "application": "Premium Underlay Blanket",
+      "variants": [
+        {
+          "thickness_mm": 0.6,
+          "article_no": "117",
+          "standard_widths_mm": [
+            1070,
+            1660
+          ]
+        },
+        {
+          "thickness_mm": 0.8,
+          "article_no": "119",
+          "standard_widths_mm": [
+            1070,
+            1660
+          ]
+        },
+        {
+          "thickness_mm": 1.0,
+          "article_no": "120",
+          "standard_widths_mm": [
+            1070,
+            1660
+          ]
+        }
+      ],
+      "active": true
+    }
+  ]
+}

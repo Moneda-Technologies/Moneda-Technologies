@@ -1,0 +1,294 @@
+{
+  "schema_version": 3,
+  "currency": "EUR",
+  "products": {
+    "blankets": {
+      "image_sunrise": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 30.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "image_print_master_bl_gr": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 38.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_active_sf": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 42.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_active_prime": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 47.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_magnum_sf": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 53.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_sf_db6": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 63.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_active_uv": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 52.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_magnum_uv": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 58.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_web_x_press_g3": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": null,
+        "variant_prices_eur": {},
+        "status": "pending"
+      },
+      "mtech_web_x_press_g8": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": null,
+        "variant_prices_eur": {},
+        "status": "pending"
+      },
+      "mtech_kleber_bf": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": null,
+        "variant_prices_eur": {
+          "0.95": 61.0,
+          "1.05": 61.0,
+          "1.95": 81.0
+        },
+        "status": "configured"
+      },
+      "mtech_underlay_lc": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 15.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "mtech_underlay_ch": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": null,
+        "variant_prices_eur": {
+          "0.6": 26.0,
+          "0.8": 22.0,
+          "1.0": 22.0
+        },
+        "status": "configured"
+      }
+    },
+    "mpacks": {
+      "mtech-mpack": {
+        "pricing_type": "formula",
+        "unit": "sqm",
+        "price_eur": null,
+        "dimension_prices_eur": {},
+        "status": "pending"
+      },
+      "mark3zet": {
+        "pricing_type": "formula",
+        "unit": "sqm",
+        "price_eur": null,
+        "dimension_prices_eur": {},
+        "status": "pending"
+      },
+      "polipack-aa": {
+        "pricing_type": "formula",
+        "unit": "sqm",
+        "price_eur": null,
+        "dimension_prices_eur": {},
+        "status": "pending"
+      },
+      "polipack-wa": {
+        "pricing_type": "formula",
+        "unit": "sqm",
+        "price_eur": null,
+        "dimension_prices_eur": {},
+        "status": "pending"
+      }
+    },
+    "chemicals": {
+      "wash-cs": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-fc": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-nw": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-gp": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-combi": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-uv": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "wash-uv-s-plus": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-az": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-ap": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-chem-rol": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-hf": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-hf-a-plus": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "fount-nw": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "plate-alu-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "plate-alu-clean-uv": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-calx-de-glazer": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-roll-o-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-mtr-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-anilox-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-fs-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-blanket-clean": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      },
+      "maint-blanket-clean-uv": {
+        "pricing_type": "per_litre",
+        "unit": "litre",
+        "price_eur": null,
+        "package_prices_eur": {},
+        "status": "pending"
+      }
+    }
+  },
+  "note": "Initial master prices only. MongoDB is authoritative after seeding."
+}

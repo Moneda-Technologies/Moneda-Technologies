@@ -1,0 +1,463 @@
+{
+  "schema_version": 3,
+  "products": [
+    {
+      "id": "wash-cs",
+      "article_no": "WASH-CS",
+      "sku": "WASH-CS",
+      "name": "WASH CS",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-cs-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-cs-10l",
+          "label": "10L Can",
+          "size_litre": 10
+        },
+        {
+          "id": "wash-cs-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        },
+        {
+          "id": "wash-cs-200l",
+          "label": "200L Drum",
+          "size_litre": 200
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-fc",
+      "article_no": "WASH-FC",
+      "sku": "WASH-FC",
+      "name": "WASH FC",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-fc-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-fc-10l",
+          "label": "10L Can",
+          "size_litre": 10
+        },
+        {
+          "id": "wash-fc-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        },
+        {
+          "id": "wash-fc-200l",
+          "label": "200L Drum",
+          "size_litre": 200
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-nw",
+      "article_no": "WASH-NW",
+      "sku": "WASH-NW",
+      "name": "WASH NW",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-nw-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-nw-10l",
+          "label": "10L Can",
+          "size_litre": 10
+        },
+        {
+          "id": "wash-nw-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        },
+        {
+          "id": "wash-nw-200l",
+          "label": "200L Drum",
+          "size_litre": 200
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-gp",
+      "article_no": "WASH-GP",
+      "sku": "WASH-GP",
+      "name": "WASH GP",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-gp-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        },
+        {
+          "id": "wash-gp-200l",
+          "label": "200L Drum",
+          "size_litre": 200
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-combi",
+      "article_no": "WASH-COMBI",
+      "sku": "WASH-COMBI",
+      "name": "WASH COMBI",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-combi-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-combi-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-uv",
+      "article_no": "WASH-UV",
+      "sku": "WASH-UV",
+      "name": "WASH UV",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-uv-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-uv-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "wash-uv-s-plus",
+      "article_no": "WASH-UV-S-PLUS",
+      "sku": "WASH-UV-S-PLUS",
+      "name": "WASH UV S+",
+      "category_id": "washing",
+      "description": "Blanket and roller washes.",
+      "packages": [
+        {
+          "id": "wash-uv-s-plus-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "wash-uv-s-plus-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-az",
+      "article_no": "FOUNT-AZ",
+      "sku": "FOUNT-AZ",
+      "name": "FOUNT AZ",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-az-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-az-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-ap",
+      "article_no": "FOUNT-AP",
+      "sku": "FOUNT-AP",
+      "name": "FOUNT AP",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-ap-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-ap-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-chem-rol",
+      "article_no": "FOUNT-CHEM-ROL",
+      "sku": "FOUNT-CHEM-ROL",
+      "name": "CHEM R-OL",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-chem-rol-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-chem-rol-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-hf",
+      "article_no": "FOUNT-HF",
+      "sku": "FOUNT-HF",
+      "name": "FOUNT HF",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-hf-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-hf-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-hf-a-plus",
+      "article_no": "FOUNT-HF-A-PLUS",
+      "sku": "FOUNT-HF-A-PLUS",
+      "name": "FOUNT HF A+",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-hf-a-plus-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-hf-a-plus-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "fount-nw",
+      "article_no": "FOUNT-NW",
+      "sku": "FOUNT-NW",
+      "name": "FOUNT NW",
+      "category_id": "fountain",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press.",
+      "packages": [
+        {
+          "id": "fount-nw-5l",
+          "label": "5L Can",
+          "size_litre": 5
+        },
+        {
+          "id": "fount-nw-25l",
+          "label": "25L Can",
+          "size_litre": 25
+        },
+        {
+          "id": "fount-nw-200l",
+          "label": "200L Drum",
+          "size_litre": 200
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "plate-alu-clean",
+      "article_no": "PLATE-ALU-CLEAN",
+      "sku": "PLATE-ALU-CLEAN",
+      "name": "ALU CLEAN",
+      "category_id": "plate-care",
+      "description": "Cleaners and finishers that extend plate life.",
+      "packages": [
+        {
+          "id": "plate-alu-clean-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "plate-alu-clean-uv",
+      "article_no": "PLATE-ALU-CLEAN-UV",
+      "sku": "PLATE-ALU-CLEAN-UV",
+      "name": "ALU CLEAN UV",
+      "category_id": "plate-care",
+      "description": "Cleaners and finishers that extend plate life.",
+      "packages": [
+        {
+          "id": "plate-alu-clean-uv-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-calx-de-glazer",
+      "article_no": "MAINT-CALX-DE-GLAZER",
+      "sku": "MAINT-CALX-DE-GLAZER",
+      "name": "CALX DE GLAZER",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-calx-de-glazer-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-roll-o-clean",
+      "article_no": "MAINT-ROLL-O-CLEAN",
+      "sku": "MAINT-ROLL-O-CLEAN",
+      "name": "ROLL-O-CLEAN",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-roll-o-clean-1kg",
+          "label": "1KG Pack",
+          "size_litre": 1,
+          "display_unit": "kg"
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-mtr-clean",
+      "article_no": "MAINT-MTR-CLEAN",
+      "sku": "MAINT-MTR-CLEAN",
+      "name": "MT.R CLEAN",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-mtr-clean-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-anilox-clean",
+      "article_no": "MAINT-ANILOX-CLEAN",
+      "sku": "MAINT-ANILOX-CLEAN",
+      "name": "ANILOX CLEAN",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-anilox-clean-5kg",
+          "label": "5 kg Pack",
+          "size_litre": 5
+        },
+        {
+          "id": "maint-anilox-clean-25kg",
+          "label": "25 kg Pack",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-fs-clean",
+      "article_no": "MAINT-FS-CLEAN",
+      "sku": "MAINT-FS-CLEAN",
+      "name": "FS CLEAN",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-fs-clean-25kg",
+          "label": "25 kg Pack",
+          "size_litre": 25
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-blanket-clean",
+      "article_no": "MAINT-BLANKET-CLEAN",
+      "sku": "MAINT-BLANKET-CLEAN",
+      "name": "BLANKET CLEAN",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-blanket-clean-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "maint-blanket-clean-uv",
+      "article_no": "MAINT-BLANKET-CLEAN-UV",
+      "sku": "MAINT-BLANKET-CLEAN-UV",
+      "name": "BLANKET CLEAN UV",
+      "category_id": "maintenance",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly.",
+      "packages": [
+        {
+          "id": "maint-blanket-clean-uv-1kg",
+          "label": "1L Pack",
+          "size_litre": 1
+        }
+      ],
+      "active": true
+    }
+  ]
+}

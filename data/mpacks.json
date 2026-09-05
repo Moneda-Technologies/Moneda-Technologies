@@ -1,0 +1,41 @@
+{
+  "schema_version": 3,
+  "products": [
+    {
+      "id": "mtech-mpack",
+      "article_no": "MTECH-MPACK",
+      "sku": "MTECH-MPACK",
+      "type_id": "mtech-mpack",
+      "description": "Configurable press underpacking material.",
+      "option_set_id": "standard_mpack_options",
+      "active": true
+    },
+    {
+      "id": "mark3zet",
+      "article_no": "MARK3ZET",
+      "sku": "MARK3ZET",
+      "type_id": "mark3zet",
+      "description": "Configurable press underpacking material.",
+      "option_set_id": "standard_mpack_options",
+      "active": true
+    },
+    {
+      "id": "polipack-aa",
+      "article_no": "POLIPACK-AA",
+      "sku": "POLIPACK-AA",
+      "type_id": "polipack-aa",
+      "description": "Configurable press underpacking material.",
+      "option_set_id": "standard_mpack_options",
+      "active": true
+    },
+    {
+      "id": "polipack-wa",
+      "article_no": "POLIPACK-WA",
+      "sku": "POLIPACK-WA",
+      "type_id": "polipack-wa",
+      "description": "Configurable press underpacking material.",
+      "option_set_id": "standard_mpack_options",
+      "active": true
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "categories": [
+    {
+      "id": "mini_offset",
+      "name": "Mini Offset",
+      "sort_order": 1
+    },
+    {
+      "id": "commercial_sheetfed",
+      "name": "Commercial Sheetfed",
+      "sort_order": 2
+    },
+    {
+      "id": "premium_packaging",
+      "name": "Premium Packaging",
+      "sort_order": 3
+    },
+    {
+      "id": "cold_hot_set",
+      "name": "Cold & Hot Set",
+      "sort_order": 4
+    },
+    {
+      "id": "cold_set_only",
+      "name": "Cold Set Only",
+      "sort_order": 5
+    },
+    {
+      "id": "conventional_label_printing",
+      "name": "Conventional Label Printing",
+      "sort_order": 6
+    },
+    {
+      "id": "underlay_premium_underlay",
+      "name": "Underlay / Premium Underlay",
+      "sort_order": 7
+    }
+  ]
+}

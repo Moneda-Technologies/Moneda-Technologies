@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "supported_pricing_units": [
+    "litre",
+    "kg",
+    "package"
+  ],
+  "package_types": [
+    {
+      "id": "can",
+      "name": "Can"
+    },
+    {
+      "id": "drum",
+      "name": "Drum"
+    },
+    {
+      "id": "pack",
+      "name": "Pack"
+    }
+  ],
+  "rules": {
+    "complete_containers": true
+  }
+}

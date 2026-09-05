@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "dimension_units": [
+    "mm",
+    "inch",
+    "m"
+  ],
+  "formats": [
+    {
+      "id": "cut_format",
+      "name": "Cut Format"
+    },
+    {
+      "id": "bar_format",
+      "name": "Bar Format"
+    }
+  ],
+  "machines": [],
+  "rules": {
+    "bar_format_bar_count": 2,
+    "default_bar_ids": [
+      "aluminium",
+      "aluminium"
+    ],
+    "mixed_bar_types_allowed": true,
+    "cut_format_has_bars": false,
+    "cut_format_surcharge_enabled": false
+  }
+}

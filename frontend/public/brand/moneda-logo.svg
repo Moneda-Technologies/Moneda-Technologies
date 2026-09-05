@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 434" role="img" aria-labelledby="title description">
+  <title id="title">Moneda Technologies</title>
+  <desc id="description">Official Moneda Technologies wordmark in black, red and yellow.</desc>
+  <rect width="1920" height="434" fill="#fff"/>
+  <text x="-18" y="231" fill="#000" font-family="Arial, Helvetica, sans-serif" font-size="310" font-weight="400" letter-spacing="31" textLength="1940" lengthAdjust="spacingAndGlyphs">MONEDA</text>
+  <rect x="0" y="286" width="640" height="10" fill="#000"/>
+  <rect x="640" y="286" width="640" height="10" fill="#e3342f"/>
+  <rect x="1280" y="286" width="640" height="10" fill="#f4c400"/>
+  <text x="25" y="424" fill="#000" font-family="Arial, Helvetica, sans-serif" font-size="128" font-weight="400" letter-spacing="41" textLength="1870" lengthAdjust="spacingAndGlyphs">TECHNOLOGIES</text>
+</svg>
+

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "categories": [
+    {
+      "id": "washing",
+      "name": "Washing Solutions",
+      "description": "Blanket and roller washes."
+    },
+    {
+      "id": "fountain",
+      "name": "Fountain Solutions",
+      "description": "Solutions that stabilise water balance and maintain optimal pH on press."
+    },
+    {
+      "id": "plate-care",
+      "name": "Plate Care Products",
+      "description": "Cleaners and finishers that extend plate life."
+    },
+    {
+      "id": "maintenance",
+      "name": "Maintenance Solutions",
+      "description": "Housekeeping fluids that keep circulators, tanks and presses running smoothly."
+    }
+  ]
+}

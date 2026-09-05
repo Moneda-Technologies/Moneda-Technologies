@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "currency": "EUR",
+  "bars": [
+    {
+      "id": "aluminium",
+      "article_no": "121",
+      "name": "Aluminium",
+      "description": "Standard Aluminium Bar",
+      "unit": "bar",
+      "price_eur": 1.88,
+      "status": "configured",
+      "active": true
+    },
+    {
+      "id": "aluminium_heavy",
+      "article_no": "122",
+      "name": "Aluminium Heavy",
+      "description": "Heavy Duty Aluminium Bar",
+      "unit": "bar",
+      "price_eur": 3.25,
+      "status": "configured",
+      "active": true
+    },
+    {
+      "id": "aluminium_heavy_punch",
+      "article_no": "123",
+      "name": "Aluminium Heavy + Punch",
+      "description": "Heavy Duty Aluminium Bar with Punch Holes",
+      "unit": "bar",
+      "price_eur": null,
+      "status": "on_request",
+      "active": true
+    },
+    {
+      "id": "steel",
+      "article_no": "124",
+      "name": "Steel",
+      "description": "Steel Bars",
+      "unit": "bar",
+      "price_eur": 3.35,
+      "status": "configured",
+      "active": true
+    },
+    {
+      "id": "steel_special",
+      "article_no": "125",
+      "name": "Steel Special",
+      "description": "Special Steel Bars",
+      "unit": "bar",
+      "price_eur": null,
+      "status": "on_request",
+      "active": true
+    },
+    {
+      "id": "steel_strip",
+      "article_no": "126",
+      "name": "Steel Strip",
+      "description": "Steel Strip / Flat Steel Bars",
+      "unit": "bar",
+      "price_eur": null,
+      "status": "on_request",
+      "active": true
+    }
+  ]
+}

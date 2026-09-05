@@ -1,0 +1,56 @@
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      - moneda_mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - moneda_redis:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/moneda}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-moneda}
+      DEMO_MODE: "false"
+      RATELIMIT_STORAGE_URI: redis://redis:6379/0
+    ports:
+      - "5005:5005"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - moneda_pdfs:/app/generated/quotations
+      - moneda_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3005:80"
+    depends_on:
+      - backend
+
+volumes:
+  moneda_mongo:
+  moneda_pdfs:
+  moneda_uploads:
+  moneda_redis:

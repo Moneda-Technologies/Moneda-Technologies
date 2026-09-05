@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "rates": [
+    0,
+    5,
+    12,
+    18
+  ],
+  "company_defaults": {
+    "india": {
+      "tax_enabled": true,
+      "rate": 18,
+      "mode": "exclusive"
+    },
+    "international": {
+      "tax_enabled": false,
+      "rate": 0,
+      "mode": "no_tax"
+    }
+  },
+  "product_override_only": true,
+  "quotation_override_allowed": false,
+  "transport_taxable_by_default": false
+}
