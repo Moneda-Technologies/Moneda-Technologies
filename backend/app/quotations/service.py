@@ -9,6 +9,7 @@ from app.pricing.engine import (
 )
 from app.repositories.store import Store, utcnow
 from app.customers.codes import available_customer_code
+from app.customers.metadata import resolve_customer_currency
 
 
 class QuotationService:
@@ -62,7 +63,7 @@ class QuotationService:
         if transport_mode == "by_consignee":
             transport_charges = Decimal("0")
 
-        currency = str(payload.get("currency", customer_company.get("default_currency", "EUR"))).upper()
+        currency = resolve_customer_currency(customer_company, payload.get("currency"), self.store, user)
         rate, rate_meta = self.exchange_rate_service.rate_for(currency)
         cart = self.store.find_one("carts", {"user_id": user["_id"], "customer_id": customer_id})
         if not cart:

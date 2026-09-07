@@ -8,6 +8,7 @@ from app.api.responses import failure, success
 from app.middleware.access import customer_record, current_user, enforce_customer, permission_required
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
+from app.customers.metadata import normalize_customer_profile
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
@@ -17,7 +18,8 @@ FIELDS = {
     "address", "billing_address", "shipping_address", "country", "state", "city", "postal_code",
     "tax_number", "gst_vat_number", "payment_terms", "preferred_currency", "default_currency",
     "default_tax_rate", "default_tax_mode", "tax_enabled", "assigned_salesperson", "credit_limit",
-    "notes", "status", "active",
+    "notes", "status", "active", "continent", "country_code", "country_name", "region",
+    "tax_profile", "custom_payment_days", "payment_terms_display",
 }
 
 
@@ -26,8 +28,9 @@ def _view(row: dict) -> dict:
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("company_name", customer.get("name"))
     customer.setdefault("customer_code", customer_code(customer.get("name", "Customer")))
-    customer.setdefault("default_currency", customer.get("preferred_currency", "EUR"))
-    customer.setdefault("preferred_currency", customer.get("default_currency", "EUR"))
+    preferred_currency = customer.get("preferred_currency") or customer.get("default_currency") or "EUR"
+    customer["preferred_currency"] = preferred_currency
+    customer["default_currency"] = preferred_currency
     customer.setdefault("default_tax_rate", 0)
     customer.setdefault("default_tax_mode", "no_tax")
     customer.setdefault("tax_enabled", False)
@@ -52,6 +55,8 @@ def list_customers():
         if not enforce_customer(requested):
             return failure("Customer access denied", status=403)
         row = customer_record(requested)
+        if row and row.get("is_issuer"):
+            row = None
         rows = [_view(row)] if row else []
     else:
         query = _permitted_query()
@@ -64,7 +69,7 @@ def list_customers():
         page = max(int(request.args.get("page", 1)), 1)
         limit = min(max(int(request.args.get("limit", 25)), 1), 100)
         found, total = store.list("customers", query, page=page, limit=limit, sort="name", direction=1)
-        rows = [_view(row) for row in found]
+        rows = [_view(row) for row in found if not row.get("is_issuer")]
         return success({"items": rows, "pagination": {"page": page, "limit": limit, "total": total}})
     return success({"items": rows, "pagination": {"page": 1, "limit": len(rows), "total": len(rows)}})
 
@@ -79,6 +84,10 @@ def create_customer():
         return failure("Customer company name is required", status=422)
     payload["name"] = name
     payload["company_name"] = name
+    normalized, error = normalize_customer_profile(payload)
+    if error:
+        return failure(error, status=422)
+    payload = normalized or payload
     store = current_app.extensions["store"]
     payload["customer_code"] = available_customer_code(store, name)
     payload.setdefault("status", "active")
@@ -130,6 +139,10 @@ def update_customer(customer_id: str):
     if "name" in changes:
         changes["company_name"] = str(changes["name"]).strip()
         # Customer codes are stable identifiers and are not renamed with the display name.
+    normalized, error = normalize_customer_profile(changes, existing)
+    if error:
+        return failure(error, status=422)
+    changes = normalized or changes
     if changes.get("status") and changes["status"] not in {"active", "inactive", "archived"}:
         return failure("Invalid customer status", status=422)
     if changes.get("preferred_currency") and changes["preferred_currency"] not in {"EUR", "USD", "INR"}:

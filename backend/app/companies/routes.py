@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, request, session
 
 from app.api.responses import failure, success
 from app.customers.codes import available_customer_code, customer_code
+from app.customers.metadata import normalize_customer_profile
 from app.middleware.access import customer_record, enforce_customer, permission_required
 from app.services.audit import audit
 
@@ -19,7 +20,9 @@ def _customer_view(row: dict) -> dict:
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("company_name", customer.get("name"))
     customer.setdefault("customer_code", customer_code(customer.get("name", "Customer")))
-    customer.setdefault("default_currency", customer.get("preferred_currency", "EUR"))
+    preferred_currency = customer.get("preferred_currency") or customer.get("default_currency") or "EUR"
+    customer["preferred_currency"] = preferred_currency
+    customer["default_currency"] = preferred_currency
     customer.setdefault("default_tax_rate", 0)
     customer.setdefault("default_tax_mode", "no_tax")
     customer.setdefault("tax_enabled", False)
@@ -40,7 +43,7 @@ def _list_customers(term: str = "") -> tuple[list[dict], int]:
     if term:
         query["$or"] = [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]
     rows, total = store.list("customers", query, limit=500, sort="name", direction=1)
-    return [_customer_view(row) for row in rows], total
+    return [_customer_view(row) for row in rows if not row.get("is_issuer")], len([row for row in rows if not row.get("is_issuer")])
 
 
 @bp.get("")
@@ -65,6 +68,10 @@ def search_customer_companies():
 def select_customer():
     payload = request.get_json(silent=True) or {}
     customer_id = str(payload.get("customer_id") or payload.get("customer_company_id") or payload.get("company_id") or "").strip()
+    if request.path.endswith("/select-customer"):
+        selected_record = customer_record(customer_id)
+        if selected_record and selected_record.get("is_issuer"):
+            return failure("Moneda Technologies is the issuer, not a customer", status=403)
     if not customer_id or not enforce_customer(customer_id):
         return failure("Customer access denied", status=403)
     # Only active_customer_id is canonical. Legacy keys are mirrored for old clients.
@@ -95,6 +102,10 @@ def create_customer_compat():
     customer = {key: value for key, value in payload.items() if key not in {"_id", "company_id", "customer_company_id"}}
     customer["name"] = name
     customer["company_name"] = name
+    normalized, error = normalize_customer_profile(customer)
+    if error:
+        return failure(error, status=422)
+    customer = normalized or customer
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("preferred_currency", "EUR")
     customer.setdefault("default_currency", customer["preferred_currency"])
@@ -119,10 +130,15 @@ def update_customer_compat(company_id: str):
         return failure("Customer access denied", status=403)
     store = current_app.extensions["store"]
     collection = "customers" if store.find_one("customers", {"_id": company_id}) else "companies"
-    allowed = {"name", "company_name", "legal_name", "logo", "address", "country", "state", "city", "postal_code", "phone", "email", "tax_number", "default_currency", "preferred_currency", "region", "timezone", "tax_jurisdiction", "tax_enabled", "default_tax_rate", "default_tax_mode", "transport_taxable", "quotation_settings", "communication_settings", "active", "status", "contact_name", "notes"}
+    allowed = {"name", "company_name", "legal_name", "logo", "address", "country", "country_code", "country_name", "continent", "state", "city", "postal_code", "phone", "email", "tax_number", "gst_vat_number", "tax_profile", "payment_terms", "custom_payment_days", "payment_terms_display", "default_currency", "preferred_currency", "region", "timezone", "tax_jurisdiction", "tax_enabled", "default_tax_rate", "default_tax_mode", "transport_taxable", "quotation_settings", "communication_settings", "active", "status", "contact_name", "notes"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
     if "name" in changes and "company_name" not in changes:
         changes["company_name"] = changes["name"]
+    existing = current_app.extensions["store"].find_one(collection, {"_id": company_id}) or {}
+    normalized, error = normalize_customer_profile(changes, existing)
+    if error:
+        return failure(error, status=422)
+    changes = normalized or changes
     row = store.update_one(collection, {"_id": company_id}, changes)
     if not row:
         return failure("Customer not found", status=404)

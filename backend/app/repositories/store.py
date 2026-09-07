@@ -15,12 +15,24 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def ensure_utc(value: datetime | None) -> datetime | None:
+    """Normalize MongoDB/PyMongo datetimes to timezone-aware UTC values."""
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class Store(Protocol):
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]: ...
     def find_one(self, collection: str, query: dict[str, Any]) -> dict[str, Any] | None: ...
     def insert_one(self, collection: str, document: dict[str, Any]) -> dict[str, Any]: ...
     def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False) -> dict[str, Any] | None: ...
+    def unset_many(self, collection: str, query: dict[str, Any], fields: list[str]) -> int: ...
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool: ...
     def count(self, collection: str, query: dict[str, Any] | None = None) -> int: ...
     def next_counter(self, name: str) -> int: ...
@@ -41,6 +53,8 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
         for part in key.split("."):
             actual = actual.get(part) if isinstance(actual, dict) else None
         if isinstance(expected, dict):
+            if "$exists" in expected and (actual is not None) != bool(expected["$exists"]):
+                return False
             if "$in" in expected and actual not in expected["$in"]:
                 return False
             if "$ne" in expected and actual == expected["$ne"]:
@@ -101,6 +115,17 @@ class MemoryStore:
                     rows.pop(index)
                     return True
         return False
+
+    def unset_many(self, collection: str, query: dict[str, Any], fields: list[str]) -> int:
+        changed = 0
+        with self._lock:
+            for row in self._data.setdefault(collection, []):
+                if _matches(row, query):
+                    for field in fields:
+                        row.pop(field, None)
+                    row["updated_at"] = utcnow()
+                    changed += 1
+        return changed
 
     def count(self, collection: str, query: dict[str, Any] | None = None) -> int:
         return self.list(collection, query, limit=100_000)[1]
@@ -186,6 +211,10 @@ class MongoStore:
             query, {"$set": {**changes, "updated_at": utcnow()}}, upsert=upsert,
             return_document=ReturnDocument.AFTER,
         )
+
+    def unset_many(self, collection: str, query: dict[str, Any], fields: list[str]) -> int:
+        result = self.db[collection].update_many(query, {"$unset": {field: "" for field in fields}})
+        return int(result.modified_count)
 
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool:
         return self.db[collection].delete_one(query).deleted_count == 1

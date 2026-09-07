@@ -66,6 +66,23 @@ class Config:
     ZOHO_OAUTH_REDIRECT_URI = os.getenv("ZOHO_OAUTH_REDIRECT_URI", "http://localhost:5005/api/v1/integrations/zoho/callback")
     ZOHO_MAIL_API_BASE_URL = os.getenv("ZOHO_MAIL_API_BASE_URL", "")
     ZOHO_FROM_ADDRESS = os.getenv("ZOHO_FROM_ADDRESS", "business@monedatechnologies.com")
+    # Sender identities are aliases on the single Zoho OAuth mailbox. Keep the
+    # purpose mapping here so application workflows never hardcode addresses.
+    MAIL_OTP_FROM = os.getenv("MAIL_OTP_FROM", "otp@monedatechnologies.com")
+    MAIL_OTP_FROM_NAME = os.getenv("MAIL_OTP_FROM_NAME", "Moneda OTP")
+    MAIL_QUOTATION_FROM = os.getenv("MAIL_QUOTATION_FROM", "quotations@monedatechnologies.com")
+    MAIL_QUOTATION_FROM_NAME = os.getenv("MAIL_QUOTATION_FROM_NAME", "Moneda Quotations")
+    MAIL_ORDER_FROM = os.getenv("MAIL_ORDER_FROM", "orders@monedatechnologies.com")
+    MAIL_ORDER_FROM_NAME = os.getenv("MAIL_ORDER_FROM_NAME", "Moneda Orders")
+    MAIL_GENERAL_FROM = os.getenv("MAIL_GENERAL_FROM", ZOHO_FROM_ADDRESS)
+    MAIL_GENERAL_FROM_NAME = os.getenv("MAIL_GENERAL_FROM_NAME", "Moneda Technologies")
+    MAIL_CUSTOMER_CC_BUSINESS = os.getenv("MAIL_CUSTOMER_CC_BUSINESS", "business@monedatechnologies.com")
+    MAIL_CUSTOMER_CC_VBHUTA = os.getenv("MAIL_CUSTOMER_CC_VBHUTA", "vbhuta@monedatechnologies.com")
+    MAIL_CUSTOMER_CC_VBHUTA_ENABLED = env_bool("MAIL_CUSTOMER_CC_VBHUTA_ENABLED", False)
+    MAIL_CUSTOMER_CC_ADMIN = os.getenv("MAIL_CUSTOMER_CC_ADMIN", "admin@monedatechnologies.com")
+    MAIL_CUSTOMER_CC_ADMIN_ENABLED = env_bool("MAIL_CUSTOMER_CC_ADMIN_ENABLED", False)
+    MAIL_CUSTOMER_BCC_OPERATIONS = os.getenv("MAIL_CUSTOMER_BCC_OPERATIONS", "operations@chemo.in")
+    MAIL_CUSTOMER_BCC_OPERATIONS_ENABLED = env_bool("MAIL_CUSTOMER_BCC_OPERATIONS_ENABLED", True)
     # A stable, deployment-only key is preferred. SECRET_KEY is the secure
     # backwards-compatible fallback so existing deployments can connect.
     INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY") or SECRET_KEY

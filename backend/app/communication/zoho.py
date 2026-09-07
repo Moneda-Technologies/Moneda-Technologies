@@ -15,7 +15,13 @@ from urllib.parse import urlencode, urlparse
 from cryptography.fernet import Fernet, InvalidToken
 import requests
 
-from app.communication.email import EmailDeliveryError, EmailProvider, email_diagnostic_id
+from app.communication.email import (
+    EmailDeliveryError,
+    EmailProvider,
+    CustomerRecipientRegistry,
+    EmailSenderRegistry,
+    email_diagnostic_id,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +109,8 @@ class ZohoMailOAuth:
         self.client_secret = str(config.get("ZOHO_CLIENT_SECRET") or "").strip()
         self.redirect_uri = str(config.get("ZOHO_OAUTH_REDIRECT_URI") or "").strip()
         self.from_address = str(config.get("ZOHO_FROM_ADDRESS") or "business@monedatechnologies.com").strip().lower()
+        self.sender_registry = EmailSenderRegistry(config)
+        self.recipient_registry = CustomerRecipientRegistry(config)
         self._encryption_secret = str(config.get("INTEGRATION_ENCRYPTION_KEY") or config.get("SECRET_KEY") or "").strip()
         self._token_lock = threading.RLock()
         self._access_token: str | None = None
@@ -193,7 +201,7 @@ class ZohoMailOAuth:
         suffix = _host_suffix(urlparse(self.accounts_base_url).hostname or "") or ".in"
         return f"https://{MAIL_HOST_BY_SUFFIX[suffix]}"
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, refresh_aliases: bool = False) -> dict[str, Any]:
         row = self.integration() or {}
         diagnostic_id = integration_diagnostic_id()
         try:
@@ -204,6 +212,15 @@ class ZohoMailOAuth:
             configuration_error = {"code": exc.code, "stage": exc.stage, "diagnostic_id": exc.diagnostic_id}
         account_id = self._account_id()
         connected = bool(self.configured() and has_refresh_token and account_id and row.get("status") != "not_connected")
+        sender_validation_error = None
+        if connected and refresh_aliases:
+            try:
+                self.refresh_sender_identities(diagnostic_id=diagnostic_id)
+                row = self.integration() or row
+            except ZohoIntegrationError as exc:
+                sender_validation_error = {
+                    "code": exc.code, "stage": exc.stage, "diagnostic_id": exc.diagnostic_id,
+                }
         last_error = row.get("last_error") or configuration_error
         state = "connected" if connected else "error" if last_error else "not_connected"
         account_email = str(row.get("account_email") or row.get("from_address") or self.from_address or "")
@@ -226,6 +243,9 @@ class ZohoMailOAuth:
             "api_domain": api_domain,
             "api_domain_status": api_domain_state,
             "scopes": list(row.get("scopes") or ZOHO_SCOPES),
+            "email_senders": self.sender_identities(row),
+            "customer_recipient_policy": self.recipient_registry.display(),
+            "sender_validation_error": sender_validation_error,
             "connected_at": row.get("connected_at"),
             "updated_at": row.get("updated_at"),
             "last_error": last_error,
@@ -438,6 +458,7 @@ class ZohoMailOAuth:
             "provider": "zoho_mail_api", "status": "connected",
             "refresh_token_encrypted": self._cipher().encrypt(refresh_token), "refresh_token": None,
             "account_email": account["account_email"], "account_id": account["account_id"],
+            "allowed_from_addresses": account["allowed_from_addresses"],
             "from_address": self.from_address, "api_domain": mail_api_base,
             "oauth_api_domain": oauth_api_domain or None, "scopes": list(ZOHO_SCOPES),
             "connected_at": now, "last_error": None,
@@ -451,7 +472,7 @@ class ZohoMailOAuth:
         return self.status()
 
     def lookup_account(self, access_token: str, *, mail_api_base: str | None = None,
-                       diagnostic_id: str | None = None) -> dict[str, str]:
+                       diagnostic_id: str | None = None) -> dict[str, Any]:
         diagnostic_id = diagnostic_id or integration_diagnostic_id()
         api_base = mail_api_base or self.mail_api_base_url()
         endpoint = f"{api_base}/api/accounts"
@@ -516,13 +537,70 @@ class ZohoMailOAuth:
                 "ZOHO_ACCOUNT_LOOKUP_ERROR", "Zoho account lookup did not return an account ID",
                 stage="account_lookup", diagnostic_id=diagnostic_id,
             )
-        return {"account_id": account_id, "account_email": self._row_email(selected)}
+        allowed_from_addresses = sorted(self._row_emails(selected))
+        return {
+            "account_id": account_id,
+            "account_email": self._row_email(selected),
+            "allowed_from_addresses": allowed_from_addresses,
+        }
 
-    @staticmethod
-    def _row_email(row: dict[str, Any]) -> str:
+    def refresh_sender_identities(self, *, access_token: str | None = None,
+                                  diagnostic_id: str | None = None) -> dict[str, Any]:
+        diagnostic_id = diagnostic_id or integration_diagnostic_id()
+        token = access_token or self.access_token_with_source()[0]
+        account = self.lookup_account(
+            token, mail_api_base=self.mail_api_base_url(), diagnostic_id=diagnostic_id,
+        )
+        self.store.update_one("integrations", {"_id": INTEGRATION_ID}, {
+            "account_id": account["account_id"],
+            "account_email": account["account_email"],
+            "allowed_from_addresses": account["allowed_from_addresses"],
+            "sender_identities_checked_at": datetime.now(timezone.utc),
+        }, upsert=True)
+        return account
+
+    def allowed_senders(self, row: dict[str, Any] | None = None) -> set[str]:
+        integration = row if row is not None else (self.integration() or {})
+        values = integration.get("allowed_from_addresses") or []
+        allowed = {
+            str(value or "").strip().lower()
+            for value in values if "@" in str(value or "")
+        }
+        for key in ("account_email", "from_address"):
+            value = str(integration.get(key) or "").strip().lower()
+            if "@" in value:
+                allowed.add(value)
+        return allowed
+
+    def sender_identities(self, row: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        integration = row if row is not None else (self.integration() or {})
+        allowed = self.allowed_senders(integration)
+        has_verified_metadata = bool(integration.get("allowed_from_addresses"))
+        return [
+            {
+                "purpose": purpose,
+                "from_name": identity["from_name"],
+                "address": identity["from_address"],
+                "available": identity["from_address"] in allowed if has_verified_metadata else None,
+            }
+            for purpose, identity in self.sender_registry.identity_items()
+        ]
+
+    def _row_email(self, row: dict[str, Any]) -> str:
         emails = ZohoMailOAuth._row_emails(row)
         primary = str(row.get("primaryEmailAddress") or row.get("mailboxAddress") or row.get("incomingUserName") or "").strip().lower()
-        return primary if primary in emails else next(iter(emails), primary)
+        if primary in emails:
+            return primary
+        email_address = row.get("emailAddress")
+        if isinstance(email_address, list):
+            for item in email_address:
+                if isinstance(item, dict) and item.get("isPrimary") is True:
+                    candidate = str(item.get("mailId") or item.get("email") or item.get("emailAddress") or "").strip().lower()
+                    if candidate in emails:
+                        return candidate
+        if self.from_address in emails:
+            return self.from_address
+        return sorted(emails)[0] if emails else primary
 
     @staticmethod
     def _row_emails(row: dict[str, Any]) -> set[str]:
@@ -658,6 +736,7 @@ class ZohoMailOAuth:
             "provider": "zoho_mail_api", "status": "not_connected",
             "refresh_token_encrypted": None, "refresh_token": None, "account_id": None,
             "account_email": self.from_address, "from_address": self.from_address,
+            "allowed_from_addresses": [], "sender_identities_checked_at": None,
             "api_domain": None, "oauth_api_domain": None, "scopes": [],
             "connected_at": None, "disconnected_at": datetime.now(timezone.utc), "last_error": None,
         }, upsert=True)
@@ -729,7 +808,7 @@ class ZohoMailApiProvider(EmailProvider):
     def send(self, *, to: list[str], subject: str, html: str,
              attachments: list[dict[str, Any]] | None = None, from_address: str | None = None,
              cc: list[str] | None = None, bcc: list[str] | None = None,
-             request_id: str | None = None) -> dict[str, Any]:
+             from_name: str | None = None, request_id: str | None = None) -> dict[str, Any]:
         diagnostic_id = email_diagnostic_id()
         trace_id = request_id or "email-untracked"
         checks: list[dict[str, str]] = []
@@ -755,20 +834,24 @@ class ZohoMailApiProvider(EmailProvider):
                     stage="oauth_configuration", diagnostic_id=diagnostic_id,
                 )
             passed("oauth")
-            sender = str(integration_status.get("account_email") or self.oauth.from_address).strip().lower()
-            requested_sender = str(from_address or sender).strip().lower()
-            if not to or not sender:
+            requested_sender = str(from_address or self.oauth.sender_registry.resolve("general")).strip().lower()
+            resolved_identity = self.oauth.sender_registry.resolve_identity(
+                self.oauth.sender_registry.purpose_for(requested_sender) or "general"
+            )
+            sender_name = str(from_name or resolved_identity["from_name"]).strip()
+            if not to or not requested_sender:
                 raise ZohoIntegrationError(
                     "OAUTH_CONFIGURATION_ERROR", "Zoho sender and recipient are required",
                     stage="configuration", diagnostic_id=diagnostic_id,
                 )
-            if requested_sender != sender or sender != self.oauth.from_address:
-                raise ZohoIntegrationError(
-                    "SENDER_INVALID", "The requested sender is not the authenticated Zoho mailbox",
-                    stage="sender", diagnostic_id=diagnostic_id,
-                )
+            integration = self.oauth.integration() or {}
+            allowed_senders = self.oauth.allowed_senders(integration)
+            has_sender_metadata = bool(integration.get("allowed_from_addresses"))
+            if has_sender_metadata and requested_sender not in allowed_senders:
+                raise self._sender_validation_error(requested_sender, diagnostic_id)
             token, token_source = self.oauth.access_token_with_source()
             passed("token_refresh", source=token_source)
+            passed("zoho_token_refresh", source=token_source)
             account_id = self.oauth._account_id()
             if not account_id:
                 raise ZohoIntegrationError(
@@ -776,10 +859,19 @@ class ZohoMailApiProvider(EmailProvider):
                     stage="account_lookup", diagnostic_id=diagnostic_id,
                 )
             passed("account_id")
+            if not has_sender_metadata:
+                account = self.oauth.refresh_sender_identities(
+                    access_token=token, diagnostic_id=diagnostic_id,
+                )
+                account_id = str(account["account_id"])
+                allowed_senders = set(account["allowed_from_addresses"])
+            if requested_sender not in allowed_senders:
+                raise self._sender_validation_error(requested_sender, diagnostic_id)
+            passed("email_alias_validation")
             passed("sender")
             api_base = self.oauth.mail_api_base_url()
             payload: dict[str, Any] = {
-                "fromAddress": sender, "toAddress": ",".join(to), "subject": subject,
+                "fromAddress": requested_sender, "toAddress": ",".join(to), "subject": subject,
                 "content": html, "mailFormat": "html", "encoding": "UTF-8",
             }
             if cc:
@@ -811,12 +903,14 @@ class ZohoMailApiProvider(EmailProvider):
                 diagnostic_id=diagnostic_id,
             )
             passed("message_submission")
+            passed("email_submission_success")
             data = result.get("data") if isinstance(result.get("data"), dict) else {}
             provider_id = str(data.get("messageId") or data.get("mailId") or diagnostic_id)
             return {
                 "id": f"zoho-{provider_id}", "diagnostic_id": diagnostic_id,
                 "stage": "message_submission", "provider": "zoho_mail_api",
-                "from": sender, "to": to, "subject": subject, "checks": checks,
+                "from": requested_sender, "from_name": sender_name, "to": to,
+                "cc": cc or [], "bcc": bcc or [], "subject": subject, "checks": checks,
             }
         except ZohoIntegrationError as exc:
             logger.error(
@@ -826,6 +920,15 @@ class ZohoMailApiProvider(EmailProvider):
             raise EmailDeliveryError(
                 str(exc), stage=exc.stage, diagnostic_id=diagnostic_id, error_code=exc.code,
             ) from exc
+
+    def _sender_validation_error(self, requested_sender: str, diagnostic_id: str) -> ZohoIntegrationError:
+        purpose = self.oauth.sender_registry.purpose_for(requested_sender)
+        return ZohoIntegrationError(
+            self.oauth.sender_registry.unavailable_code(purpose) if purpose else "SENDER_INVALID",
+            f"The configured {purpose} sender is not available on the authenticated Zoho mailbox"
+            if purpose else "The requested sender is not a configured Moneda email identity",
+            stage="email_alias_validation", diagnostic_id=diagnostic_id,
+        )
 
     def _upload_attachment(self, access_token: str, account_id: str, item: dict[str, Any],
                            trace_id: str, diagnostic_id: str) -> dict[str, Any]:

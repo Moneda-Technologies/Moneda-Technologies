@@ -30,7 +30,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
   const customer = customers.find((item) => item._id === selectedId || item.customer_id === selectedId) ?? null;
   const customerCompany = customer as unknown as Company | null;
   if (customer && session.active_customer_id !== (customer.customer_id ?? customer._id)) await customerCompanyApi.select(customer.customer_id ?? customer._id);
-  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.default_currency ?? customer?.preferred_currency ?? session.user.currency_preference ?? "EUR" });
+  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR" });
   if (location.pathname === "/quotation-preview") {
     document.body.classList.add("print-preview-mode");
     app.replaceChildren(await quotationPreviewPage());

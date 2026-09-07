@@ -28,7 +28,7 @@ async function selectCustomerCompany(customerCompany: Customer): Promise<void> {
   const recent = [customerId, ...recentIds().filter((id) => id !== customerId)].slice(0, 4);
   localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
   localStorage.setItem(SELECTED_KEY, customerId);
-  appStore.set({ customer: customerCompany, activeCustomerId: customerId, customerCompany: customerCompany as unknown as Company, company: customerCompany as unknown as Company, currency: customerCompany.default_currency ?? customerCompany.preferred_currency ?? "EUR", cartCount: 0 });
+  appStore.set({ customer: customerCompany, activeCustomerId: customerId, customerCompany: customerCompany as unknown as Company, company: customerCompany as unknown as Company, currency: customerCompany.preferred_currency ?? customerCompany.default_currency ?? "EUR", cartCount: 0 });
   window.dispatchEvent(new CustomEvent("moneda:customer-selected", { detail: customerId }));
   window.dispatchEvent(new CustomEvent("moneda:customer-company-selected", { detail: customerId }));
   window.dispatchEvent(new CustomEvent("moneda:company-selected", { detail: customerId }));
@@ -38,7 +38,7 @@ async function selectCustomerCompany(customerCompany: Customer): Promise<void> {
 function customerCompanyCard(customerCompany: Customer, recent: boolean, selected: boolean): string {
   const id = customerCompany.customer_id ?? customerCompany._id;
   const name = customerCompany.company_name ?? customerCompany.name;
-  return `<button class="company-select-card ${selected ? "selected" : ""}" data-company="${escapeHtml(id)}" role="option" aria-selected="${selected}"><span class="company-logo-mini">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><span class="company-select-copy"><small>${recent ? "Recently used customer" : "Available customer"}</small><strong>${escapeHtml(name)}</strong><span>${escapeHtml(customerCompany.contact_name ?? customerCompany.email ?? customerCompany.country ?? "Customer details pending")}</span></span><span class="company-currency">${escapeHtml(customerCompany.default_currency ?? customerCompany.preferred_currency ?? "EUR")}</span><i data-lucide="arrow-right"></i></button>`;
+  return `<button class="company-select-card ${selected ? "selected" : ""}" data-company="${escapeHtml(id)}" role="option" aria-selected="${selected}"><span class="company-logo-mini">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><span class="company-select-copy"><small>${recent ? "Recently used customer" : "Available customer"}</small><strong>${escapeHtml(name)}</strong><span>${escapeHtml(customerCompany.contact_name ?? customerCompany.email ?? customerCompany.country ?? "Customer details pending")}</span></span><span class="company-currency">${escapeHtml(customerCompany.preferred_currency ?? customerCompany.default_currency ?? "EUR")}</span><i data-lucide="arrow-right"></i></button>`;
 }
 
 export async function companySelectionPage(): Promise<HTMLElement> {

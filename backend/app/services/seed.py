@@ -248,6 +248,7 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
 
 
 def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
+    store.unset_many("users", {"currency_preference": {"$exists": True}}, ["currency_preference"])
     for permission in PERMISSIONS:
         if not store.find_one("permissions", {"_id": permission}):
             store.insert_one("permissions", {"_id": permission, "name": permission})
@@ -438,32 +439,18 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
         if not store.find_one("companies", {"_id": company_id}):
             store.insert_one("companies", {
                 "_id": company_id,
-                "name": "Moneda Technologies - Demo",
+                "name": "Moneda Technologies",
                 "legal_name": "Moneda Technologies",
-                "email": "hello@moneda.example",
-                "phone": "+91 00000 00000",
-                "address": "Configure company address in Admin",
-                "country": "India", "region": "India", "timezone": "Asia/Kolkata",
-                "default_currency": "EUR", "default_tax_rate": 18,
-                "default_tax_mode": "exclusive", "tax_enabled": True,
-                "tax_jurisdiction": "India", "transport_taxable": False, "active": True,
-                "commercial_conditions": {
-                    "payment": "Prepayment against Pro-Forma.",
-                    "despatch": "Between 1 Week - 8 Weeks.",
-                    "duties_taxes_bank_charges": "To be borne by the consignee.",
-                    "incoterms": "ICC INCOTERMS 2020: Ex Works unless specified.",
-                },
+                "issuer": True, "default_currency": "EUR", "active": True,
             })
         else:
             store.update_one("companies", {"_id": company_id}, {
-                "tax_enabled": True, "tax_jurisdiction": "India",
-                "default_tax_rate": 18, "default_tax_mode": "exclusive",
-                "transport_taxable": bool((store.find_one("companies", {"_id": company_id}) or {}).get("transport_taxable", False)),
+                "name": "Moneda Technologies", "legal_name": "Moneda Technologies", "issuer": True,
             })
         demo_admin = store.find_one("users", {"email": "demo@moneda.local"})
         demo_admin_fields = {
             "username": "Admin",
-            "name": "Aarav Menon",
+            "name": "Superadmin",
             "phone": "+91 00000 00000",
             "password_hash": generate_password_hash("123@Admin"),
             "role_id": "superadmin",
@@ -471,7 +458,6 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "customer_company_ids": [company_id],
             "customer_ids": [company_id, "customer-demo-1", "customer-demo-2"],
             "active": True,
-            "currency_preference": "EUR",
             "demo": True,
         }
         if not demo_admin:
@@ -483,7 +469,8 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             # restart, even when a test or a previous seed created the row.
             store.update_one("users", {"_id": demo_admin["_id"]}, demo_admin_fields)
         demo_customers = [
-            (company_id, "Moneda Technologies - Demo", "Rahul Iyer", "operations@moneda-demo.example"),
+            # Legacy compatibility snapshot; hidden from customer selection.
+            (company_id, "Moneda Technologies - Demo", "", "business@monedatechnologies.com"),
             ("customer-demo-1", "Northstar Printworks", "Priya Shah", "procurement@northstar.example"),
             ("customer-demo-2", "Orbit Packaging", "Rahul Iyer", "operations@orbit.example"),
         ]
@@ -496,7 +483,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     "address": "Customer address pending", "country": "India", "preferred_currency": preferred_currency,
                     "default_currency": preferred_currency, "default_tax_rate": 18, "default_tax_mode": "exclusive",
                     "tax_enabled": True, "payment_terms": "30 days", "status": "active", "active": True,
-                    "demo": True, "customer_code": customer_code(name),
+                    "demo": True, "is_issuer": customer_id == company_id, "customer_code": customer_code(name),
                 })
             else:
                 store.update_one("customers", {"_id": customer_id}, {
@@ -504,4 +491,5 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     "contact_name": contact, "email": email, "active": True, "status": "active",
                     "preferred_currency": preferred_currency, "default_currency": preferred_currency,
                     "default_tax_rate": 18, "default_tax_mode": "exclusive", "customer_code": (store.find_one("customers", {"_id": customer_id}) or {}).get("customer_code") or customer_code(name),
+                    "is_issuer": customer_id == company_id,
                 })

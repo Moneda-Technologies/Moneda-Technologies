@@ -13,7 +13,7 @@ interface PreviewBundle { payload: Record<string, unknown>; document: Quotation 
 function openQuotationEmailComposer(quote: Quotation, onSent: () => Promise<void> | void): void {
   const recipient = quote.customer_snapshot?.email ?? "";
   const content = document.createElement("div");
-  content.innerHTML = `<form class="stack-form email-composer-form"><label>To<input name="to" type="email" value="${escapeHtml(recipient)}" disabled></label><label>CC <span class="optional">optional</span><input name="cc" type="text" placeholder="team@example.com, manager@example.com"></label><label>Subject<input name="subject" value="Quotation ${escapeHtml(quote.quotation_number)} - Moneda Technologies" required></label><label>Message<textarea name="message" rows="6" required>Please find quotation ${escapeHtml(quote.quotation_number)} attached.</textarea></label><div class="attachment-chip"><i data-lucide="paperclip"></i><span>${escapeHtml(quote.quotation_number)}.pdf</span><small>PDF attachment</small></div><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Send Email</button></div></form>`;
+  content.innerHTML = `<form class="stack-form email-composer-form"><label>To<input name="to" type="email" value="${escapeHtml(recipient)}" disabled></label><p class="form-hint">Customer-facing CC/BCC routing is managed centrally in Settings → Zoho Mail.</p><label>Subject<input name="subject" value="Quotation ${escapeHtml(quote.quotation_number)} - Moneda Technologies" required></label><label>Message<textarea name="message" rows="6" required>Please find quotation ${escapeHtml(quote.quotation_number)} attached.</textarea></label><div class="attachment-chip"><i data-lucide="paperclip"></i><span>${escapeHtml(quote.quotation_number)}.pdf</span><small>PDF attachment</small></div><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Send Email</button></div></form>`;
   const dialog = openModal("Email quotation", content, "wide");
   const form = content.querySelector<HTMLFormElement>("form")!;
   content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
@@ -22,7 +22,7 @@ function openQuotationEmailComposer(quote: Quotation, onSent: () => Promise<void
     const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("[type=submit]")!;
     button.disabled = true; button.textContent = "Sending…";
     try {
-      await quotationApi.send(quote._id, { cc: String(data.get("cc") ?? ""), subject: String(data.get("subject") ?? ""), message: String(data.get("message") ?? "") });
+      await quotationApi.send(quote._id, { subject: String(data.get("subject") ?? ""), message: String(data.get("message") ?? "") });
       dialog.close(); toast("Email sent ✓"); await onSent();
     } catch (error) { toast(error instanceof Error ? error.message : "Email failed. Retry when configuration is available.", "error"); button.disabled = false; button.innerHTML = '<i data-lucide="send"></i>Retry'; refreshIcons(button); }
   });

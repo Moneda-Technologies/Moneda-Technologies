@@ -1,4 +1,4 @@
-import { cartApi, customerCompanyApi, profileApi, rateApi } from "../api";
+import { cartApi, customerApi, customerCompanyApi, profileApi, rateApi } from "../api";
 import { api } from "../api/client";
 import { appStore } from "../state/store";
 import { escapeHtml } from "../utils/dom";
@@ -141,7 +141,7 @@ export function renderShell(): HTMLElement {
       const selectedId = selected.customer_id ?? selected._id;
       await customerCompanyApi.select(selectedId);
       localStorage.setItem("moneda-active-customer-id", selectedId);
-      const nextCurrency = selected.default_currency ?? selected.preferred_currency ?? "EUR";
+      const nextCurrency = selected.preferred_currency ?? selected.default_currency ?? "EUR";
       const nextCart = await cartApi.get(selectedId, nextCurrency).catch(() => null);
       appStore.set({ customer: selected, activeCustomerId: selectedId, customerCompany: selected as unknown as import("../types/domain").Company, company: selected as unknown as import("../types/domain").Company, currency: nextCurrency, cartCount: nextCart?.items.length ?? 0 });
       window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname }));
@@ -165,7 +165,22 @@ export function renderShell(): HTMLElement {
   fxControl?.addEventListener("mouseleave", scheduleFxClose);
   currencySelect?.addEventListener("focus", () => setFxOpen(true));
   currencySelect?.addEventListener("click", () => setFxOpen(true));
-  currencySelect?.addEventListener("change", (event) => appStore.set({ currency: (event.target as HTMLSelectElement).value as "USD" | "INR" | "EUR" }));
+  currencySelect?.addEventListener("change", async (event) => {
+    const nextCurrency = (event.target as HTMLSelectElement).value as "USD" | "INR" | "EUR";
+    const activeCustomer = appStore.state.customer;
+    if (!activeCustomer) { currencySelect.value = appStore.state.currency; return; }
+    currencySelect.disabled = true;
+    try {
+      const updated = await customerApi.update(activeCustomer._id, { preferred_currency: nextCurrency });
+      const merged = { ...activeCustomer, ...updated, preferred_currency: nextCurrency, default_currency: nextCurrency };
+      const customers = appStore.state.customers.map((item) => (item._id === merged._id ? { ...item, ...merged } : item));
+      appStore.set({ customers, customer: merged, customerCompany: merged as unknown as import("../types/domain").Company, company: merged as unknown as import("../types/domain").Company, currency: nextCurrency });
+      window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname }));
+    } catch (error) {
+      currencySelect.value = appStore.state.currency;
+      toast(error instanceof Error ? error.message : "Currency change failed", "error");
+    } finally { currencySelect.disabled = false; }
+  });
   currencySelect?.addEventListener("keydown", (event) => { if (event.key === "Escape") { setFxOpen(false); currencySelect.blur(); } });
   fxPopover?.addEventListener("mouseenter", () => setFxOpen(true));
   fxPopover?.addEventListener("mouseleave", scheduleFxClose);

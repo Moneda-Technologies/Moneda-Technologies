@@ -7,6 +7,7 @@ from flask import Blueprint, current_app, request
 from app.api.responses import failure, success
 from app.middleware.access import current_user, customer_id_from, customer_record, enforce_active_customer, login_required, permission_required
 from app.pricing.engine import PricingUnavailable, calculate_line, company_tax_values, resolve_product_adjustments
+from app.customers.metadata import resolve_customer_currency
 
 
 bp = Blueprint("catalog", __name__, url_prefix="/api")
@@ -224,14 +225,17 @@ def price_preview(product_id: str):
     if not enforce_active_customer(customer_id):
         return failure("Customer access denied", status=403)
     try:
-        currency = str(payload.get("currency", customer_company.get("default_currency", "EUR"))).upper()
+        currency = resolve_customer_currency(customer_company, payload.get("currency"), store, current_user())
         # New clients explicitly send the toggle. Modern customer-scoped
         # requests default to tax-free; the legacy company_id bridge keeps
         # compatibility with older integrations.
-        apply_tax = (
-            currency == "INR" and bool(payload.get("tax_enabled", False))
-            if "tax_enabled" in payload else (False if "customer_company_id" in payload else True)
-        )
+        region = customer_company.get("region") or {}
+        region_code = region.get("country_code") if isinstance(region, dict) else None
+        legacy_india = str(customer_company.get("country") or region or customer_company.get("tax_jurisdiction") or "").strip().casefold() == "india"
+        country_code = customer_company.get("country_code") or region_code or ("IN" if legacy_india else None)
+        india_customer = country_code == "IN"
+        legacy_tax_default = "customer_company_id" not in payload and "company_id" in payload
+        apply_tax = (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else (india_customer or legacy_tax_default))
         tax_mode = str(payload["tax_mode"]).lower() if "tax_mode" in payload else None
         rate, rate_meta = current_app.extensions["exchange_rate_service"].rate_for(currency)
         user = current_user() or {}

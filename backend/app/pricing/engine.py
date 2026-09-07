@@ -38,6 +38,12 @@ def decimal_value(value: Any, field: str) -> Decimal:
 
 
 def company_tax_values(company: dict[str, Any]) -> tuple[Any, str]:
+    region = company.get("region") or {}
+    region_code = region.get("country_code") if isinstance(region, dict) else None
+    legacy_india = str(company.get("country") or region or company.get("tax_jurisdiction") or "").strip().casefold() == "india"
+    country_code = company.get("country_code") or region_code or ("IN" if legacy_india else None)
+    if country_code and country_code != "IN":
+        return 0, "no_tax"
     if company.get("tax_enabled") is False:
         return 0, "no_tax"
     return company.get("default_tax_rate", 18), company.get("default_tax_mode", "exclusive")

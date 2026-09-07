@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.communication.email import EmailProvider
-from app.repositories.store import Store, utcnow
+from app.repositories.store import Store, ensure_utc, utcnow
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,8 @@ class OtpService:
             return False
         logger.info("[%s] otp stage=eligibility result=PASS purpose=%s", trace_id, purpose)
         previous = self.store.find_one("otp_challenges", {"email": email, "purpose": purpose, "used": False})
-        if previous and previous.get("resend_after") and previous["resend_after"] > utcnow():
+        resend_after = self._normalized_datetime(previous, "resend_after", trace_id) if previous else None
+        if resend_after and resend_after > utcnow():
             raise OtpError("Please wait before requesting another code")
         code = f"{secrets.randbelow(1_000_000):06d}"
         logger.info("[%s] otp stage=generation result=PASS purpose=%s", trace_id, purpose)
@@ -90,7 +91,8 @@ class OtpService:
         if pending_signup_id:
             query["pending_signup_id"] = pending_signup_id
         row = self.store.find_one("otp_challenges", query)
-        if not row or row["expires_at"] < utcnow():
+        expires_at = self._normalized_datetime(row, "expires_at", "otp-verify") if row else None
+        if not row or not expires_at or expires_at < utcnow():
             raise OtpError("The verification code is invalid or expired")
         attempts = int(row.get("attempts", 0)) + 1
         if attempts > int(row.get("max_attempts", 5)):
@@ -101,6 +103,14 @@ class OtpService:
             raise OtpError("The verification code is invalid or expired")
         self.store.update_one("otp_challenges", {"_id": row["_id"]}, {"attempts": attempts, "used": True})
         return self.store.find_one("users", {"email": email.lower().strip()})
+
+    @staticmethod
+    def _normalized_datetime(row: dict[str, Any] | None, field: str, trace_id: str) -> datetime | None:
+        value = (row or {}).get(field)
+        normalized = ensure_utc(value) if isinstance(value, datetime) else None
+        if isinstance(value, datetime) and value.tzinfo is None:
+            logger.info("[%s] otp_datetime_normalization field=%s source=mongo normalized=true", trace_id, field)
+        return normalized
 
 
 def find_user_by_identifier(store: Store, identifier: str) -> dict[str, Any] | None:

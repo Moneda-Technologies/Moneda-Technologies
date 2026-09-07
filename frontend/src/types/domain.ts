@@ -22,6 +22,10 @@ export interface Company {
   tax_jurisdiction?: string;
   transport_taxable?: boolean;
   country?: string;
+  continent?: string;
+  country_code?: string;
+  country_name?: string;
+  region?: { continent?: string; country_code?: string; country_name?: string };
   address?: string;
   email?: string;
   active: boolean;
@@ -39,7 +43,6 @@ export interface User {
   customer_ids?: string[];
   customer_company_ids?: string[];
   permissions: string[];
-  currency_preference: Currency;
   demo?: boolean;
 }
 
@@ -147,6 +150,10 @@ export interface Customer {
   legal_name?: string;
   address?: string;
   country?: string;
+  continent?: string;
+  country_code?: string;
+  country_name?: string;
+  region?: { continent?: string; country_code?: string; country_name?: string };
   billing_address?: string;
   shipping_address?: string;
   gst_vat_number?: string;
@@ -157,6 +164,9 @@ export interface Customer {
   default_tax_mode?: "exclusive" | "inclusive" | "no_tax";
   tax_enabled?: boolean;
   payment_terms?: string;
+  custom_payment_days?: number;
+  payment_terms_display?: string;
+  tax_profile?: { gst_applicable?: boolean; tax_number?: string };
   status: string;
   active?: boolean;
 }

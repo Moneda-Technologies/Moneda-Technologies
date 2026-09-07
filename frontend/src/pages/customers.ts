@@ -3,10 +3,78 @@ import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
+import { CONTINENTS, COUNTRIES_BY_CONTINENT, PAYMENT_TERMS, countryMeta } from "../config/customer-metadata";
 import type { Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
 
 const customerName = (customer: Customer) => customer.company_name ?? customer.name;
+
+function customerForm(existing?: Customer): HTMLDivElement {
+  const region = existing?.region ?? {};
+  const continent = existing?.continent ?? region.continent ?? "";
+  const countryCode = existing?.country_code ?? region.country_code ?? "";
+  const selectedCountry = countryMeta(continent, countryCode);
+  const payment = existing?.payment_terms ?? "";
+  const customDays = existing?.custom_payment_days ?? "";
+  const currency = existing?.preferred_currency ?? existing?.default_currency ?? "EUR";
+  const content = document.createElement("div");
+  content.innerHTML = `<form class="stack-form" id="customer-form" autocomplete="off">
+    <div class="form-grid">
+      <label>Customer company name<input name="company_name" required placeholder="Registered company" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"></label>
+      <label>Primary contact<input name="contact_name" autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"></label>
+      <label>Email<input name="email" type="email" placeholder="procurement@company.com" value="${escapeHtml(existing?.email ?? "")}"></label>
+      <label>Phone<input name="phone" type="tel" inputmode="tel" pattern="[+0-9().\\-\\s]{3,30}" placeholder="Enter international phone number" value="${escapeHtml(existing?.phone ?? "")}"></label>
+      <label>Continent / Region<select name="continent"><option value="">Select continent / region</option>${CONTINENTS.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
+      <label>Country<select name="country_code" ${continent ? "" : "disabled"}><option value="">${continent ? "Select country" : "Select continent first"}</option>${(COUNTRIES_BY_CONTINENT[continent as keyof typeof COUNTRIES_BY_CONTINENT] ?? []).map((item) => `<option value="${item.code}" ${item.code === countryCode ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
+      <label>Preferred currency<select name="preferred_currency"><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select></label>
+      <label>Payment terms<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+      <label class="custom-payment-days" ${payment === "Custom" ? "" : "hidden"}>Custom payment term<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"></label>
+      <label class="gst-field" ${selectedCountry?.code === "IN" ? "" : "hidden"}>Tax / GST Number<input name="gst_vat_number" placeholder="GST number" value="${escapeHtml(existing?.gst_vat_number ?? existing?.tax_number ?? existing?.tax_profile?.tax_number ?? "")}"></label>
+      <label>Address<textarea name="address" rows="2" placeholder="Customer address">${escapeHtml(existing?.address ?? "")}</textarea></label>
+    </div>
+    <button class="button button-primary button-full" type="submit"><i data-lucide="save"></i>${existing ? "Save Customer" : "Create Customer"}</button>
+  </form>`;
+  const form = content.querySelector<HTMLFormElement>("form")!;
+  const continentSelect = form.elements.namedItem("continent") as HTMLSelectElement;
+  const countrySelect = form.elements.namedItem("country_code") as HTMLSelectElement;
+  const currencySelect = form.elements.namedItem("preferred_currency") as HTMLSelectElement;
+  const paymentSelect = form.elements.namedItem("payment_terms") as HTMLSelectElement;
+  const customField = content.querySelector<HTMLElement>(".custom-payment-days")!;
+  const gstField = content.querySelector<HTMLElement>(".gst-field")!;
+  const renderCountries = (reset = true) => {
+    const countries = COUNTRIES_BY_CONTINENT[continentSelect.value as keyof typeof COUNTRIES_BY_CONTINENT] ?? [];
+    if (reset) countrySelect.value = "";
+    countrySelect.disabled = !continentSelect.value;
+    countrySelect.innerHTML = `<option value="">${continentSelect.value ? "Select country" : "Select continent first"}</option>${countries.map((item) => `<option value="${item.code}">${escapeHtml(item.name)}</option>`).join("")}`;
+    if (!reset && countryCode) countrySelect.value = countryCode;
+  };
+  const updateCountryRules = () => {
+    const country = countryMeta(continentSelect.value, countrySelect.value);
+    const isIndia = country?.code === "IN";
+    gstField.hidden = !isIndia;
+    if (!isIndia) (form.elements.namedItem("gst_vat_number") as HTMLInputElement).value = "";
+    if (isIndia && (!existing || !existing.preferred_currency)) currencySelect.value = "INR";
+    if (country && !existing) currencySelect.value = country.default_currency;
+  };
+  continentSelect.addEventListener("change", () => { renderCountries(true); updateCountryRules(); });
+  countrySelect.addEventListener("change", updateCountryRules);
+  paymentSelect.addEventListener("change", () => { customField.hidden = paymentSelect.value !== "Custom"; if (paymentSelect.value !== "Custom") (form.elements.namedItem("custom_payment_days") as HTMLInputElement).value = ""; });
+  return content;
+}
+
+function openCustomerEditor(existing: Customer | undefined, onSaved: () => Promise<void> | void): void {
+  const content = customerForm(existing);
+  const dialog = openModal(existing ? "Edit Customer" : "Add Customer", content, "wide");
+  content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const value = Object.fromEntries(new FormData(form).entries());
+    if (value.payment_terms !== "Custom") { delete value.custom_payment_days; }
+    try { if (existing) await customerApi.update(existing._id, value); else await customerApi.create(value); dialog.close(); toast(existing ? "Customer updated" : "Customer created"); await onSaved(); }
+    catch (error) { toast(error instanceof Error ? error.message : "Customer could not be saved", "error"); }
+  });
+  refreshIcons(content);
+}
 
 export async function customersPage(): Promise<HTMLElement> {
   const page = pageScaffold("Relationships", "Customers", "Manage the customer businesses Moneda Technologies quotes and sells to.", '<button class="button button-secondary"><i data-lucide="download"></i>Export</button><button class="button button-primary" id="add-customer"><i data-lucide="building-2"></i>Add Customer</button>');
@@ -18,17 +86,7 @@ export async function customersPage(): Promise<HTMLElement> {
     refreshIcons(body);
   };
   try { await load(); } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customers unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
-  page.querySelector("#add-customer")?.addEventListener("click", () => {
-    const content = document.createElement("div");
-    content.innerHTML = `<form class="stack-form" id="customer-form"><div class="form-grid"><label>Customer company name<input name="company_name" required placeholder="Registered company"></label><label>Primary contact<input name="contact_name" placeholder="Contact person"></label><label>Email<input name="email" type="email" placeholder="procurement@company.com"></label><label>Phone<input name="phone" placeholder="+91"></label><label>Country<input name="country" placeholder="India"></label><label>Preferred currency<select name="preferred_currency"><option>EUR</option><option>USD</option><option>INR</option></select></label><label>Payment terms<input name="payment_terms" value="30 days"></label><label>Tax number<input name="gst_vat_number" placeholder="Optional"></label><label>Address<textarea name="address" rows="2" placeholder="Customer address"></textarea></label></div><button class="button button-primary button-full" type="submit"><i data-lucide="save"></i>Create Customer</button></form>`;
-    const dialog = openModal("Add Customer", content, "wide");
-    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
-      event.preventDefault(); const value = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement).entries());
-      try { await customerApi.create(value); dialog.close(); toast("Customer created"); await load(); }
-      catch (error) { toast(error instanceof Error ? error.message : "Customer could not be created", "error"); }
-    });
-    refreshIcons(content);
-  });
+  page.querySelector("#add-customer")?.addEventListener("click", () => openCustomerEditor(undefined, load));
   refreshIcons(page);
   return page;
 }
@@ -37,11 +95,13 @@ export async function customerDetailPage(customerId: string): Promise<HTMLElemen
   const page = pageScaffold("Relationships", "Customer detail", "A customer business record with commercial history and contact context.", '<a class="button button-secondary" href="/customers" data-route="/customers"><i data-lucide="arrow-left"></i>Back to customers</a>');
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(5);
-  try {
+  const load = async () => {
     const customer = await customerApi.get(customerId);
     const related = customer.related ?? {};
     const name = customerName(customer);
-    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</div><div><span class="eyebrow">Customer business</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(customer.contact_name ?? "Primary contact not configured")}</p>${statusBadge(customer.status ?? "active")}</div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Contact & billing</span><h2>Commercial profile</h2></div></div><div class="detail-grid"><div><span>Email</span><strong>${escapeHtml(customer.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escapeHtml(customer.phone ?? "—")}</strong></div><div><span>Currency</span><strong>${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</strong></div><div><span>Payment terms</span><strong>${escapeHtml(customer.payment_terms ?? "—")}</strong></div><div><span>Tax number</span><strong>${escapeHtml(customer.gst_vat_number ?? customer.tax_number ?? "—")}</strong></div><div><span>Address</span><strong>${escapeHtml(customer.address ?? "—")}</strong></div></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Activity</span><h2>Related records</h2></div></div><div class="metric-grid compact-metrics"><article class="metric-card"><span>Quotations</span><strong>${related.quotations?.length ?? 0}</strong></article><article class="metric-card"><span>Orders</span><strong>${related.orders?.length ?? 0}</strong></article><article class="metric-card"><span>Leads</span><strong>${related.leads?.length ?? 0}</strong></article></div></section></div>`;
-  } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customer unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
+    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</div><div><span class="eyebrow">Customer business</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(customer.contact_name ?? "Primary contact not configured")}</p>${statusBadge(customer.status ?? "active")}</div><button class="button button-secondary" id="edit-customer"><i data-lucide="pencil"></i>Edit customer</button></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Contact & billing</span><h2>Commercial profile</h2></div></div><div class="detail-grid"><div><span>Email</span><strong>${escapeHtml(customer.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escapeHtml(customer.phone ?? "—")}</strong></div><div><span>Region</span><strong>${escapeHtml(customer.region?.continent ?? customer.continent ?? "—")}</strong></div><div><span>Country</span><strong>${escapeHtml(customer.region?.country_name ?? customer.country_name ?? customer.country ?? "—")}</strong></div><div><span>Currency</span><strong>${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</strong></div><div><span>Payment terms</span><strong>${escapeHtml(customer.payment_terms_display ?? customer.payment_terms ?? "—")}</strong></div><div><span>Tax / GST number</span><strong>${escapeHtml(customer.tax_profile?.tax_number ?? customer.gst_vat_number ?? customer.tax_number ?? "—")}</strong></div><div><span>Address</span><strong>${escapeHtml(customer.address ?? "—")}</strong></div></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Activity</span><h2>Related records</h2></div></div><div class="metric-grid compact-metrics"><article class="metric-card"><span>Quotations</span><strong>${related.quotations?.length ?? 0}</strong></article><article class="metric-card"><span>Orders</span><strong>${related.orders?.length ?? 0}</strong></article><article class="metric-card"><span>Leads</span><strong>${related.leads?.length ?? 0}</strong></article></div></section></div>`;
+    body.querySelector("#edit-customer")?.addEventListener("click", () => openCustomerEditor(customer, load));
+  };
+  try { await load(); } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customer unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }

@@ -39,7 +39,12 @@ def _email_failure(exc: EmailDeliveryError):
         message = "Email service is not connected. Please contact the administrator."
     else:
         message = "Zoho test email could not be delivered."
-    status = 429 if exc.error_code == "ZOHO_MAIL_API_RATE_LIMIT" else 422 if exc.error_code == "SENDER_INVALID" else 503
+    alias_errors = {
+        "SENDER_INVALID", "OTP_SENDER_ALIAS_UNAVAILABLE",
+        "QUOTATION_SENDER_ALIAS_UNAVAILABLE", "ORDER_SENDER_ALIAS_UNAVAILABLE",
+        "GENERAL_SENDER_UNAVAILABLE",
+    }
+    status = 429 if exc.error_code == "ZOHO_MAIL_API_RATE_LIMIT" else 422 if exc.error_code in alias_errors else 503
     return failure(
         message, status=status, error=exc.error_code,
         diagnostic_id=exc.diagnostic_id, stage=exc.stage,
@@ -49,7 +54,7 @@ def _email_failure(exc: EmailDeliveryError):
 @bp.get("/integrations/zoho/status")
 @permission_required("settings.manage")
 def zoho_status():
-    return success(_oauth().status(), "Zoho Mail integration status")
+    return success(_oauth().status(refresh_aliases=True), "Zoho Mail integration status")
 
 
 @bp.get("/integrations/zoho/connect")

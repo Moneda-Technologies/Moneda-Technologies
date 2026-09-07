@@ -1,13 +1,11 @@
 import { authApi } from "../api";
 import { ApiError } from "../api/client";
+import { authPageShell } from "../components/auth-layout";
 import { refreshIcons } from "../components/icons";
 import { toast } from "../components/toast";
-import { appStore } from "../state/store";
 
 function authFrame(title: string, copy: string, content: string): HTMLElement {
-  const root = document.createElement("main");
-  root.className = "auth-page";
-  root.innerHTML = `<header class="auth-brand"><div class="auth-logo-wrap"><img class="auth-logo" src="${appStore.state.brandLogoPath}" alt="${appStore.state.brandName}"></div><div class="auth-tagline">Know Your Alternative</div><div class="auth-stripe" aria-hidden="true"><span></span><span></span><span></span></div></header><section class="auth-content"><div class="auth-card"><div class="auth-form-wrap"><a class="back-link" href="/login"><i data-lucide="arrow-left"></i>Back to sign in</a><span class="eyebrow">Account access</span><h2>${title}</h2><p>${copy}</p>${content}</div></div></section><footer class="auth-footer"><span>© ${new Date().getFullYear()} Moneda Technologies</span></footer>`;
+  const root = authPageShell(`<a class="back-link" href="/login"><i data-lucide="arrow-left"></i>Back to sign in</a><span class="eyebrow">Account access</span><h2>${title}</h2><p>${copy}</p>${content}`);
   refreshIcons(root); return root;
 }
 

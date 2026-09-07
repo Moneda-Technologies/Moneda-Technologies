@@ -7,7 +7,7 @@ import logging
 
 import pytest
 
-from app.communication.email import EmailDeliveryError
+from app.communication.email import EmailDeliveryError, EmailService, RecordingEmailProvider
 from app.communication.zoho import ZOHO_SCOPES, ZohoMailApiProvider, ZohoMailOAuth
 from app import _OAuthAccessLogFilter
 from app.repositories.store import MemoryStore
@@ -47,6 +47,10 @@ def connected_store(oauth: ZohoMailOAuth) -> MemoryStore:
         "refresh_token_encrypted": oauth._cipher().encrypt("refresh-token"),
         "account_id": "123", "account_email": "business@monedatechnologies.com",
         "from_address": "business@monedatechnologies.com", "api_domain": "https://mail.zoho.in",
+        "allowed_from_addresses": [
+            "business@monedatechnologies.com", "otp@monedatechnologies.com",
+            "quotations@monedatechnologies.com", "orders@monedatechnologies.com",
+        ],
         "scopes": list(ZOHO_SCOPES),
     })
     return store
@@ -180,9 +184,60 @@ def test_account_lookup_extracts_account_id_from_documented_email_address_list(m
     assert result == {
         "account_id": "2560636000000008002",
         "account_email": "business@monedatechnologies.com",
+        "allowed_from_addresses": ["business@monedatechnologies.com"],
     }
     assert account_calls[0][0] == "https://mail.zoho.in/api/accounts"
     assert account_calls[0][1]["headers"]["Authorization"] == "Zoho-oauthtoken access-token"
+
+
+def test_account_lookup_discovers_primary_and_sender_aliases(monkeypatch):
+    oauth = ZohoMailOAuth(zoho_config(), MemoryStore())
+    monkeypatch.setattr("app.communication.zoho.requests.get", lambda url, **kwargs: FakeResponse({
+        "status": {"code": 200, "description": "success"},
+        "data": [{
+            "accountId": "123",
+            "emailAddress": [
+                {"isPrimary": True, "mailId": "business@monedatechnologies.com"},
+                {"isAlias": True, "mailId": "otp@monedatechnologies.com"},
+                {"isAlias": True, "mailId": "quotations@monedatechnologies.com"},
+            ],
+            "sendMailDetails": [{"fromAddress": "orders@monedatechnologies.com"}],
+        }],
+    }))
+
+    result = oauth.lookup_account("access-token")
+
+    assert result["account_id"] == "123"
+    assert set(result["allowed_from_addresses"]) == {
+        "business@monedatechnologies.com", "otp@monedatechnologies.com",
+        "quotations@monedatechnologies.com", "orders@monedatechnologies.com",
+    }
+
+
+def test_central_email_service_routes_all_four_sender_purposes():
+    provider = RecordingEmailProvider()
+    service = EmailService(provider, zoho_config())
+
+    service.send_signup_otp(to=["user@example.com"], html="otp")
+    service.send_quotation(to=["user@example.com"], subject="Quote", html="quote")
+    service.send_order_confirmation(to=["user@example.com"], subject="Order", html="order")
+    service.send_test_email(to=["user@example.com"])
+
+    assert [message["from"] for message in provider.messages] == [
+        "otp@monedatechnologies.com",
+        "quotations@monedatechnologies.com",
+        "orders@monedatechnologies.com",
+        "business@monedatechnologies.com",
+    ]
+    assert [message["from_name"] for message in provider.messages] == [
+        "Moneda OTP", "Moneda Quotations", "Moneda Orders", "Moneda Technologies",
+    ]
+    assert provider.messages[0]["cc"] == [] and provider.messages[0]["bcc"] == []
+    assert provider.messages[1]["cc"] == ["business@monedatechnologies.com"]
+    assert provider.messages[1]["bcc"] == ["operations@chemo.in"]
+    assert provider.messages[2]["cc"] == ["business@monedatechnologies.com"]
+    assert provider.messages[2]["bcc"] == ["operations@chemo.in"]
+    assert provider.messages[3]["cc"] == [] and provider.messages[3]["bcc"] == []
 
 
 def test_provider_refreshes_once_caches_token_and_submits_safe_json(monkeypatch):
@@ -216,7 +271,8 @@ def test_provider_refreshes_once_caches_token_and_submits_safe_json(monkeypatch)
     assert message_calls[0][1]["json"]["bccAddress"] == "audit@example.com"
     assert first["provider"] == "zoho_mail_api"
     assert first["stage"] == "message_submission"
-    assert first["checks"][-1] == {"stage": "message_submission", "result": "PASS"}
+    assert {"stage": "message_submission", "result": "PASS"} in first["checks"]
+    assert first["checks"][-1] == {"stage": "email_submission_success", "result": "PASS"}
     assert "access-token" not in str(first)
     assert any(check.get("source") == "cache" for check in second["checks"])
 
@@ -237,7 +293,28 @@ def test_not_connected_and_sender_mismatch_have_specific_error_codes(monkeypatch
             subject="Test", html="<p>ok</p>",
         )
     assert sender.value.error_code == "SENDER_INVALID"
-    assert sender.value.stage == "sender"
+    assert sender.value.stage == "email_alias_validation"
+
+
+def test_configured_missing_alias_fails_without_sender_fallback(monkeypatch):
+    oauth = ZohoMailOAuth(zoho_config(), MemoryStore())
+    store = connected_store(oauth)
+    store.update_one("integrations", {"_id": "zoho_mail"}, {
+        "allowed_from_addresses": ["business@monedatechnologies.com"],
+    })
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda url, **kwargs: FakeResponse({
+        "access_token": "access-token", "expires_in": 3600,
+    }))
+    provider = ZohoMailApiProvider(zoho_config(), store, oauth=oauth)
+
+    with pytest.raises(EmailDeliveryError) as missing:
+        provider.send(
+            to=["customer@example.com"], from_address="otp@monedatechnologies.com",
+            subject="OTP", html="<p>code omitted</p>",
+        )
+
+    assert missing.value.error_code == "OTP_SENDER_ALIAS_UNAVAILABLE"
+    assert missing.value.stage == "email_alias_validation"
 
 
 def test_disconnect_revokes_and_removes_local_credentials(monkeypatch):

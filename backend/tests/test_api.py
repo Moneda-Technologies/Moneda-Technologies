@@ -155,6 +155,12 @@ def test_order_confirmation_and_status_use_central_email_service(app, authentica
     assert status.status_code == 200
     messages = app.extensions["email_provider"].messages
     assert messages[-2]["to"] == ["customer@example.com"]
+    assert messages[-2]["from"] == "orders@monedatechnologies.com"
+    assert messages[-1]["from"] == "orders@monedatechnologies.com"
+    assert messages[-2]["cc"] == ["business@monedatechnologies.com"]
+    assert messages[-2]["bcc"] == ["operations@chemo.in"]
+    assert messages[-1]["cc"] == ["business@monedatechnologies.com"]
+    assert messages[-1]["bcc"] == ["operations@chemo.in"]
     assert "Order confirmation" in messages[-2]["subject"]
     assert "Order status" in messages[-1]["subject"]
     assert "Processing" in messages[-1]["html"]

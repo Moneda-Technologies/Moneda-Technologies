@@ -59,12 +59,13 @@ def public_config():
 def me():
     user = {**(current_user() or {})}
     user.pop("password_hash", None)
+    user.pop("currency_preference", None)
     store = current_app.extensions["store"]
     if user.get("role_id") == "superadmin":
-        customers = store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=500, sort="name", direction=1)[0]
+        customers = [row for row in store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=500, sort="name", direction=1)[0] if not row.get("is_issuer")]
     else:
         customers = [customer_record(customer_id) for customer_id in (user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", []))]
-        customers = [customer for customer in customers if customer]
+        customers = [customer for customer in customers if customer and not customer.get("is_issuer")]
     customers = [{**customer, "customer_id": customer.get("_id"), "company_name": customer.get("name")} for customer in customers]
     selected = selected_customer_id()
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
@@ -85,7 +86,7 @@ def me():
 @login_required
 def update_profile():
     user = current_user() or {}
-    allowed = {"name", "phone", "currency_preference", "notification_preferences", "profile_image"}
+    allowed = {"name", "phone", "notification_preferences", "profile_image"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
     row = current_app.extensions["store"].update_one("users", {"_id": user["_id"]}, changes)
     row.pop("password_hash", None)

@@ -52,6 +52,7 @@ export const customerApi = {
   list: (customerId?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}limit=100`),
   get: (id: string) => api<Customer & { related?: Record<string, unknown[]> }>(`/customers/${encodeURIComponent(id)}`),
   create: (value: unknown) => api<Customer>("/customers", jsonBody(value)),
+  update: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}`, patchBody(value)),
 };
 
 export const quotationApi = {
@@ -60,7 +61,7 @@ export const quotationApi = {
   communications: (id: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/quotations/${encodeURIComponent(id)}/communications`),
   create: (value: unknown) => api<Quotation>("/quotations", jsonBody(value)),
   preview: (value: unknown) => api<Quotation>("/quotations/preview", jsonBody(value)),
-  send: (id: string, value: { cc?: string; subject?: string; message?: string } = {}) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/send`, jsonBody(value)),
+  send: (id: string, value: { subject?: string; message?: string } = {}) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/send`, jsonBody(value)),
   whatsapp: (id: string) => api<{ delivery: { status: string }; log_id: string }>(`/quotations/${encodeURIComponent(id)}/whatsapp`, jsonBody({})),
   convert: (id: string) => api<unknown>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, jsonBody({})),
 };
@@ -96,6 +97,9 @@ export const adminApi = {
     account_id?: string | null; account_id_configured: boolean; account_id_status: "configured" | "missing";
     api_domain: string; api_domain_status: "configured" | "derived" | "missing";
     scopes: string[]; connected_at?: string; updated_at?: string;
+    email_senders: Array<{ purpose: "otp" | "quotation" | "order" | "general"; from_name: string; address: string; available: boolean | null }>;
+    customer_recipient_policy: { cc: Array<{ address: string; enabled: boolean }>; bcc: Array<{ address: string; enabled: boolean }> };
+    sender_validation_error?: { code: string; stage: string; diagnostic_id: string } | null;
     last_error?: { code: string; stage: string; diagnostic_id: string } | null;
   }>("/integrations/zoho/status"),
   zohoTest: (to: string) => api<{ sent: boolean; diagnostic_id?: string; stage?: string; checks: Array<{ stage: string; result: string; source?: string }> }>("/integrations/zoho/test", jsonBody({ to })),

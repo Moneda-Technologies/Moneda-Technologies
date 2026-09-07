@@ -45,6 +45,8 @@ def load_current_user() -> dict[str, Any] | None:
         role = current_app.extensions["store"].find_one("roles", {"_id": user.get("role_id")}) or {}
         user["permissions"] = role.get("permissions", [])
         user["role_display_name"] = role.get("display_name", user.get("role_id"))
+        if user.get("role_id") == "superadmin":
+            user["name"] = "Superadmin"
     g.current_user = user
     return user
 

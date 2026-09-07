@@ -393,7 +393,7 @@ def create_user():
         return failure("Role not found", status=422)
     customer_ids = [customer_id for customer_id in (payload.get("customer_ids") or payload.get("customer_company_ids") or payload.get("company_ids", [])) if customer_record(customer_id)]
     row = store.insert_one("users", {"email": email, "name": name, "phone": payload.get("phone", ""),
-        "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True, "currency_preference": payload.get("currency_preference", "EUR")})
+        "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True})
     audit("user.create", "user", str(row["_id"]))
     return success(row, "User invited. They can sign in with email OTP.", 201)
 
@@ -405,7 +405,7 @@ def update_user(user_id: str):
     existing = store.find_one("users", {"_id": user_id})
     if not existing:
         return failure("User not found", status=404)
-    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "currency_preference"}
+    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
     if "customer_ids" not in changes:
         changes["customer_ids"] = changes.get("customer_company_ids", changes.get("company_ids", existing.get("customer_ids", [])))

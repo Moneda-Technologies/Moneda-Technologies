@@ -10,6 +10,7 @@ from app.pricing.engine import (
 )
 from app.exchange_rates.service import ExchangeRateUnavailable
 from app.services.audit import audit
+from app.customers.metadata import resolve_customer_currency
 
 
 bp = Blueprint("pricing", __name__, url_prefix="/api")
@@ -111,8 +112,9 @@ def _calculate(payload: dict):
         raise LookupError("Product or customer company not found")
     if "tax_rate" in payload:
         raise ValueError("Only the product can override the normal tax rate")
-    currency = str(payload.get("currency", customer_company.get("default_currency", "EUR"))).upper()
-    tax_enabled = currency == "INR" and bool(payload.get("tax_enabled", False))
+    currency = resolve_customer_currency(customer_company, payload.get("currency"), store, current_user())
+    india_customer = customer_company.get("country_code") == "IN" or (customer_company.get("region") or {}).get("country_code") == "IN"
+    tax_enabled = currency == "INR" and (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else india_customer)
     tax_mode = str(payload.get("tax_mode", "exclusive")).lower()
     if tax_mode not in {"exclusive", "inclusive"}:
         tax_mode = "exclusive"

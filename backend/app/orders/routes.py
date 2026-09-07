@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from html import escape
 
+from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
@@ -20,7 +21,10 @@ def _order_recipient(order: dict) -> str:
     for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot"):
         value = (order.get(snapshot_name) or {}).get("email")
         if value:
-            return str(value).strip().lower()
+            try:
+                return validate_email(str(value).strip(), check_deliverability=False).normalized
+            except EmailNotValidError:
+                continue
     return ""
 
 
@@ -29,6 +33,8 @@ def _order_email_failure(exc: EmailDeliveryError):
         "Email service is not connected. Please contact the administrator."
         if exc.error_code == "OAUTH_NOT_CONNECTED" else "Order email could not be delivered."
     )
+    if exc.error_code == "ORDER_SENDER_ALIAS_UNAVAILABLE":
+        message = "Order email is not ready because its Zoho sender alias is unavailable."
     status = 429 if exc.error_code == "ZOHO_MAIL_API_RATE_LIMIT" else 422 if exc.error_code == "SENDER_INVALID" else 503
     return failure(
         message, status=status, error=exc.error_code,
@@ -39,7 +45,7 @@ def _order_email_failure(exc: EmailDeliveryError):
 def _send_order_email(order: dict, message_type: str) -> dict:
     recipient = _order_recipient(order)
     if not recipient:
-        raise ValueError("Customer email is required before sending")
+        raise ValueError("CUSTOMER_EMAIL_REQUIRED")
     number = escape(str(order.get("order_number") or order.get("_id") or "order"))
     status = escape(str(order.get("status") or "Pending"))
     if message_type == "order_confirmation":
@@ -64,7 +70,7 @@ def _send_order_email(order: dict, message_type: str) -> dict:
     current_app.extensions["store"].insert_one("email_logs", {
         "order_id": order.get("_id"), "recipient": recipient, "subject": subject,
         "message_type": message_type, "sent_by": (current_user() or {}).get("_id"),
-        "status": "sent", "provider_id": result.get("id"),
+        "status": "sent", "provider_id": result.get("id"), "cc": result.get("cc", []), "bcc": result.get("bcc", []),
         "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"),
         "channel": "email", "created_at": utcnow(),
     })
@@ -116,7 +122,7 @@ def send_order_confirmation(order_id: str):
     try:
         result = _send_order_email(order, "order_confirmation")
     except ValueError as exc:
-        return failure(str(exc), status=422, error="RECIPIENT_INVALID")
+        return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     except EmailDeliveryError as exc:
         _log_order_email_failure(order, "order_confirmation", exc)
         return _order_email_failure(exc)
@@ -139,7 +145,7 @@ def send_order_status(order_id: str):
     try:
         result = _send_order_email(order, "order_status")
     except ValueError as exc:
-        return failure(str(exc), status=422, error="RECIPIENT_INVALID")
+        return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     except EmailDeliveryError as exc:
         _log_order_email_failure(order, "order_status", exc)
         return _order_email_failure(exc)

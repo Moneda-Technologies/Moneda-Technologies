@@ -15,7 +15,7 @@ from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.extensions import limiter
 from app.middleware.access import current_user, login_required
 from app.services.audit import audit
-from app.repositories.store import utcnow
+from app.repositories.store import ensure_utc, utcnow
 
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -33,6 +33,8 @@ def _exception_class(exc: BaseException) -> str:
 def _email_error_message(exc: EmailDeliveryError) -> str:
     if exc.error_code == "OAUTH_NOT_CONNECTED":
         return "Email service is not connected. Please contact the administrator."
+    if exc.error_code == "OTP_SENDER_ALIAS_UNAVAILABLE":
+        return "OTP email is not ready because its Zoho sender alias is unavailable."
     return "Unable to send verification email."
 
 
@@ -60,7 +62,8 @@ def _signup_validation_failure(exc: ValidationError, request_id: str):
 
 def _pending_signup(store, pending_id: str):
     row = store.find_one("pending_signups", {"_id": pending_id})
-    if not row or row.get("expires_at") <= utcnow():
+    expires_at = ensure_utc(row.get("expires_at")) if row else None
+    if not row or not expires_at or expires_at <= utcnow():
         if row:
             store.update_one("pending_signups", {"_id": pending_id}, {"expired": True})
         return None
@@ -236,7 +239,7 @@ def signup_complete():
         "email": pending["email"], "name": pending["name"], "username": pending["username"],
         "username_normalized": pending["username_normalized"], "password_hash": generate_password_hash(payload.password),
         "role_id": "user", "customer_ids": [], "customer_company_ids": [], "company_ids": [],
-        "active": True, "email_verified": True, "currency_preference": "EUR",
+        "active": True, "email_verified": True,
     }
     try:
         user = store.insert_one("users", document)
