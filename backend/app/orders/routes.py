@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from html import escape
 
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
+from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import current_user, enforce_active_customer, enforce_customer, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
@@ -12,6 +14,71 @@ from app.services.audit import audit
 
 bp = Blueprint("orders", __name__, url_prefix="/api")
 STATUSES = {"Pending", "Confirmed", "Processing", "Completed", "Cancelled"}
+
+
+def _order_recipient(order: dict) -> str:
+    for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot"):
+        value = (order.get(snapshot_name) or {}).get("email")
+        if value:
+            return str(value).strip().lower()
+    return ""
+
+
+def _order_email_failure(exc: EmailDeliveryError):
+    message = (
+        "Email service is not connected. Please contact the administrator."
+        if exc.error_code == "OAUTH_NOT_CONNECTED" else "Order email could not be delivered."
+    )
+    status = 429 if exc.error_code == "ZOHO_MAIL_API_RATE_LIMIT" else 422 if exc.error_code == "SENDER_INVALID" else 503
+    return failure(
+        message, status=status, error=exc.error_code,
+        diagnostic_id=exc.diagnostic_id, stage=exc.stage,
+    )
+
+
+def _send_order_email(order: dict, message_type: str) -> dict:
+    recipient = _order_recipient(order)
+    if not recipient:
+        raise ValueError("Customer email is required before sending")
+    number = escape(str(order.get("order_number") or order.get("_id") or "order"))
+    status = escape(str(order.get("status") or "Pending"))
+    if message_type == "order_confirmation":
+        subject = f"Order confirmation {order.get('order_number')} - Moneda Technologies"
+        html = (
+            "<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>"
+            f"<p>Your order <strong>{number}</strong> has been received.</p>"
+            f"<p>Current status: <strong>{status}</strong>.</p></div>"
+        )
+        method = current_app.extensions["email_service"].send_order_confirmation
+    else:
+        subject = f"Order status {order.get('order_number')} - {order.get('status')}"
+        html = (
+            "<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>"
+            f"<p>Order <strong>{number}</strong> is now <strong>{status}</strong>.</p></div>"
+        )
+        method = current_app.extensions["email_service"].send_order_status
+    result = method(
+        to=[recipient], subject=subject, html=html,
+        request_id=f"{message_type}-{order.get('_id')}",
+    )
+    current_app.extensions["store"].insert_one("email_logs", {
+        "order_id": order.get("_id"), "recipient": recipient, "subject": subject,
+        "message_type": message_type, "sent_by": (current_user() or {}).get("_id"),
+        "status": "sent", "provider_id": result.get("id"),
+        "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"),
+        "channel": "email", "created_at": utcnow(),
+    })
+    return result
+
+
+def _log_order_email_failure(order: dict, message_type: str, exc: EmailDeliveryError) -> None:
+    current_app.extensions["store"].insert_one("email_logs", {
+        "order_id": order.get("_id"), "recipient": _order_recipient(order),
+        "message_type": message_type, "sent_by": (current_user() or {}).get("_id"),
+        "status": "failed", "error_code": exc.error_code,
+        "diagnostic_id": exc.diagnostic_id, "stage": exc.stage,
+        "channel": "email", "created_at": utcnow(),
+    })
 
 
 @bp.get("/orders")
@@ -36,6 +103,52 @@ def get_order(order_id: str):
     if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
         return failure("Customer access denied", status=403)
     return success(order)
+
+
+@bp.post("/orders/<order_id>/send-confirmation")
+@permission_required("orders.update")
+def send_order_confirmation(order_id: str):
+    order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
+    if not order:
+        return failure("Order not found", status=404)
+    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+        return failure("Customer access denied", status=403)
+    try:
+        result = _send_order_email(order, "order_confirmation")
+    except ValueError as exc:
+        return failure(str(exc), status=422, error="RECIPIENT_INVALID")
+    except EmailDeliveryError as exc:
+        _log_order_email_failure(order, "order_confirmation", exc)
+        return _order_email_failure(exc)
+    except Exception:
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("order confirmation email failed diagnostic_id=%s stage=email_service", diagnostic_id)
+        return failure("Order email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
+    audit("order.email_confirmation", "order", order_id, {"diagnostic_id": result.get("diagnostic_id")})
+    return success({"sent": True, "diagnostic_id": result.get("diagnostic_id")}, "Order confirmation sent")
+
+
+@bp.post("/orders/<order_id>/send-status")
+@permission_required("orders.update")
+def send_order_status(order_id: str):
+    order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
+    if not order:
+        return failure("Order not found", status=404)
+    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+        return failure("Customer access denied", status=403)
+    try:
+        result = _send_order_email(order, "order_status")
+    except ValueError as exc:
+        return failure(str(exc), status=422, error="RECIPIENT_INVALID")
+    except EmailDeliveryError as exc:
+        _log_order_email_failure(order, "order_status", exc)
+        return _order_email_failure(exc)
+    except Exception:
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("order status email failed diagnostic_id=%s stage=email_service", diagnostic_id)
+        return failure("Order email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
+    audit("order.email_status", "order", order_id, {"diagnostic_id": result.get("diagnostic_id")})
+    return success({"sent": True, "diagnostic_id": result.get("diagnostic_id")}, "Order status email sent")
 
 
 @bp.post("/quotations/<quotation_id>/convert-to-order")

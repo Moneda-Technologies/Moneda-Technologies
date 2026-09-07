@@ -461,6 +461,32 @@ def get_settings():
     return success(current_app.extensions["store"].find_one("app_settings", {"_id": "system"}))
 
 
+@bp.get("/admin/email/health")
+@permission_required("settings.manage")
+def email_health():
+    """Return safe configuration and the latest delivery result; never secrets."""
+    zoho = current_app.extensions["zoho_oauth"].status()
+    latest, _ = current_app.extensions["store"].list("email_logs", limit=1, sort="created_at", direction=-1)
+    last = latest[0] if latest else None
+    return success({
+        "provider": "zoho_mail_api",
+        "configuration_valid": zoho["configured"],
+        "oauth_connected": zoho["connected"],
+        "account_email": zoho["account_email"],
+        "account_id": zoho.get("account_id"),
+        "account_id_configured": zoho["account_id_configured"],
+        "api_domain_status": zoho["api_domain_status"],
+        "last_attempt": ({
+            "status": last.get("status"),
+            "stage": last.get("stage"),
+            "diagnostic_id": last.get("diagnostic_id"),
+            "error_code": last.get("error_code"),
+            "message_type": last.get("message_type"),
+            "created_at": last.get("created_at"),
+        } if last else None),
+    })
+
+
 @bp.patch("/settings")
 @permission_required("settings.manage")
 def update_settings():

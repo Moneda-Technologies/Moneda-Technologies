@@ -29,13 +29,17 @@ class Config:
     # FLASK_SECRET_KEY alias so existing deployments continue to work.
     SECRET_KEY = os.getenv("SECRET_KEY") or os.getenv("FLASK_SECRET_KEY") or "development-only-change-me"
     DEBUG = env_bool("FLASK_DEBUG", False)
+    ENVIRONMENT = os.getenv("FLASK_ENV", "development")
+    PORT = int(os.getenv("PORT", "5005"))
     TESTING = False
     MONGODB_URI = os.getenv("MONGODB_URI", "")
     MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "moneda")
-    DEMO_MODE = env_bool("DEMO_MODE", not bool(MONGODB_URI))
+    # Memory storage is an explicit demo-only choice. Missing MongoDB
+    # configuration must never silently turn a normal environment into demo.
+    DEMO_MODE = env_bool("DEMO_MODE", False)
     # JSON is bootstrap input. Production MongoDB is the runtime authority and
     # is never silently reseeded during a web-process restart.
-    AUTO_SEED = env_bool("AUTO_SEED", DEMO_MODE)
+    AUTO_SEED = env_bool("AUTO_SEED", False)
     DEV_AUTH_BYPASS = env_bool("DEV_AUTH_BYPASS", False)
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
@@ -51,18 +55,21 @@ class Config:
     DATA_DIRECTORY = env_path("DATA_DIRECTORY", PROJECT_ROOT / "data")
     PDF_DIRECTORY = env_path("PDF_DIRECTORY", PROJECT_ROOT / "generated" / "quotations")
     UPLOAD_DIRECTORY = env_path("UPLOAD_DIRECTORY", PROJECT_ROOT / "uploads")
-    MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "zoho")
-    MAIL_HOST = os.getenv("MAIL_HOST", "smtp.zoho.com")
-    MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
-    MAIL_USE_TLS = env_bool("MAIL_USE_TLS", True)
-    MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
-    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
-    MAIL_GENERAL_FROM = os.getenv("MAIL_GENERAL_FROM") or os.getenv("MAIL_FROM", "business@monedatechnologies.com")
-    MAIL_QUOTATION_FROM = os.getenv("MAIL_QUOTATION_FROM") or MAIL_GENERAL_FROM
-    MAIL_ORDER_FROM = os.getenv("MAIL_ORDER_FROM") or MAIL_GENERAL_FROM
-    # Backward-compatible alias for integrations that still read MAIL_FROM.
-    MAIL_FROM = MAIL_GENERAL_FROM
-    MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "Moneda Technologies")
+    MAIL_TEST_TO = os.getenv("MAIL_TEST_TO", "")
+    # Zoho Mail API OAuth.  These values are server-side only; never expose
+    # client secret or refresh token through the public configuration API.
+    ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "")
+    ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")
+    ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "")
+    ZOHO_ACCOUNT_ID = os.getenv("ZOHO_ACCOUNT_ID", "")
+    ZOHO_ACCOUNTS_BASE_URL = os.getenv("ZOHO_ACCOUNTS_BASE_URL", "https://accounts.zoho.in")
+    ZOHO_OAUTH_REDIRECT_URI = os.getenv("ZOHO_OAUTH_REDIRECT_URI", "http://localhost:5005/api/v1/integrations/zoho/callback")
+    ZOHO_MAIL_API_BASE_URL = os.getenv("ZOHO_MAIL_API_BASE_URL", "")
+    ZOHO_FROM_ADDRESS = os.getenv("ZOHO_FROM_ADDRESS", "business@monedatechnologies.com")
+    # A stable, deployment-only key is preferred. SECRET_KEY is the secure
+    # backwards-compatible fallback so existing deployments can connect.
+    INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY") or SECRET_KEY
+    EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "zoho_mail_api")
     EXCHANGE_RATE_PROVIDER = os.getenv("EXCHANGE_RATE_PROVIDER", "frankfurter")
     EXCHANGE_RATE_API_KEY = os.getenv("EXCHANGE_RATE_API_KEY", "")
     EXCHANGE_RATE_CACHE_SECONDS = int(os.getenv("EXCHANGE_RATE_CACHE_SECONDS", "21600"))
@@ -74,5 +81,9 @@ class TestConfig(Config):
     TESTING = True
     DEMO_MODE = True
     AUTO_SEED = True
+    # Tests must never inherit or mutate a developer/production MongoDB.
+    MONGODB_URI = ""
+    MONGODB_DATABASE = "moneda-test-memory"
+    RATELIMIT_STORAGE_URI = "memory://"
     DEV_AUTH_BYPASS = True
     SECRET_KEY = "test-secret-key"

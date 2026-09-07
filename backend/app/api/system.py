@@ -15,18 +15,42 @@ bp = Blueprint("system", __name__, url_prefix="/api")
 def health():
     store = current_app.extensions["store"]
     database = store.health()
+    zoho = current_app.extensions["zoho_oauth"].status()
+    payload = {
+        "status": "healthy" if database.get("connected") else "degraded",
+        "service": "moneda-api",
+        "version": "1.0.0",
+        "database": database,
+        "rate_limit": {"backend": current_app.config.get("RATE_LIMIT_BACKEND", "memory")},
+        "email": {
+            "provider": "zoho_mail_api", "configured": zoho["configured"],
+            "connected": zoho["connected"], "status": zoho["status"],
+        },
+    }
     if not database.get("connected"):
-        return success({"status": "degraded", "service": "moneda-api", "version": "1.0.0", "database": database}, status=503)
-    return success({"status": "healthy", "service": "moneda-api", "version": "1.0.0", "database": database})
+        return success(payload, "Moneda API is running with degraded database connectivity", 503)
+    return success(payload, "Moneda API is running")
 
 
 @bp.get("/config")
 def public_config():
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
+    brand_name = settings.get("brand_name") or "Moneda Technologies"
+    brand_logo_path = settings.get("brand_logo_path") or "/brand/moneda-logo.svg"
+    currencies = settings.get("supported_currencies") or ["EUR", "USD", "INR"]
+    email_otp_enabled = bool(
+        current_app.config.get("DEMO_MODE") or current_app.config.get("TESTING")
+        or current_app.extensions["zoho_oauth"].status()["connected"]
+    )
     return success({
-        "brand_name": settings.get("brand_name"), "brand_logo_path": settings.get("brand_logo_path"),
-        "supported_currencies": settings.get("supported_currencies", ["EUR", "USD", "INR"]),
+        # Existing flat keys remain for current clients. The grouped keys make
+        # the public contract explicit without exposing private configuration.
+        "brand_name": brand_name, "brand_logo_path": brand_logo_path,
+        "supported_currencies": currencies,
         "master_currency": settings.get("master_currency", "EUR"), "demo_mode": current_app.config["DEMO_MODE"],
+        "app": {"name": brand_name, "logo_path": brand_logo_path},
+        "features": {"email_otp": email_otp_enabled, "signup": True, "email_provider": current_app.config.get("EMAIL_PROVIDER", "zoho_mail_api")},
+        "currencies": currencies,
     })
 
 

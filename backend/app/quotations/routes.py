@@ -5,6 +5,7 @@ import base64
 from flask import Blueprint, Response, current_app, request
 
 from app.api.responses import failure, success
+from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import (
     current_user, customer_id_from, customer_record, enforce_active_customer,
     enforce_customer, enforce_active_customer_company, selected_customer_id,
@@ -190,22 +191,38 @@ def send_quotation(quotation_id: str):
     cc = [item.strip() for item in str(payload.get("cc", "")).split(",") if item.strip()]
     subject = str(payload.get("subject") or f"Quotation {row['quotation_number']} - Moneda Technologies")[:200]
     message = str(payload.get("message") or f"<p>Please find quotation <strong>{row['quotation_number']}</strong> attached.</p><p>Total: {row['currency']} {row['totals']['grand_total']:,.2f}</p>")
-    sender = current_app.config["MAIL_QUOTATION_FROM"]
     sent_by = (current_user() or {}).get("_id")
+    request_id = f"quotation-{quotation_id}"
     try:
         pdf = render_quotation_pdf(row)
         result = current_app.extensions["email_service"].send_quotation(
-            to=[recipient], from_address=sender, subject=subject,
+            to=[recipient], subject=subject,
             cc=cc, html=f"<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>{message}</div>",
             attachments=[{"filename": f"{row['quotation_number']}.pdf", "content": base64.b64encode(pdf).decode("ascii")}],
+            request_id=request_id,
         )
+    except EmailDeliveryError as exc:
+        store.insert_one("email_logs", {
+            "quotation_id": quotation_id, "recipient": recipient, "cc": cc, "subject": subject,
+            "message_type": "quotation", "sent_by": sent_by, "status": "failed",
+            "error_code": exc.error_code, "diagnostic_id": exc.diagnostic_id, "stage": exc.stage,
+            "channel": "email", "created_at": utcnow(),
+        })
+        message = (
+            "Email service is not connected. Please contact the administrator."
+            if exc.error_code == "OAUTH_NOT_CONNECTED" else "Quotation email could not be delivered."
+        )
+        status = 429 if exc.error_code == "ZOHO_MAIL_API_RATE_LIMIT" else 422 if exc.error_code == "SENDER_INVALID" else 503
+        return failure(message, status=status, error=exc.error_code, diagnostic_id=exc.diagnostic_id, stage=exc.stage)
     except Exception as exc:
-        store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": cc, "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "failed", "error": str(exc)[:300], "channel": "email", "created_at": utcnow()})
-        return failure("Quotation email could not be delivered", status=503)
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("quotation email failed diagnostic_id=%s stage=email_service", diagnostic_id)
+        store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": cc, "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "failed", "error_code": "MESSAGE_SUBMISSION_FAILED", "diagnostic_id": diagnostic_id, "stage": "email_service", "channel": "email", "created_at": utcnow()})
+        return failure("Quotation email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
     user = current_user() or {}
     history = [*row.get("history", []), {"status": "Sent", "at": utcnow(), "by": user.get("_id")}]
     updated = store.update_one("quotations", {"_id": quotation_id}, {"status": "Sent", "history": history})
-    store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": cc, "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "sent", "provider_id": result.get("id"), "channel": "email", "created_at": utcnow()})
+    store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": cc, "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
     store.insert_one("notifications", {
         "user_id": user.get("_id"), "customer_id": row.get("customer_id") or row.get("customer_company_id") or row.get("company_id"), "type": "quotation_sent",
         "title": f"Quotation {row['quotation_number']} sent", "quotation_id": quotation_id, "read": False,

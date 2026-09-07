@@ -15,8 +15,8 @@ interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode:
 
 const app = document.querySelector<HTMLElement>("#app")!;
 
-async function enterWorkspace(forceCompanySelection = false): Promise<void> {
-  const session = await authApi.me();
+async function enterWorkspace(forceCompanySelection = false, existingSession?: Awaited<ReturnType<typeof authApi.me>>): Promise<void> {
+  const session = existingSession ?? await authApi.me();
   const customers = session.customers ?? (session.customer_companies ?? session.companies) as unknown as Customer[];
   const customerCompanies = customers as unknown as Company[];
   const selectionPage = location.pathname === CUSTOMER_SELECTION_PATH || location.pathname === "/company-selection";
@@ -38,24 +38,51 @@ async function enterWorkspace(forceCompanySelection = false): Promise<void> {
   }
   document.body.classList.remove("print-preview-mode");
   app.replaceChildren(renderShell());
-  const authEntry = location.pathname === "/login" || location.pathname === "/";
-  const destination = forceCompanySelection || authEntry ? "/customer-selection" : location.pathname;
+  const authEntry = ["/", "/login", "/home"].includes(location.pathname);
+  const destination = forceCompanySelection
+    ? "/customer-selection"
+    : authEntry
+      ? (customer ? "/calculator" : "/customer-selection")
+      : location.pathname;
   await navigate(!customer && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
+}
+
+function renderPublicAuthentication(config: PublicConfig): void {
+  if (location.pathname === "/signup") app.replaceChildren(signupPage());
+  else if (["/forgot-password", "/reset-password"].includes(location.pathname)) app.replaceChildren(passwordResetPage());
+  else {
+    if (["/", "/home"].includes(location.pathname)) history.replaceState({}, "", "/login");
+    app.replaceChildren(loginPage(config.demo_mode, () => enterWorkspace(true)));
+  }
 }
 
 async function bootstrap(): Promise<void> {
   let config: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: import.meta.env.VITE_BRAND_LOGO_PATH ?? "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR" };
-  try { config = await api<PublicConfig>("/config"); } catch { /* The sign-in state below gives the actionable error. */ }
-  appStore.set({ brandName: config.brand_name, brandLogoPath: config.brand_logo_path });
-  try { await enterWorkspace(); }
+  try { config = await api<PublicConfig>("/config"); }
   catch (error) {
-    if (error instanceof ApiError && error.status !== 401) {
-      app.innerHTML = `<div class="fatal-state"><img src="${config.brand_logo_path}" alt="${config.brand_name}"><h1>Workspace unavailable</h1><p>${error.message}</p><button class="button button-primary" onclick="location.reload()">Try again</button></div>`;
+    const message = error instanceof ApiError ? `${error.message} (${error.status})` : "The API did not return a valid response.";
+    app.innerHTML = `<div class="fatal-state"><img src="${config.brand_logo_path}" alt="${config.brand_name}"><h1>Moneda configuration could not be loaded.</h1><p>${message}</p><button class="button button-primary" onclick="location.reload()">Try again</button></div>`;
+    return;
+  }
+  appStore.set({ brandName: config.brand_name, brandLogoPath: config.brand_logo_path });
+  try {
+    const session = await authApi.bootstrapSession();
+    if (!session) {
+      renderPublicAuthentication(config);
       return;
     }
-    if (location.pathname === "/signup") app.replaceChildren(signupPage(() => enterWorkspace(true)));
-    else if (["/forgot-password", "/reset-password"].includes(location.pathname)) app.replaceChildren(passwordResetPage());
-    else app.replaceChildren(loginPage(config.demo_mode, () => enterWorkspace(true)));
+    await enterWorkspace(false, session);
+  }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      renderPublicAuthentication(config);
+      return;
+    }
+    console.error("Session bootstrap failed", error);
+    const message = error instanceof ApiError
+      ? `${error.message} (${error.status})`
+      : "The Moneda API could not be reached. Check the connection and try again.";
+    app.innerHTML = `<div class="fatal-state"><img src="${config.brand_logo_path}" alt="${config.brand_name}"><h1>Workspace unavailable</h1><p>${message}</p><button class="button button-primary" onclick="location.reload()">Try again</button></div>`;
   }
 }
 

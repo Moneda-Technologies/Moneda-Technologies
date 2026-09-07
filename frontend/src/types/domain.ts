@@ -5,6 +5,10 @@ export interface ApiEnvelope<T> {
   data: T;
   message: string | null;
   errors: unknown[];
+  error?: string;
+  request_id?: string;
+  diagnostic_id?: string;
+  stage?: string;
 }
 
 export interface Company {

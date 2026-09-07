@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
+from app.communication.email import EmailDeliveryError
 from app.customers.codes import customer_code
+from app.repositories.store import build_store, utcnow
 
 
 COMPANY = "company-moneda-demo"
@@ -51,10 +55,10 @@ def test_logout_invalidates_session(client):
     assert client.get("/api/v1/me").status_code == 401
 
 
-def test_otp_does_not_claim_delivery_when_smtp_fails(app, client):
+def test_otp_does_not_claim_delivery_when_mail_api_fails(app, client):
     class FailingProvider:
         def send(self, **_kwargs):
-            raise RuntimeError("SMTP authentication rejected")
+            raise RuntimeError("Mail API rejected the request")
 
     app.extensions["otp_service"].email_provider = FailingProvider()
     user = app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {"email": "demo@moneda.example"})
@@ -64,6 +68,96 @@ def test_otp_does_not_claim_delivery_when_smtp_fails(app, client):
     assert app.extensions["store"].count("otp_challenges") == 1
     challenge = app.extensions["store"].find_one("otp_challenges", {"email": user["email"].lower()})
     assert challenge["used"] is True
+
+
+def test_non_demo_store_fails_fast_without_mongodb_uri():
+    with pytest.raises(RuntimeError, match="MONGODB_URI is required"):
+        build_store({"MONGODB_URI": "", "MONGODB_DATABASE": "moneda", "DEMO_MODE": False, "TESTING": False})
+
+
+def test_signup_validation_returns_exact_field_and_reference(client):
+    response = client.post("/api/v1/auth/signup/start", json={"username": "bad name", "email": "invalid"})
+    assert response.status_code == 422
+    assert response.json["error"] == "validation_error"
+    assert response.json["request_id"].startswith("signup-")
+    assert response.json["errors"][0]["field"] == "name"
+    assert response.json["message"] == "Name is required."
+
+
+def test_signup_zoho_not_connected_returns_and_logs_trace_metadata(app, client, caplog):
+    class DisconnectedZohoProvider:
+        def send_signup_otp(self, **_kwargs):
+            try:
+                raise RuntimeError("not connected")
+            except RuntimeError as cause:
+                raise EmailDeliveryError(
+                    "Zoho Mail is not connected", stage="oauth_configuration",
+                    diagnostic_id="email-test-oauth", error_code="OAUTH_NOT_CONNECTED",
+                ) from cause
+
+    caplog.set_level("INFO")
+    app.extensions["otp_service"].email_provider = DisconnectedZohoProvider()
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "OAuth Diagnostic", "username": "oauth.diagnostic", "email": "oauth-diagnostic@example.com",
+    })
+
+    assert response.status_code == 503
+    assert response.json["message"] == "Email service is not connected. Please contact the administrator."
+    assert response.json["request_id"].startswith("signup-")
+    assert response.json["diagnostic_id"] == "email-test-oauth"
+    assert response.json["stage"] == "oauth_configuration"
+    assert response.json["error"] == "OAUTH_NOT_CONNECTED"
+    logs = caplog.text
+    assert response.json["request_id"] in logs
+    assert "exception_class=RuntimeError" in logs
+    assert "error_code=OAUTH_NOT_CONNECTED" in logs
+
+
+def test_public_health_and_config_are_safe(client):
+    health = client.get("/api/v1/health")
+    assert health.status_code == 200
+    assert health.json["data"]["rate_limit"]["backend"] == "memory"
+
+    config = client.get("/api/v1/config")
+    assert config.status_code == 200
+    assert config.json["data"]["app"]["name"] == "Moneda Technologies"
+    assert config.json["data"]["features"]["signup"] is True
+    serialized = str(config.json).lower()
+    assert "mail_password" not in serialized
+    assert "mongodb_uri" not in serialized
+    assert "secret_key" not in serialized
+
+    assert client.get("/api/v1/me").status_code == 401
+
+
+def test_admin_email_health_is_safe_and_reports_latest_attempt(app, authenticated):
+    app.extensions["store"].insert_one("email_logs", {
+        "status": "failed", "stage": "token_refresh", "diagnostic_id": "email-test",
+        "error_code": "OAUTH_REFRESH_ERROR", "message_type": "otp_login", "created_at": utcnow(),
+    })
+    response = authenticated.get("/api/v1/admin/email/health")
+    assert response.status_code == 200
+    assert response.json["data"]["last_attempt"]["stage"] == "token_refresh"
+    serialized = str(response.json).lower()
+    assert "mail_password" not in serialized and "password" not in serialized
+
+
+def test_order_confirmation_and_status_use_central_email_service(app, authenticated):
+    order = app.extensions["store"].insert_one("orders", {
+        "_id": "order-email-test", "order_number": "MON_ORD99999",
+        "customer_id": COMPANY, "status": "Processing", "currency": "EUR",
+        "customer_snapshot": {"name": "Test Customer", "email": "customer@example.com"},
+        "totals": {"grand_total": 100}, "products_snapshot": [], "history": [],
+    })
+    confirmation = authenticated.post(f"/api/v1/orders/{order['_id']}/send-confirmation", json={})
+    status = authenticated.post(f"/api/v1/orders/{order['_id']}/send-status", json={})
+    assert confirmation.status_code == 200
+    assert status.status_code == 200
+    messages = app.extensions["email_provider"].messages
+    assert messages[-2]["to"] == ["customer@example.com"]
+    assert "Order confirmation" in messages[-2]["subject"]
+    assert "Order status" in messages[-1]["subject"]
+    assert "Processing" in messages[-1]["html"]
 
 
 def test_demo_session_and_seeded_catalog(authenticated):

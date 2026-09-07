@@ -146,7 +146,7 @@ The official logo remains at the configured `brand_logo_path` and is not altered
 
 Quotations use the Moneda HTML/CSS template and WeasyPrint in production/Docker. A ReportLab/SVG fallback keeps local Windows PDF generation functional when the native Pango runtime is unavailable. Both paths include parties, article numbers, product configuration, currency/rate metadata, line discounts, product tax, transport, commercial conditions, totals, page numbers, and authorization space.
 
-Set the Zoho SMTP variables (`MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_QUOTATION_FROM`, `MAIL_ORDER_FROM`, and `MAIL_GENERAL_FROM`) for real email delivery. `MAIL_FROM` remains a backward-compatible alias for the general sender. Missing credentials produce a clear delivery failure; demo mode records messages without claiming delivery. WhatsApp records a clear mock result in demo mode; it never claims a real message was delivered.
+Production email uses only the Zoho Mail REST API through server-side OAuth 2.0; there is no SMTP fallback. Admins connect, test, reconnect, or disconnect the mailbox under **Settings -> Communication -> Zoho Mail**. Refresh tokens are encrypted in MongoDB and access tokens remain in server memory for their short lifetime. See [docs/zoho-mail-oauth.md](docs/zoho-mail-oauth.md) for India data-center setup, localhost authorization, and the environment-only production migration. Demo/test mode records messages without claiming external delivery. WhatsApp records a clear mock result in demo mode; it never claims a real message was delivered.
 
 ## Testing and build
 

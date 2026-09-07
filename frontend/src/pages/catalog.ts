@@ -287,7 +287,7 @@ export async function openCartItemEditor(item: CartItem, onSaved: () => void | P
 export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
   const copy = familyCopy[selectedFamily];
-  const page = pageScaffold("Calculator", copy?.label ?? "Product Calculator", customerCompany ? `Quotation For: ${customerCompany.name}` : "Select a customer before configuring products.", '<a class="button button-primary" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>Quotation Cart</a>');
+  const page = pageScaffold("Calculator", copy?.label ?? "Calculator", customerCompany ? `Quotation For: ${customerCompany.name}` : "Select a customer before configuring products.", '<a class="button button-primary" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>Quotation Cart</a>');
   page.classList.add("calculator-page");
   const body = page.querySelector<HTMLElement>(".page-body")!;
   if (!customerCompany) { body.innerHTML = emptyState("building-2", "Customer selection required", "Choose a customer to establish pricing and currency context."); refreshIcons(page); return page; }

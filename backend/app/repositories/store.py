@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo.errors import ConfigurationError, OperationFailure, PyMongoError, ServerSelectionTimeoutError
 
 
 def utcnow() -> datetime:
@@ -121,14 +122,24 @@ class MemoryStore:
 
 class MongoStore:
     def __init__(self, uri: str, database: str) -> None:
-        self.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-        self.client.admin.command("ping")
-        self.db = self.client[database]
-        self._indexes()
+        try:
+            self.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            self.client.admin.command("ping")
+            self.db = self.client[database]
+            self._indexes()
+        except OperationFailure as exc:
+            raise RuntimeError("MongoDB authentication or authorization failed") from exc
+        except ConfigurationError as exc:
+            raise RuntimeError("MongoDB connection string or DNS configuration is invalid") from exc
+        except ServerSelectionTimeoutError as exc:
+            raise RuntimeError("MongoDB network, DNS, TLS, or timeout failure") from exc
+        except PyMongoError as exc:
+            raise RuntimeError("MongoDB connection failed") from exc
 
     def _indexes(self) -> None:
         self.db.users.create_index("email", unique=True)
         self.db.users.create_index("username", unique=True, sparse=True)
+        self.db.users.create_index("username_normalized", unique=True, sparse=True)
         self.db.companies.create_index("name")
         self.db.products.create_index([("category_id", ASCENDING), ("active", ASCENDING)])
         self.db.customers.create_index([("customer_id", ASCENDING), ("name", ASCENDING)])
@@ -145,6 +156,11 @@ class MongoStore:
         self.db.leads.create_index([("company_id", ASCENDING), ("status", ASCENDING)])  # legacy bridge
         self.db.reminders.create_index([("assigned_to", ASCENDING), ("due_date", ASCENDING)])
         self.db.audit_logs.create_index("created_at")
+        self.db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
+        self.db.pending_signups.create_index("expires_at", expireAfterSeconds=0)
+        self.db.email_logs.create_index([("created_at", DESCENDING), ("status", ASCENDING)])
+        self.db.oauth_states.create_index("expires_at", expireAfterSeconds=0)
+        self.db.oauth_states.create_index("transaction_hash", unique=True, sparse=True)
 
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]:
@@ -207,8 +223,8 @@ class MongoStore:
 
 
 def build_store(config: dict[str, Any]) -> Store:
-    if config.get("MONGODB_URI"):
-        return MongoStore(config["MONGODB_URI"], config["MONGODB_DATABASE"])
     if config.get("DEMO_MODE") or config.get("TESTING"):
         return MemoryStore()
+    if config.get("MONGODB_URI"):
+        return MongoStore(config["MONGODB_URI"], config["MONGODB_DATABASE"])
     raise RuntimeError("MONGODB_URI is required when DEMO_MODE is disabled")

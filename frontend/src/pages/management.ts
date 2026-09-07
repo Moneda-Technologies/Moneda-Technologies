@@ -1,4 +1,5 @@
 import { adminApi, authApi, companyApi, profileApi } from "../api";
+import { apiEndpoint } from "../api/client";
 import { logout } from "../auth/logout";
 import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
@@ -71,7 +72,46 @@ function pricingRow(product: Product): string {
 export async function settingsPage(): Promise<HTMLElement> {
   const page = pageScaffold("Management", "System settings", "Govern branding, tax options and commercial defaults from one place.", '<button class="button button-primary"><i data-lucide="save"></i>Save changes</button>');
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
-  try { const settings = await adminApi.settings(); body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><button class="active"><i data-lucide="palette"></i>Brand & company</button><button><i data-lucide="badge-percent"></i>Taxes</button><button><i data-lucide="euro"></i>Currencies</button><button><i data-lucide="mail"></i>Communication</button><button><i data-lucide="shield-check"></i>Security</button></nav><section class="panel settings-panel"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(settings.brand_logo_path ?? "/brand/moneda-logo.svg")}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(settings.brand_name)}"></label><label>Logo path<input value="${escapeHtml(settings.brand_logo_path)}"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(settings.quotation_prefix)}" disabled></label><label>Default tax<select><option>${escapeHtml(settings.default_tax_rate)}%</option></select></label><label>Tax mode<select><option>${escapeHtml(settings.default_tax_mode)}</option></select></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section></div>`; }
+  try {
+    const settings = await adminApi.settings();
+    let zohoMarkup = "";
+    if (appStore.can("settings.manage")) {
+      zohoMarkup = `<section class="panel settings-panel"><span class="eyebrow">Communication</span><h2>Zoho Mail</h2><p>Application email uses the server-side Zoho Mail API.</p><div class="notice compact"><i data-lucide="mail-check"></i><div><strong>Loading integration status…</strong></div></div></section>`;
+      try {
+        const status = await adminApi.zohoStatus();
+        const state = status.connected ? "Connected" : status.status === "error" ? "Error" : "Not connected";
+        const errorMarkup = status.last_error
+          ? `<div class="notice error compact"><i data-lucide="circle-alert"></i><div><strong>${escapeHtml(status.last_error.code)}</strong><p>Stage: ${escapeHtml(status.last_error.stage)} · Reference: ${escapeHtml(status.last_error.diagnostic_id)}</p></div></div>`
+          : "";
+        zohoMarkup = `<section class="panel settings-panel zoho-integration"><span class="eyebrow">Communication</span><h2>Zoho Mail</h2><p>Transactional email is sent only through the server-side Zoho Mail API.</p><div class="integration-status"><span class="status-dot ${status.connected ? "is-live" : status.status === "error" ? "is-error" : ""}"></span><strong>${escapeHtml(state)}</strong><small>Provider: Zoho Mail API</small></div><dl class="integration-details"><div><dt>Account</dt><dd>${escapeHtml(status.account_email || "Unknown")}</dd></div><div><dt>OAuth</dt><dd>${escapeHtml(status.oauth === "connected" ? "Connected" : "Not connected")}</dd></div><div><dt>Account ID</dt><dd>${escapeHtml(status.account_id || "missing")}</dd></div><div><dt>API domain</dt><dd>${escapeHtml(status.api_domain || "missing")} <small>(${escapeHtml(status.api_domain_status)})</small></dd></div><div><dt>Scopes</dt><dd>${status.scopes.map((scope) => escapeHtml(scope)).join("<br>")}</dd></div></dl>${errorMarkup}<div class="settings-actions"><button class="button button-secondary" type="button" data-zoho-connect>${status.connected ? "Reconnect Zoho Mail" : "Connect Zoho Mail"}</button>${status.connected ? '<button class="button button-danger" type="button" data-zoho-disconnect>Disconnect</button>' : ""}</div><form class="integration-test-form" data-zoho-test-form><label>Test recipient email<input type="email" name="to" autocomplete="email" placeholder="recipient@example.com" required ${status.connected ? "" : "disabled"}></label><button class="button button-quiet" type="submit" ${status.connected ? "" : "disabled"}><i data-lucide="send"></i>Test Email</button></form><div class="integration-test-result" data-zoho-test-result></div><p class="form-hint">Refresh and access tokens remain encrypted or memory-only on the server and are never returned to the browser.</p></section>`;
+        page.dataset.zohoConnected = String(status.connected);
+      } catch (_error) { /* settings remains usable when the integration permission is absent */ }
+    }
+    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><button class="active"><i data-lucide="palette"></i>Brand & company</button><button><i data-lucide="badge-percent"></i>Taxes</button><button><i data-lucide="euro"></i>Currencies</button><button><i data-lucide="mail"></i>Communication</button><button><i data-lucide="shield-check"></i>Security</button></nav><div class="settings-stack"><section class="panel settings-panel"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(settings.brand_logo_path ?? "/brand/moneda-logo.svg")}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="${escapeHtml(String(settings.brand_logo_path ?? "/brand/moneda-logo.svg"))}"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label><label>Default tax<select><option>${escapeHtml(String(settings.default_tax_rate ?? 0))}%</option></select></label><label>Tax mode<select><option>${escapeHtml(String(settings.default_tax_mode ?? "exclusive"))}</option></select></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${zohoMarkup}</div></div>`;
+    page.querySelector<HTMLButtonElement>("[data-zoho-connect]")?.addEventListener("click", () => { window.location.href = apiEndpoint("/integrations/zoho/connect"); });
+    page.querySelector<HTMLButtonElement>("[data-zoho-disconnect]")?.addEventListener("click", async (event) => {
+      if (!window.confirm("Disconnect Zoho Mail? Application email will stop until it is reconnected.")) return;
+      const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
+      try { await adminApi.zohoDisconnect(); toast("Zoho Mail disconnected"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
+      catch (error) { toast(error instanceof Error ? error.message : "Zoho Mail could not be disconnected", "error"); button.disabled = false; }
+    });
+    page.querySelector<HTMLFormElement>("[data-zoho-test-form]")?.addEventListener("submit", async (event) => {
+      event.preventDefault(); const form = event.currentTarget as HTMLFormElement;
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      const target = page.querySelector<HTMLElement>("[data-zoho-test-result]")!;
+      const to = String(new FormData(form).get("to") ?? ""); button.disabled = true; target.innerHTML = "";
+      try {
+        const result = await adminApi.zohoTest(to);
+        target.innerHTML = `<div class="notice compact"><i data-lucide="circle-check"></i><div><strong>Test email submitted</strong><p>${result.checks.map((check) => `${escapeHtml(check.stage)} ${escapeHtml(check.result)}`).join(" · ")} · Reference ${escapeHtml(result.diagnostic_id ?? "recorded")}</p></div></div>`;
+        toast("Zoho test email submitted"); refreshIcons(target);
+      } catch (error) { toast(error instanceof Error ? error.message : "Zoho test failed", "error"); }
+      finally { button.disabled = false; }
+    });
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("zoho") === "connected") toast("Zoho Mail connected successfully.");
+    if (query.get("zoho") === "error") toast(`Zoho Mail connection failed (${query.get("error_code") ?? "OAUTH_CALLBACK_ERROR"}) at ${query.get("stage") ?? "callback"}. Reference ${query.get("diagnostic_id") ?? "unavailable"}.`, "error");
+    if (query.has("zoho")) history.replaceState({}, "", window.location.pathname);
+  }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Settings unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }
