@@ -6,8 +6,8 @@ from flask import Blueprint, current_app, request, session
 
 from app.api.responses import failure, success
 from app.customers.codes import available_customer_code, customer_code
-from app.customers.metadata import normalize_customer_profile
-from app.middleware.access import customer_record, enforce_customer, permission_required
+from app.customers.metadata import customer_gst_applicable, normalize_customer_profile, validation_message
+from app.middleware.access import customer_record, enforce_customer, permission_required, permitted_customer_query
 from app.services.audit import audit
 
 
@@ -26,6 +26,7 @@ def _customer_view(row: dict) -> dict:
     customer.setdefault("default_tax_rate", 0)
     customer.setdefault("default_tax_mode", "no_tax")
     customer.setdefault("tax_enabled", False)
+    customer["gst_applicable"] = customer_gst_applicable(customer)
     customer.setdefault("active", customer.get("status", "active") != "archived")
     return customer
 
@@ -34,14 +35,9 @@ def _list_customers(term: str = "") -> tuple[list[dict], int]:
     store = current_app.extensions["store"]
     # Import lazily to keep this compatibility blueprint independent of auth
     # module initialization order.
-    from app.middleware.access import current_user
-    user = current_user() or {}
-    query: dict = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
-    if user.get("role_id") != "superadmin":
-        permitted = user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])
-        query["_id"] = {"$in": permitted}
+    query: dict = permitted_customer_query()
     if term:
-        query["$or"] = [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]
+        query = {"$and": [query, {"$or": [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]}]}
     rows, total = store.list("customers", query, limit=500, sort="name", direction=1)
     return [_customer_view(row) for row in rows if not row.get("is_issuer")], len([row for row in rows if not row.get("is_issuer")])
 
@@ -78,6 +74,13 @@ def select_customer():
     session["active_customer_id"] = customer_id
     session["selected_customer_company_id"] = customer_id
     session["active_company_id"] = customer_id
+    selected = customer_record(customer_id) or {}
+    current_app.logger.info(
+        "active_customer_selected active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_currency=%s active_customer_gst_applicable=%s",
+        customer_id, selected.get("name", "unknown"), selected.get("country_code", "unknown"),
+        selected.get("preferred_currency") or selected.get("default_currency", "unknown"),
+        bool(selected.get("gst_applicable") or selected.get("tax_profile", {}).get("gst_applicable")),
+    )
     audit("customer.select", "customer", customer_id)
     return success({"customer_id": customer_id, "customer_company_id": customer_id, "company_id": customer_id}, "Customer selected")
 
@@ -102,9 +105,9 @@ def create_customer_compat():
     customer = {key: value for key, value in payload.items() if key not in {"_id", "company_id", "customer_company_id"}}
     customer["name"] = name
     customer["company_name"] = name
-    normalized, error = normalize_customer_profile(customer)
+    normalized, error = normalize_customer_profile(customer, require_complete=True)
     if error:
-        return failure(error, status=422)
+        return failure(validation_message(error), error=error, status=422)
     customer = normalized or customer
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("preferred_currency", "EUR")
@@ -114,6 +117,10 @@ def create_customer_compat():
     customer.setdefault("tax_enabled", False)
     customer.setdefault("status", "active")
     customer.setdefault("active", True)
+    from app.middleware.access import current_user
+    creator_id = (current_user() or {}).get("_id")
+    customer["created_by_user_id"] = creator_id
+    customer["assigned_user_ids"] = [creator_id] if creator_id else []
     store = current_app.extensions["store"]
     customer["customer_code"] = available_customer_code(store, name)
     row = store.insert_one("customers", customer)
@@ -137,7 +144,7 @@ def update_customer_compat(company_id: str):
     existing = current_app.extensions["store"].find_one(collection, {"_id": company_id}) or {}
     normalized, error = normalize_customer_profile(changes, existing)
     if error:
-        return failure(error, status=422)
+        return failure(validation_message(error), error=error, status=422)
     changes = normalized or changes
     row = store.update_one(collection, {"_id": company_id}, changes)
     if not row:

@@ -1,4 +1,4 @@
-import { customerApi } from "../api";
+import { customerApi, customerCompanyApi } from "../api";
 import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
@@ -20,17 +20,17 @@ function customerForm(existing?: Customer): HTMLDivElement {
   const content = document.createElement("div");
   content.innerHTML = `<form class="stack-form" id="customer-form" autocomplete="off">
     <div class="form-grid">
-      <label>Customer company name<input name="company_name" required placeholder="Registered company" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"></label>
-      <label>Primary contact<input name="contact_name" autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"></label>
-      <label>Email<input name="email" type="email" placeholder="procurement@company.com" value="${escapeHtml(existing?.email ?? "")}"></label>
-      <label>Phone<input name="phone" type="tel" inputmode="tel" pattern="[+0-9().\\-\\s]{3,30}" placeholder="Enter international phone number" value="${escapeHtml(existing?.phone ?? "")}"></label>
-      <label>Continent / Region<select name="continent"><option value="">Select continent / region</option>${CONTINENTS.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></label>
-      <label>Country<select name="country_code" ${continent ? "" : "disabled"}><option value="">${continent ? "Select country" : "Select continent first"}</option>${(COUNTRIES_BY_CONTINENT[continent as keyof typeof COUNTRIES_BY_CONTINENT] ?? []).map((item) => `<option value="${item.code}" ${item.code === countryCode ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
-      <label>Preferred currency<select name="preferred_currency"><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select></label>
-      <label>Payment terms<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select></label>
-      <label class="custom-payment-days" ${payment === "Custom" ? "" : "hidden"}>Custom payment term<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"></label>
-      <label class="gst-field" ${selectedCountry?.code === "IN" ? "" : "hidden"}>Tax / GST Number<input name="gst_vat_number" placeholder="GST number" value="${escapeHtml(existing?.gst_vat_number ?? existing?.tax_number ?? existing?.tax_profile?.tax_number ?? "")}"></label>
-      <label>Address<textarea name="address" rows="2" placeholder="Customer address">${escapeHtml(existing?.address ?? "")}</textarea></label>
+      <label>Customer company name *<input name="company_name" required placeholder="Registered company" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"><small class="field-error" data-error-for="company_name"></small></label>
+      <label>Primary contact *<input name="contact_name" required autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"><small class="field-error" data-error-for="contact_name"></small></label>
+      <label>Email *<input name="email" type="email" required placeholder="procurement@company.com" value="${escapeHtml(existing?.email ?? "")}"><small class="field-error" data-error-for="email"></small></label>
+      <label>Phone *<input name="phone" type="tel" required inputmode="tel" pattern="[+0-9().\\-\\s]{3,30}" placeholder="Enter international phone number" value="${escapeHtml(existing?.phone ?? "")}"><small class="field-error" data-error-for="phone"></small></label>
+      <label>Continent / Region *<select name="continent" required><option value="">Select continent / region</option>${CONTINENTS.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select><small class="field-error" data-error-for="continent"></small></label>
+      <label>Country *<select name="country_code" required ${continent ? "" : "disabled"}><option value="">${continent ? "Select country" : "Select continent first"}</option>${(COUNTRIES_BY_CONTINENT[continent as keyof typeof COUNTRIES_BY_CONTINENT] ?? []).map((item) => `<option value="${item.code}" ${item.code === countryCode ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select><small class="field-error" data-error-for="country_code"></small></label>
+      <label>Preferred currency *<select name="preferred_currency" required><option value="">Select currency</option><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select><small class="field-error" data-error-for="preferred_currency"></small></label>
+      <label>Payment terms *<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select><small class="field-error" data-error-for="payment_terms"></small></label>
+      <label class="custom-payment-days" ${payment === "Custom" ? "" : "hidden"}>Custom days *<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"><small class="field-error" data-error-for="custom_payment_days"></small></label>
+      <label class="gst-field" ${selectedCountry?.code === "IN" ? "" : "hidden"}>Tax / GST Number *<input name="gst_vat_number" placeholder="GST number" value="${escapeHtml(existing?.gst_vat_number ?? existing?.tax_number ?? existing?.tax_profile?.tax_number ?? "")}"><small class="field-error" data-error-for="gst_vat_number"></small></label>
+      <label>Address *<textarea name="address" required rows="2" placeholder="Customer address">${escapeHtml(existing?.address ?? "")}</textarea><small class="field-error" data-error-for="address"></small></label>
     </div>
     <button class="button button-primary button-full" type="submit"><i data-lucide="save"></i>${existing ? "Save Customer" : "Create Customer"}</button>
   </form>`;
@@ -70,7 +70,18 @@ function openCustomerEditor(existing: Customer | undefined, onSaved: () => Promi
     const form = event.currentTarget as HTMLFormElement;
     const value = Object.fromEntries(new FormData(form).entries());
     if (value.payment_terms !== "Custom") { delete value.custom_payment_days; }
-    try { if (existing) await customerApi.update(existing._id, value); else await customerApi.create(value); dialog.close(); toast(existing ? "Customer updated" : "Customer created"); await onSaved(); }
+    const errors: Record<string, string> = {};
+    const required = [["company_name", "Company name is required"], ["contact_name", "Primary contact is required"], ["email", "Email is required"], ["phone", "Phone is required"], ["continent", "Continent / region is required"], ["country_code", "Country is required"], ["preferred_currency", "Currency is required"], ["payment_terms", "Payment terms are required"], ["address", "Address is required"]] as const;
+    required.forEach(([field, message]) => { if (!String(value[field] ?? "").trim()) errors[field] = message; });
+    if (value.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value.email))) errors.email = "Enter a valid email address";
+    if (value.phone && !/^[+0-9().\-\s]{3,30}$/.test(String(value.phone))) errors.phone = "Enter a valid phone number";
+    const selected = countryMeta(String(value.continent), String(value.country_code));
+    if (value.continent && value.country_code && !selected) errors.country_code = "Country must belong to the selected continent";
+    if (selected?.code === "IN" && !String(value.gst_vat_number ?? "").trim()) errors.gst_vat_number = "GST / tax number is required for India";
+    if (value.payment_terms === "Custom" && !/^[1-9]\d*$/.test(String(value.custom_payment_days ?? ""))) errors.custom_payment_days = "Enter a positive whole number of days";
+    content.querySelectorAll<HTMLElement>("[data-error-for]").forEach((node) => { node.textContent = errors[node.dataset.errorFor ?? ""] ?? ""; });
+    if (Object.keys(errors).length) return;
+    try { if (existing) await customerApi.update(existing._id, value); else { const created = await customerApi.create(value); if (created._id) await customerCompanyApi.select(created._id); } dialog.close(); toast(existing ? "Customer updated" : "Customer created"); await onSaved(); }
     catch (error) { toast(error instanceof Error ? error.message : "Customer could not be saved", "error"); }
   });
   refreshIcons(content);

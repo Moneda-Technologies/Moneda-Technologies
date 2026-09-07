@@ -55,11 +55,16 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
         if isinstance(expected, dict):
             if "$exists" in expected and (actual is not None) != bool(expected["$exists"]):
                 return False
-            if "$in" in expected and actual not in expected["$in"]:
-                return False
+            if "$in" in expected:
+                values = actual if isinstance(actual, list) else [actual]
+                if not any(value in expected["$in"] for value in values):
+                    return False
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
             if "$regex" in expected and not re.search(str(expected["$regex"]), str(actual or ""), re.I):
+                return False
+        elif isinstance(actual, list):
+            if expected not in actual:
                 return False
         elif actual != expected:
             return False

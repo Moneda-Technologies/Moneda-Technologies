@@ -91,6 +91,27 @@ class CustomerRecipientRegistry:
             "bcc": [item["address"] for item in self.bcc if item["enabled"]],
         }
 
+    @staticmethod
+    def _dedupe(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            normalized = str(value or "").strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                result.append(normalized)
+        return result
+
+    def resolved_for_quotation(self, *, to: list[str], sender_user_email: str) -> dict[str, list[str]]:
+        """Apply the central quotation routing policy without trusting frontend recipients."""
+        base = self.resolved()
+        to_values = self._dedupe(to)
+        to_set = set(to_values)
+        cc = [value for value in self._dedupe([*base["cc"], sender_user_email]) if value not in to_set]
+        cc_set = set(cc)
+        bcc = [value for value in self._dedupe(base["bcc"]) if value not in to_set and value not in cc_set]
+        return {"cc": cc, "bcc": bcc}
+
     def display(self) -> dict[str, list[dict[str, Any]]]:
         return {"cc": [dict(item) for item in self.cc], "bcc": [dict(item) for item in self.bcc]}
 
@@ -173,8 +194,8 @@ class EmailService(EmailProvider):
     def send_quotation(self, *, to: list[str], subject: str, html: str,
                        attachments: list[dict[str, Any]] | None = None,
                        cc: list[str] | None = None, bcc: list[str] | None = None,
-                       request_id: str | None = None) -> dict[str, Any]:
-        routing = self.recipients.resolved()
+                       sender_user_email: str = "", request_id: str | None = None) -> dict[str, Any]:
+        routing = self.recipients.resolved_for_quotation(to=to, sender_user_email=sender_user_email)
         return self.send(
             to=to, subject=subject, html=html, attachments=attachments,
             cc=routing["cc"], bcc=routing["bcc"],

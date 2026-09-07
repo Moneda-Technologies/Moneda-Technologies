@@ -299,7 +299,12 @@ def test_customer_code_is_stable_when_customer_name_changes(app, authenticated):
     stored = app.extensions["store"].find_one("customers", {"_id": "customer-demo-1"})
     assert stored["customer_code"] == "NORTHSTAR"
 
-    duplicate = authenticated.post("/api/v1/customers", json={"name": "Northstar Labels"})
+    duplicate = authenticated.post("/api/v1/customers", json={
+        "name": "Northstar Labels", "contact_name": "Test Contact",
+        "email": "contact@northstar.example", "phone": "+1 202 555 0144",
+        "continent": "North America", "country_code": "US", "preferred_currency": "USD",
+        "payment_terms": "Advance", "address": "1 Main Street",
+    })
     assert duplicate.status_code == 201
     assert duplicate.json["data"]["customer_code"] == "NORTHSTAR-2"
 
@@ -402,6 +407,97 @@ def test_international_company_defaults_to_no_tax(app, authenticated):
     assert line["tax_mode"] == "no_tax"
     assert line["tax_amount"] == 0
     assert line["line_total"] == 42
+
+
+def test_india_price_preview_respects_explicit_gst_inclusive_flag(authenticated):
+    assert authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
+    base = {
+        "customer_id": "customer-demo-1", "currency": "INR", "quantity": 1, "discount_percent": 0,
+        "tax_enabled": True,
+        "configuration": {"thickness_mm": 1.96, "length": 780, "width": 1056, "dimension_unit": "mm", "format_type": "cut_format"},
+    }
+    exclusive_response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
+        **base, "tax_mode": "exclusive", "is_gst_inclusive": False,
+    })
+    inclusive_response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
+        **base, "tax_mode": "inclusive", "is_gst_inclusive": True,
+    })
+    assert exclusive_response.status_code == inclusive_response.status_code == 200
+    exclusive = exclusive_response.json["data"]["line"]
+    inclusive = inclusive_response.json["data"]["line"]
+    assert exclusive["gst_applicable"] is True and exclusive["is_gst_inclusive"] is False
+    assert exclusive["gst_rate"] == 18 and exclusive["gst_amount"] > 0
+    assert exclusive["total"] == round(exclusive["taxable_subtotal"] + exclusive["gst_amount"], 2)
+    assert inclusive["gst_applicable"] is True and inclusive["is_gst_inclusive"] is True
+    assert inclusive["gst_rate"] == 18 and inclusive["gst_amount"] > 0
+    assert inclusive["total"] == inclusive["subtotal"]
+    assert inclusive["taxable_subtotal"] + inclusive["gst_amount"] == inclusive["total"]
+    assert exclusive["total"] > inclusive["total"]
+
+
+def test_price_preview_quantity_ten_keeps_explicit_zero_discount(authenticated):
+    assert authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
+    response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
+        "customer_id": "customer-demo-1", "currency": "INR", "quantity": 10, "discount_percent": 0,
+        "tax_enabled": True, "tax_mode": "exclusive", "is_gst_inclusive": False,
+        "configuration": {"thickness_mm": 1.96, "length": 780, "width": 1056, "dimension_unit": "mm", "format_type": "cut_format"},
+    })
+    assert response.status_code == 200
+    line = response.json["data"]["line"]
+    assert line["requested_discount_percent"] == 0
+    assert line["discount_percent"] == 0
+    assert line["discount_amount"] == 0
+    assert line["discount_source"] == "default"
+    assert line["gst_amount"] > 0
+
+    created = authenticated.post("/api/v1/cart/items", json={
+        "customer_id": "customer-demo-1", "product_id": "mtech_magnum_sf",
+        "currency": "INR", "quantity": 10, "discount_percent": 0,
+        "tax_enabled": True, "tax_mode": "exclusive", "is_gst_inclusive": False,
+        "configuration": {"thickness_mm": 1.96, "length": 780, "width": 1056, "dimension_unit": "mm", "format_type": "cut_format"},
+    })
+    assert created.status_code == 201
+    assert created.json["data"]["discount_percent"] == 0
+    assert created.json["data"]["pricing_preview"]["discount_percent"] == 0
+    item_id = created.json["data"]["_id"]
+
+    discounted = authenticated.patch(f"/api/v1/cart/items/{item_id}", json={"discount_percent": 2.5})
+    assert discounted.status_code == 200
+    assert discounted.json["data"]["discount_percent"] == 2.5
+    assert discounted.json["data"]["pricing_preview"]["discount_percent"] == 2.5
+
+    reset = authenticated.patch(f"/api/v1/cart/items/{item_id}", json={"discount_percent": 0})
+    assert reset.status_code == 200
+    assert reset.json["data"]["discount_percent"] == 0
+    assert reset.json["data"]["pricing_preview"]["discount_percent"] == 0
+    assert reset.json["data"]["pricing_preview"]["discount_amount"] == 0
+
+    reloaded = authenticated.get("/api/v1/cart?customer_id=customer-demo-1&currency=INR")
+    assert reloaded.status_code == 200
+    assert reloaded.json["data"]["items"][0]["discount_percent"] == 0
+
+    quotation = authenticated.post("/api/v1/quotations/preview", json={
+        "customer_id": "customer-demo-1", "currency": "INR", "payment_terms": "Advance",
+        "proforma_validity_days": 30, "transport_mode": "by_consignee",
+    })
+    assert quotation.status_code == 200
+    assert quotation.json["data"]["lines"][0]["discount_percent"] == 0
+    assert quotation.json["data"]["totals"]["discount_amount"] == 0
+
+
+@pytest.mark.parametrize("discount", [0, 0.5, 1, 2.5])
+def test_price_preview_discount_options_are_authoritative(authenticated, discount):
+    authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"})
+    response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
+        "customer_id": "customer-demo-1", "currency": "INR", "quantity": 1,
+        "discount_percent": discount, "tax_enabled": True, "tax_mode": "exclusive",
+        "configuration": {"thickness_mm": 1.96, "length": 780, "width": 1056, "dimension_unit": "mm", "format_type": "cut_format"},
+    })
+    assert response.status_code == 200
+    line = response.json["data"]["line"]
+    assert line["requested_discount_percent"] == discount
+    assert line["discount_percent"] == discount
+    assert line["discount_amount"] == round(line["subtotal"] * discount / 100, 2)
 
 
 def test_quotation_preview_validates_without_saving(app, authenticated):

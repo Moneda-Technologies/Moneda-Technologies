@@ -8,6 +8,11 @@ import type { CartItem, Customer, Quotation } from "../types/domain";
 import { emptyState, escapeHtml, formatDate, formatMoney, skeleton } from "../utils/dom";
 import { openCartItemEditor } from "./catalog";
 
+function activeIndiaCustomer(): boolean {
+  const customer = appStore.state.customer;
+  return Boolean(customer?.country_code === "IN" && (customer.continent === "Asia" || customer.region?.continent === "Asia" || customer.tax_profile?.gst_applicable === true));
+}
+
 interface PreviewBundle { payload: Record<string, unknown>; document: Quotation }
 
 function openQuotationEmailComposer(quote: Quotation, onSent: () => Promise<void> | void): void {
@@ -53,7 +58,7 @@ function cartLine(item: CartItem, editableOrIndex: boolean | number = true): str
   const rawLine = item.pricing_preview;
   const line = rawLine.currency === "INR" && rawLine.tax_amount > 0 ? { ...rawLine, subtotal: rawLine.line_total } : rawLine;
   const netUnitPrice = line.quantity ? line.subtotal / line.quantity : line.subtotal;
-  return `<article class="cart-line${editable ? " cart-line-editable" : " quotation-line-readonly"}"><div class="cart-icon"><i data-lucide="package"></i></div><div class="cart-product"><span class="article-label">Art. ${escapeHtml(line.article_no ?? item.product_id)}</span><strong>${escapeHtml(line.product_name)}</strong><span>${escapeHtml(configurationSummary(item))}</span><small>Unit Price ${formatMoney(netUnitPrice, line.currency)}${line.discount_percent ? ` · Discount ${line.discount_percent}%` : ""}</small></div><div class="cart-qty"><small>Qty</small><strong>${line.quantity}</strong></div><div class="cart-price"><small>${escapeHtml(line.currency)}</small><strong>${formatMoney(line.subtotal, line.currency)}</strong></div>${editable ? `<div class="cart-actions"><button class="button button-quiet edit-cart" data-id="${escapeHtml(item._id)}"><i data-lucide="pencil"></i>Edit</button><button class="button button-quiet remove-cart" data-id="${escapeHtml(item._id)}"><i data-lucide="trash-2"></i>Delete</button></div>` : ""}</article>`;
+  return `<article class="cart-line${editable ? " cart-line-editable" : " quotation-line-readonly"}"><div class="cart-icon"><i data-lucide="package"></i></div><div class="cart-product">${editable ? `<span class="article-label">Art. ${escapeHtml(line.article_no ?? item.product_id)}</span>` : ""}<strong>${escapeHtml(line.product_name)}</strong><span>${escapeHtml(configurationSummary(item))}</span><small>Unit Price ${formatMoney(netUnitPrice, line.currency)}${line.discount_percent ? ` · Discount ${line.discount_percent}%` : ""}</small></div><div class="cart-qty"><small>Qty</small><strong>${line.quantity}</strong></div><div class="cart-price"><small>${escapeHtml(line.currency)}</small><strong>${formatMoney(line.subtotal, line.currency)}</strong></div>${editable ? `<div class="cart-actions"><button class="button button-quiet edit-cart" data-id="${escapeHtml(item._id)}"><i data-lucide="pencil"></i>Edit</button><button class="button button-quiet remove-cart" data-id="${escapeHtml(item._id)}"><i data-lucide="trash-2"></i>Delete</button></div>` : ""}</article>`;
 }
 
 function quotationRows(quotations: Quotation[]): string {
@@ -83,13 +88,12 @@ export async function legacyQuotationPreparationPage(): Promise<HTMLElement> {
     ]);
     cartItems = cart.items; quotations = quoteResult.items;
     appStore.set({ cartCount: cartItems.length });
-    const showTax = appStore.state.currency === "INR" && cartItems.some((item) => Number(item.pricing_preview.tax_amount ?? 0) > 0);
+    const showTax = activeIndiaCustomer() && cartItems.some((item) => item.tax_mode === "exclusive" && Number(item.pricing_preview.tax_amount ?? 0) > 0);
     body.innerHTML = `<div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="done"><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span class="active"><b>4</b>Quotation</span></div><div class="quote-layout"><section class="quote-main"><div class="section-title"><div><span class="eyebrow">${escapeHtml(appStore.state.currency)}</span><h2>Current quotation items</h2></div><div class="section-title-actions"><span class="count-badge">${cartItems.length} ${cartItems.length === 1 ? "line" : "lines"}</span>${cartItems.length ? '<button id="clear-cart" class="button button-quiet"><i data-lucide="trash-2"></i>Clear</button>' : ""}</div></div>${cartItems.length ? `<div class="cart-lines">${cartItems.map(cartLine).join("")}</div>` : emptyState("shopping-cart", "Quotation cart is empty", "Use Calculator in the sidebar to configure a product.")}<div class="section-title quote-history-title"><div><span class="eyebrow">Saved Records</span><h2>Quotation History</h2></div><span>${quotations.length} records</span></div>${quotationRows(quotations)}</section><aside class="quote-summary panel"><div class="summary-head"><span class="eyebrow">From Moneda Technologies</span><h2>Quotation Details</h2><p>Every line is recalculated before preview and again before saving.</p></div><div class="summary-row"><span>Subtotal</span><strong>${formatMoney(Number(cart.totals.subtotal ?? 0), appStore.state.currency)}</strong></div>${Number(cart.totals.discount_amount ?? 0) ? `<div class="summary-row"><span>Discount</span><strong>- ${formatMoney(Number(cart.totals.discount_amount), appStore.state.currency)}</strong></div>` : ""}${showTax ? `<div class="summary-row"><span>Taxable Amount</span><strong>${formatMoney(Number(cart.totals.taxable_amount ?? 0), appStore.state.currency)}</strong></div><div class="summary-row"><span>GST / Tax</span><strong>${formatMoney(Number(cart.totals.tax_amount ?? 0), appStore.state.currency)}</strong></div>` : ""}<div class="summary-total"><span>Estimated Total</span><strong>${formatMoney(Number(cart.totals.grand_total ?? 0), appStore.state.currency)}</strong></div><form id="quote-details-form" class="stack-form"><label>Customer<input value="${escapeHtml(customerCompany.name)}" disabled><small class="customer-detail">This quotation will be sent from Moneda Technologies to the selected customer.</small></label><div class="form-grid"><label>Quotation Currency<select name="currency"><option ${appStore.state.currency === "EUR" ? "selected" : ""}>EUR</option><option ${appStore.state.currency === "USD" ? "selected" : ""}>USD</option><option ${appStore.state.currency === "INR" ? "selected" : ""}>INR</option></select></label><label>Proforma Validity (days)<input name="proforma_validity_days" type="number" min="1" max="365" value="30" required></label></div><label>Payment Terms<select name="payment_terms"><option>Advance</option><option>POD</option><option>15 Days</option><option>30 Days</option></select></label><label>Transport<select name="transport_mode"><option value="by_consignee">By Consignee</option><option value="by_moneda_team">By Moneda Team</option></select></label><label class="transport-charge" hidden>Transport Charges (${escapeHtml(appStore.state.currency)})<input name="transport_charges" type="number" min="0" step="0.01" placeholder="Enter freight charge"></label><label>Notes<textarea name="notes" rows="3" placeholder="Optional commercial notes"></textarea></label><label class="check-row"><input name="create_lead" type="checkbox" checked><span>Create a linked CRM lead and follow-up</span></label><label>Follow-up Date<input name="follow_up_date" type="date"></label><button class="button button-primary button-full" ${!cartItems.length ? "disabled" : ""}><i data-lucide="eye"></i>Preview Quotation</button></form></aside></div>`;
-    if (appStore.state.currency === "INR") {
+    if (activeIndiaCustomer()) {
       const summary = body.querySelector<HTMLElement>(".quote-summary");
-      const enabled = cartItems.length > 0 && cartItems.every((item) => item.tax_enabled === true);
       const mode = cartItems.find((item) => item.tax_mode)?.tax_mode ?? "exclusive";
-      summary?.insertAdjacentHTML("afterbegin", `<div class="tax-controls cart-tax-controls"><span class="eyebrow">INR Tax</span><label class="check-row"><input id="cart-tax-enabled" type="checkbox" ${enabled ? "checked" : ""}><span>Apply tax to all line items</span></label><label>Tax mode<select id="cart-tax-mode"><option value="exclusive" ${mode === "exclusive" ? "selected" : ""}>Tax exclusive</option><option value="inclusive" ${mode === "inclusive" ? "selected" : ""}>Tax inclusive</option></select></label></div>`);
+      summary?.insertAdjacentHTML("afterbegin", `<div class="tax-controls cart-tax-controls"><label class="check-row"><input id="cart-tax-inclusive" type="checkbox" ${mode === "inclusive" ? "checked" : ""}><span>Is this price GST inclusive?</span></label></div>`);
     }
     bindActions(); refreshIcons(body);
   };
@@ -107,25 +111,23 @@ export async function legacyQuotationPreparationPage(): Promise<HTMLElement> {
       if (!window.confirm(`Clear every item from the ${customerDisplayName} quotation cart?`)) return;
       try { await cartApi.clear(customerId); toast("Cart cleared", "info"); await load(); } catch (error) { toast(error instanceof Error ? error.message : "Could not clear cart", "error"); }
     });
-    const cartTaxEnabled = body.querySelector<HTMLInputElement>("#cart-tax-enabled");
-    const cartTaxMode = body.querySelector<HTMLSelectElement>("#cart-tax-mode");
+    const cartTaxMode = body.querySelector<HTMLInputElement>("#cart-tax-inclusive");
     const applyCartTax = async () => {
-      if (!cartItems.length || !cartTaxEnabled) return;
-      const enabled = cartTaxEnabled.checked;
-      const mode = cartTaxMode?.value === "inclusive" ? "inclusive" : "exclusive";
-      cartTaxEnabled.disabled = true; if (cartTaxMode) cartTaxMode.disabled = true;
+      if (!cartItems.length || !cartTaxMode) return;
+      const mode = cartTaxMode?.checked ? "inclusive" : "exclusive";
+      cartTaxMode.disabled = true;
       try {
         for (const item of cartItems) {
-          await cartApi.update(item._id, { customer_id: customerId, tax_enabled: enabled, tax_mode: mode });
+          await cartApi.update(item._id, { customer_id: customerId, tax_enabled: true, tax_mode: mode, is_gst_inclusive: mode === "inclusive" });
         }
-        toast(enabled ? `INR tax enabled (${mode}) for all line items` : "INR tax disabled for all line items", "info");
+        toast(`GST mode set to ${mode}`, "info");
         await load();
       } catch (error) {
         toast(error instanceof Error ? error.message : "Could not update cart tax", "error");
-        cartTaxEnabled.disabled = false; if (cartTaxMode) cartTaxMode.disabled = false;
+        cartTaxMode.disabled = false;
       }
     };
-    cartTaxEnabled?.addEventListener("change", applyCartTax);
+    cartTaxMode?.addEventListener("change", applyCartTax);
     cartTaxMode?.addEventListener("change", applyCartTax);
     body.querySelectorAll<HTMLButtonElement>(".send-quote").forEach((button) => button.addEventListener("click", () => { const quote = quotations.find((item) => item._id === button.dataset.id); if (quote) openQuotationEmailComposer(quote, load); }));
     body.querySelectorAll<HTMLButtonElement>(".whatsapp-quote").forEach((button) => button.addEventListener("click", async () => { button.disabled = true; try { const result = await quotationApi.whatsapp(button.dataset.id!); toast(result.delivery.status === "mocked" ? "WhatsApp share recorded in mock mode" : "WhatsApp share queued", "info"); } catch (error) { toast(error instanceof Error ? error.message : "Could not share quotation", "error"); } finally { button.disabled = false; } }));
@@ -171,14 +173,11 @@ export async function legacyQuotationPreparationPage(): Promise<HTMLElement> {
   refreshIcons(page); return page;
 }
 
-function previewDocumentMarkup(quote: Quotation, saved: boolean): string {
-  const issuer = quote.issuer_snapshot ?? { name: "Moneda Technologies", email: "business@monedatechnologies.com" };
-  const customerCompany = quote.customer_company_snapshot ?? quote.company_snapshot ?? appStore.state.customerCompany ?? appStore.state.company;
-  const customer = quote.customer_snapshot;
-  const hasTax = quote.currency === "INR" && Number(quote.totals.tax_amount ?? 0) > 0;
-  const taxRows = hasTax ? `<div><span>Taxable Amount</span><strong>${formatMoney(quote.totals.taxable_amount ?? 0, quote.currency)}</strong></div><div><span>Tax</span><strong>${formatMoney(quote.totals.tax_amount, quote.currency)}</strong></div>` : "";
-  const transportRow = quote.totals.transport_cost ? `<div><span>Transport</span><strong>${formatMoney(quote.totals.transport_cost, quote.currency)}</strong></div>` : "";
-  return `<div class="preview-toolbar"><button class="button button-quiet preview-back"><i data-lucide="arrow-left"></i>Close / Back</button><div><button class="button button-quiet preview-print"><i data-lucide="printer"></i>Print</button>${saved ? `<a class="button button-secondary" href="/api/v1/quotations/${quote._id}/pdf"><i data-lucide="download"></i>Download PDF</a>` : '<button class="button button-secondary preview-download" disabled title="Generate and save the quotation first"><i data-lucide="download"></i>Download PDF</button>'}${saved ? "" : '<button class="button button-primary preview-generate"><i data-lucide="file-check-2"></i>Generate & Save Quotation</button>'}</div></div><main class="quotation-document"><header class="document-head"><img src="${escapeHtml(appStore.state.brandLogoPath)}" alt="Moneda Technologies"><div><span>${saved ? "Quotation" : "Quotation Preview"}</span><h1>${escapeHtml(saved ? quote.quotation_number : "PROFORMA")}</h1><p>${formatDate(quote.created_at)}</p></div></header><section class="document-meta"><div><span>Proforma Validity</span><strong>${quote.proforma_validity_days ?? quote.validity_days ?? 30} Days</strong></div><div><span>Currency</span><strong>${escapeHtml(quote.currency)}</strong></div><div><span>Payment Terms</span><strong>${escapeHtml(quote.payment_terms ?? "Advance")}</strong></div><div><span>Transport</span><strong>${escapeHtml(quote.transport?.label ?? "By Consignee")}</strong></div></section><section class="document-parties"><div><span>From</span><h2>${escapeHtml(issuer.name)}</h2><p>${escapeHtml(issuer.address ?? "")}</p><p>${escapeHtml(issuer.email ?? "")}</p><p>Prepared by: ${escapeHtml(quote.salesperson_snapshot?.name ?? "")}</p></div><div><span>To</span><h2>${escapeHtml(customerCompany?.name ?? customer.name)}</h2><p>${escapeHtml(customer.contact_name ?? "")}</p><p>${escapeHtml(customer.email ?? "")} ${escapeHtml(customer.phone ?? "")}</p><p>${escapeHtml(customer.address ?? customerCompany?.address ?? "")}</p></div></section><section class="document-products"><table><thead><tr><th>Article</th><th>Product & Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>${quote.lines.map((line) => `<tr><td>${escapeHtml(line.article_no ?? line.product_id)}</td><td><strong>${escapeHtml(line.product_name)}</strong><small>${escapeHtml(line.description ?? "")}</small><small>${escapeHtml(configurationSummary({ configuration: line.configuration ?? {}, pricing_preview: line }))}</small></td><td>${line.quantity}</td><td>${formatMoney(line.unit_price, quote.currency)}</td><td>${formatMoney(line.line_total, quote.currency)}</td></tr>`).join("")}</tbody></table></section><section class="document-total"><div><span>Subtotal</span><strong>${formatMoney(quote.totals.subtotal, quote.currency)}</strong></div>${quote.totals.discount_amount ? `<div><span>Discount</span><strong>- ${formatMoney(quote.totals.discount_amount, quote.currency)}</strong></div>` : ""}${transportRow}${taxRows}<div class="grand"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, quote.currency)}</strong></div></section><section class="document-terms"><div><span>Commercial Terms</span><p>Payment Terms: ${escapeHtml(quote.payment_terms ?? "Advance")}</p><p>Transport: ${escapeHtml(quote.transport?.description ?? "To be borne by consignee")}</p>${quote.notes ? `<p>Notes: ${escapeHtml(quote.notes)}</p>` : ""}</div><div class="signature"><span>For Moneda Technologies</span><i></i><strong>Authorized Signatory</strong></div></section></main>`;
+function previewDocumentMarkup(quote: Quotation, saved: boolean, pdfSource: string): string {
+  const sendAction = saved
+    ? (quote.status === "send_failed" ? '<button class="button button-primary preview-send"><i data-lucide="send"></i>Retry Send Email</button>' : "")
+    : '<button class="button button-primary preview-generate"><i data-lucide="send"></i>Generate & Send Email</button>';
+  return `<div class="preview-toolbar"><button class="button button-quiet preview-back"><i data-lucide="arrow-left"></i>Back to Quotation Preparation</button><div><button class="button button-quiet preview-print"><i data-lucide="printer"></i>Print</button>${saved ? `<a class="button button-secondary" href="/api/v1/quotations/${quote._id}/pdf"><i data-lucide="download"></i>Download PDF</a>` : '<button class="button button-secondary preview-download" disabled title="Generate and save the quotation first"><i data-lucide="download"></i>Download PDF</button>'}${sendAction}</div></div><iframe class="quotation-pdf-preview" title="Quotation ${escapeHtml(quote.quotation_number)}" src="${pdfSource}"></iframe>`;
 }
 
 export async function quotationPreviewPage(): Promise<HTMLElement> {
@@ -193,17 +192,32 @@ export async function quotationPreviewPage(): Promise<HTMLElement> {
   if (!bundle) { root.innerHTML = emptyState("file-warning", "Preview expired", "Return to the cart and create a new preview."); return root; }
   const render = () => {
     const saved = Boolean(bundle?.document._id && !bundle.document.preview);
-    root.innerHTML = previewDocumentMarkup(bundle!.document, saved);
-    root.querySelector(".preview-back")?.addEventListener("click", () => { if (window.opener) window.close(); else history.back(); });
-    root.querySelector(".preview-print")?.addEventListener("click", () => window.print());
+    const pdfSource = saved
+      ? `/api/v1/quotations/${encodeURIComponent(bundle!.document._id)}/pdf?preview=true`
+      : `data:application/pdf;base64,${bundle!.document.preview_pdf_base64 ?? ""}`;
+    root.innerHTML = previewDocumentMarkup(bundle!.document, saved, pdfSource);
+    root.querySelector(".preview-back")?.addEventListener("click", () => { if (window.opener) { window.close(); return; } window.location.assign("/quotation/create"); });
+    root.querySelector(".preview-print")?.addEventListener("click", () => root.querySelector<HTMLIFrameElement>(".quotation-pdf-preview")?.contentWindow?.print());
+    const sendSaved = async (quote: Quotation, button: HTMLButtonElement) => {
+      button.disabled = true; button.textContent = "Sending...";
+      try {
+        const sent = await quotationApi.send(quote._id!, {}); bundle = { ...bundle!, document: sent };
+        if (draftKey) localStorage.setItem(draftKey, JSON.stringify(bundle));
+        toast(`${sent.quotation_number} sent to ${sent.customer_snapshot?.email ?? "the customer"}`); render();
+      } catch (error) {
+        try { bundle = { ...bundle!, document: await quotationApi.get(quote._id!) }; } catch { /* keep saved document */ }
+        toast(error instanceof Error ? error.message : "Quotation email could not be delivered. Retry from this preview.", "error"); render();
+      }
+    };
     root.querySelector(".preview-generate")?.addEventListener("click", async (event) => {
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true; button.textContent = "Generating…";
       try {
         const quote = await quotationApi.create(bundle!.payload); bundle = { ...bundle!, document: quote };
         if (draftKey) localStorage.setItem(draftKey, JSON.stringify(bundle));
-        appStore.set({ cartCount: 0 }); toast(`${quote.quotation_number} generated and saved`); render();
-      } catch (error) { toast(error instanceof Error ? error.message : "Quotation could not be generated", "error"); button.disabled = false; button.textContent = "Generate & Save Quotation"; }
+        appStore.set({ cartCount: 0 }); await sendSaved(quote, button);
+      } catch (error) { toast(error instanceof Error ? error.message : "Quotation could not be generated", "error"); button.disabled = false; button.textContent = "Generate & Send Email"; }
     });
+    root.querySelector(".preview-send")?.addEventListener("click", async (event) => sendSaved(bundle!.document, event.currentTarget as HTMLButtonElement));
     refreshIcons(root);
   };
   render(); return root;
@@ -216,7 +230,7 @@ export async function quotationDetailPage(quotationId: string): Promise<HTMLElem
     const quote = await quotationApi.get(quotationId);
     const communicationResult = await quotationApi.communications(quotationId);
     const communication = communicationResult.items ?? [];
-    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar"><i data-lucide="file-text"></i></div><div><span class="eyebrow">${escapeHtml(quote.quotation_number)}</span><h2>${escapeHtml(quote.customer_snapshot.name)}</h2><p>${formatDate(quote.created_at)} · ${escapeHtml(quote.currency)} · ${statusBadge(quote.status)}</p></div><div class="detail-hero-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, quote.currency)}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Line Items</h2></div><a class="button button-quiet" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank"><i data-lucide="eye"></i>Full-screen Preview</a></div><div class="detail-lines">${quote.lines.map((line) => `<div class="detail-line"><div><span class="article-label">Art. ${escapeHtml(line.article_no ?? line.product_id)}</span><strong>${escapeHtml(line.product_name)}</strong><small>${escapeHtml(line.description ?? "")}</small><small>${escapeHtml(configurationSummary({ configuration: line.configuration ?? {}, pricing_preview: line }))} · Qty ${line.quantity}${line.tax_amount ? ` · Tax ${line.tax_rate}%` : ""}</small></div><strong>${formatMoney(line.line_total, quote.currency)}</strong></div>`).join("")}</div><div class="summary-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, quote.currency)}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Communication History</span><h2>Delivery Timeline</h2></div><span class="count-badge">${communication.length} events</span></div>${communication.length ? `<div class="timeline-list">${communication.map((item) => `<div class="timeline-item"><i data-lucide="${item.channel === "email" ? "mail" : item.channel === "whatsapp" ? "message-circle" : "file-text"}"></i><div><strong>${escapeHtml(String(item.action ?? item.status ?? item.channel ?? "Activity"))}</strong><small>${escapeHtml(String(item.recipient ?? item.provider_id ?? "Internal record"))}</small></div></div>`).join("")}</div>` : '<p class="muted">No delivery events recorded yet.</p>'}</section></div>`;
+    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar"><i data-lucide="file-text"></i></div><div><span class="eyebrow">${escapeHtml(quote.quotation_number)}</span><h2>${escapeHtml(quote.customer_snapshot.name)}</h2><p>${formatDate(quote.created_at)} · ${escapeHtml(quote.currency)} · ${statusBadge(quote.status)}</p></div><div class="detail-hero-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, quote.currency)}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Line Items</h2></div><a class="button button-quiet" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank"><i data-lucide="eye"></i>Full-screen Preview</a></div><div class="detail-lines">${quote.lines.map((line) => `<div class="detail-line"><div><strong>${escapeHtml(line.product_name)}</strong><small>${escapeHtml(line.description ?? "")}</small><small>${escapeHtml(configurationSummary({ configuration: line.configuration ?? {}, pricing_preview: line }))} · Qty ${line.quantity}${line.discount_percent ? ` · ${line.discount_percent}% discount` : ""}${line.tax_amount ? ` · Tax ${line.tax_rate}%` : ""}</small></div><strong>${formatMoney(line.line_total, quote.currency)}</strong></div>`).join("")}</div><div class="summary-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, quote.currency)}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Communication History</span><h2>Delivery Timeline</h2></div><span class="count-badge">${communication.length} events</span></div>${communication.length ? `<div class="timeline-list">${communication.map((item) => `<div class="timeline-item"><i data-lucide="${item.channel === "email" ? "mail" : item.channel === "whatsapp" ? "message-circle" : "file-text"}"></i><div><strong>${escapeHtml(String(item.action ?? item.status ?? item.channel ?? "Activity"))}</strong><small>${escapeHtml(String(item.recipient ?? item.provider_id ?? "Internal record"))}</small></div></div>`).join("")}</div>` : '<p class="muted">No delivery events recorded yet.</p>'}</section></div>`;
   } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Quotation unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }
@@ -231,8 +245,12 @@ function customerContext() {
   };
 }
 
-function cartTotalsMarkup(cart: { totals: Record<string, number> }, currency: string, showTax: boolean, action: string): string {
-  return `<aside class="quote-summary panel"><div class="summary-head"><span class="eyebrow">Current quotation</span><h2>Cart Summary</h2><p>Prices are recalculated by the server before quotation preview.</p></div><div class="summary-row"><span>Subtotal</span><strong>${formatMoney(Number(cart.totals.subtotal ?? 0), currency)}</strong></div>${Number(cart.totals.discount_amount ?? 0) ? `<div class="summary-row"><span>Discount</span><strong>- ${formatMoney(Number(cart.totals.discount_amount), currency)}</strong></div>` : ""}${showTax ? `<div class="summary-row"><span>Taxable Amount</span><strong>${formatMoney(Number(cart.totals.taxable_amount ?? 0), currency)}</strong></div><div class="summary-row"><span>Tax</span><strong>${formatMoney(Number(cart.totals.tax_amount ?? 0), currency)}</strong></div>` : ""}<div class="summary-total"><span>Total</span><strong>${formatMoney(Number(cart.totals.grand_total ?? 0), currency)}</strong></div>${action}</aside>`;
+function cartTotalsMarkup(cart: { totals: Record<string, number> }, currency: string, hasTax: boolean, action: string, taxMode = "exclusive"): string {
+  const inclusive = hasTax && taxMode === "inclusive";
+  const taxRows = inclusive
+    ? `<div class="summary-row"><span>Taxable value</span><strong>${formatMoney(Number(cart.totals.taxable_amount ?? 0), currency)}</strong></div><div class="summary-row"><span>GST included (18%)</span><strong>${formatMoney(Number(cart.totals.tax_amount ?? 0), currency)}</strong></div>`
+    : `${hasTax ? `<div class="summary-row"><span>GST (18%)</span><strong>${formatMoney(Number(cart.totals.tax_amount ?? 0), currency)}</strong></div>` : ""}`;
+  return `<aside class="quote-summary panel"><div class="summary-head"><span class="eyebrow">Current quotation</span><h2>Cart Summary</h2><p>Prices are recalculated by the server before quotation preview.</p></div>${inclusive ? "" : `<div class="summary-row"><span>Subtotal</span><strong>${formatMoney(Number(cart.totals.subtotal ?? 0), currency)}</strong></div>${Number(cart.totals.discount_amount ?? 0) ? `<div class="summary-row"><span>Discount</span><strong>- ${formatMoney(Number(cart.totals.discount_amount), currency)}</strong></div>` : ""}`}${taxRows}<div class="summary-total"><span>Total</span><strong>${formatMoney(Number(cart.totals.grand_total ?? 0), currency)}</strong></div>${action}</aside>`;
 }
 
 async function bindSeparatedCartActions(body: HTMLElement, items: CartItem[], customerId: string, customerName: string, reload: () => Promise<void>): Promise<void> {
@@ -248,16 +266,15 @@ async function bindSeparatedCartActions(body: HTMLElement, items: CartItem[], cu
     if (!window.confirm(`Clear every item from the ${customerName} quotation cart?`)) return;
     try { await cartApi.clear(customerId); toast("Cart cleared", "info"); await reload(); } catch (error) { toast(error instanceof Error ? error.message : "Could not clear cart", "error"); }
   });
-  const enabled = body.querySelector<HTMLInputElement>("#cart-tax-enabled");
-  const mode = body.querySelector<HTMLSelectElement>("#cart-tax-mode");
+  const mode = body.querySelector<HTMLInputElement>("#cart-tax-inclusive");
   const applyTax = async () => {
-    if (!items.length || !enabled) return;
-    enabled.disabled = true; if (mode) mode.disabled = true;
-    const taxMode = mode?.value === "inclusive" ? "inclusive" : "exclusive";
-    try { for (const item of items) await cartApi.update(item._id, { customer_id: customerId, tax_enabled: enabled.checked, tax_mode: taxMode }); toast(enabled.checked ? `INR tax enabled (${taxMode}) for all line items` : "INR tax disabled for all line items", "info"); await reload(); }
-    catch (error) { toast(error instanceof Error ? error.message : "Could not update cart tax", "error"); enabled.disabled = false; if (mode) mode.disabled = false; }
+    if (!items.length || !mode) return;
+    mode.disabled = true;
+    const taxMode = mode?.checked ? "inclusive" : "exclusive";
+    try { for (const item of items) await cartApi.update(item._id, { customer_id: customerId, tax_enabled: true, tax_mode: taxMode, is_gst_inclusive: taxMode === "inclusive" }); toast(`GST mode set to ${taxMode}`, "info"); await reload(); }
+    catch (error) { toast(error instanceof Error ? error.message : "Could not update cart tax", "error"); mode.disabled = false; }
   };
-  enabled?.addEventListener("change", applyTax); mode?.addEventListener("change", applyTax);
+  mode?.addEventListener("change", applyTax);
 }
 
 export async function cartPage(): Promise<HTMLElement> {
@@ -269,11 +286,11 @@ export async function cartPage(): Promise<HTMLElement> {
   let items: CartItem[] = [];
   const load = async () => {
     const cart = await cartApi.get(context.id!, appStore.state.currency); items = cart.items; appStore.set({ cartCount: items.length });
-    const showTax = appStore.state.currency === "INR" && items.some((item) => Number(item.pricing_preview.tax_amount ?? 0) > 0);
-    body.innerHTML = `<div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="active"><b>3</b>Cart</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="quote-layout"><section class="quote-main"><div class="section-title"><div><span class="eyebrow">${escapeHtml(appStore.state.currency)}</span><h2>Your current quotation items</h2></div><div class="section-title-actions"><span class="count-badge">${items.length} ${items.length === 1 ? "line" : "lines"}</span>${items.length ? '<button id="clear-cart" class="button button-quiet" title="Clear cart"><i data-lucide="trash-2"></i>Clear</button>' : ""}</div></div>${items.length ? `<div class="cart-lines">${items.map(cartLine).join("")}</div>` : emptyState("shopping-cart", "Cart is empty", "Use Calculator to configure a product.")}</section>${cartTotalsMarkup(cart, appStore.state.currency, showTax, items.length ? '<a class="button button-primary button-full" href="/quotation/create" data-route="/quotation/create"><i data-lucide="file-plus"></i>Continue to Quotation</a>' : '<a class="button button-secondary button-full" href="/calculator" data-route="/calculator"><i data-lucide="calculator"></i>Go to Calculator</a>')}</div>`;
-    if (appStore.state.currency === "INR") {
-      const summary = body.querySelector<HTMLElement>(".quote-summary"); const allEnabled = items.length > 0 && items.every((item) => item.tax_enabled === true); const taxMode = items.find((item) => item.tax_mode)?.tax_mode ?? "exclusive";
-      summary?.insertAdjacentHTML("afterbegin", `<div class="tax-controls cart-tax-controls"><span class="eyebrow">INR Tax</span><label class="check-row"><input id="cart-tax-enabled" type="checkbox" ${allEnabled ? "checked" : ""}><span>Apply tax to all line items</span></label><label>Tax mode<select id="cart-tax-mode"><option value="exclusive" ${taxMode === "exclusive" ? "selected" : ""}>Tax exclusive</option><option value="inclusive" ${taxMode === "inclusive" ? "selected" : ""}>Tax inclusive</option></select></label></div>`);
+    const showTax = activeIndiaCustomer() && items.some((item) => Number(item.pricing_preview.tax_amount ?? 0) > 0);
+    body.innerHTML = `<div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="active"><b>3</b>Cart</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="quote-layout"><section class="quote-main"><div class="section-title"><div><span class="eyebrow">${escapeHtml(appStore.state.currency)}</span><h2>Your current quotation items</h2></div><div class="section-title-actions"><span class="count-badge">${items.length} ${items.length === 1 ? "line" : "lines"}</span>${items.length ? '<button id="clear-cart" class="button button-quiet" title="Clear cart"><i data-lucide="trash-2"></i>Clear</button>' : ""}</div></div>${items.length ? `<div class="cart-lines">${items.map(cartLine).join("")}</div>` : emptyState("shopping-cart", "Cart is empty", "Use Calculator to configure a product.")}</section>${cartTotalsMarkup(cart, appStore.state.currency, showTax, items.length ? '<a class="button button-primary button-full" href="/quotation/create" data-route="/quotation/create"><i data-lucide="file-plus"></i>Continue to Quotation</a>' : '<a class="button button-secondary button-full" href="/calculator" data-route="/calculator"><i data-lucide="calculator"></i>Go to Calculator</a>', items.find((item) => item.tax_mode)?.tax_mode ?? "exclusive")}</div>`;
+    if (activeIndiaCustomer()) {
+      const summary = body.querySelector<HTMLElement>(".quote-summary"); const taxMode = items.find((item) => item.tax_mode)?.tax_mode ?? "exclusive";
+      summary?.insertAdjacentHTML("afterbegin", `<div class="tax-controls cart-tax-controls"><label class="check-row"><input id="cart-tax-inclusive" type="checkbox" ${taxMode === "inclusive" ? "checked" : ""}><span>Is this price GST inclusive?</span></label></div>`);
     }
     await bindSeparatedCartActions(body, items, context.id!, context.name, load); refreshIcons(body);
   };
@@ -305,8 +322,8 @@ export async function quotationPreparationPage(): Promise<HTMLElement> {
   try {
     const cart = await cartApi.get(context.id, appStore.state.currency); appStore.set({ cartCount: cart.items.length });
     if (!cart.items.length) { body.innerHTML = `${emptyState("shopping-cart", "Quotation cart is empty", "Configure a product in Calculator before preparing a quotation.")}<a class="button button-secondary" href="/calculator" data-route="/calculator"><i data-lucide="calculator"></i>Go to Calculator</a>`; refreshIcons(page); return page; }
-    const showTax = appStore.state.currency === "INR" && cart.items.some((item) => Number(item.pricing_preview.tax_amount ?? 0) > 0);
-    body.innerHTML = `<div class="workspace-steps"><span class="done"><b>1</b>Customer</span><span class="done"><b>2</b>Products</span><span class="done"><b>3</b>Cart</span><span class="active"><b>4</b>Quotation</span></div><div class="quote-layout"><section class="quote-main"><section class="panel quotation-customer-card"><span class="eyebrow">Customer</span><h2>${escapeHtml(context.name)}</h2><p class="muted">Issued by Moneda Technologies to the selected customer.</p></section><section class="panel quotation-items-panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Items being prepared</h2></div><span class="count-badge">${cart.items.length} line item${cart.items.length === 1 ? "" : "s"}</span></div><div class="cart-lines">${cart.items.map((item) => cartLine(item, false)).join("")}</div></section></section>${cartTotalsMarkup(cart, appStore.state.currency, showTax, "")}</div>`;
+    const showTax = activeIndiaCustomer() && cart.items.some((item) => Number(item.pricing_preview.tax_amount ?? 0) > 0);
+    body.innerHTML = `<div class="workspace-steps"><span class="done"><b>1</b>Customer</span><span class="done"><b>2</b>Products</span><span class="done"><b>3</b>Cart</span><span class="active"><b>4</b>Quotation</span></div><div class="quote-layout"><section class="quote-main"><section class="panel quotation-customer-card"><span class="eyebrow">Customer</span><h2>${escapeHtml(context.name)}</h2><p class="muted">Issued by Moneda Technologies to the selected customer.</p></section><section class="panel quotation-items-panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Items being prepared</h2></div><span class="count-badge">${cart.items.length} line item${cart.items.length === 1 ? "" : "s"}</span></div><div class="cart-lines">${cart.items.map((item) => cartLine(item, false)).join("")}</div></section></section>${cartTotalsMarkup(cart, appStore.state.currency, showTax, "", cart.items.find((item) => item.tax_mode)?.tax_mode ?? "exclusive")}</div>`;
     body.querySelectorAll<HTMLElement>(".quotation-items-panel .cart-price").forEach((price, index) => {
       const line = cart.items[index]?.pricing_preview; if (!line) return;
       const label = price.querySelector("small"); const amount = price.querySelector("strong");

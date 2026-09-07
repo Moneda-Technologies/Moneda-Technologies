@@ -5,10 +5,10 @@ import re
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import customer_record, current_user, enforce_customer, permission_required
+from app.middleware.access import customer_record, current_user, enforce_customer, permission_required, permitted_customer_query
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
-from app.customers.metadata import normalize_customer_profile
+from app.customers.metadata import customer_gst_applicable, normalize_customer_profile, validation_message
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
@@ -34,16 +34,13 @@ def _view(row: dict) -> dict:
     customer.setdefault("default_tax_rate", 0)
     customer.setdefault("default_tax_mode", "no_tax")
     customer.setdefault("tax_enabled", False)
+    customer["gst_applicable"] = customer_gst_applicable(customer)
     customer.setdefault("active", customer.get("status", "active") != "archived")
     return customer
 
 
 def _permitted_query() -> dict:
-    user = current_user() or {}
-    query: dict = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
-    if user.get("role_id") != "superadmin":
-        query["_id"] = {"$in": user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])}
-    return query
+    return permitted_customer_query()
 
 
 @bp.get("")
@@ -62,7 +59,7 @@ def list_customers():
         query = _permitted_query()
         term = request.args.get("search", "").strip()[:100]
         if term:
-            query["$or"] = [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]
+            query = {"$and": [query, {"$or": [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]}]}
         status = request.args.get("status")
         if status in {"active", "inactive", "archived"}:
             query["status"] = status
@@ -84,9 +81,9 @@ def create_customer():
         return failure("Customer company name is required", status=422)
     payload["name"] = name
     payload["company_name"] = name
-    normalized, error = normalize_customer_profile(payload)
+    normalized, error = normalize_customer_profile(payload, require_complete=True)
     if error:
-        return failure(error, status=422)
+        return failure(validation_message(error), error=error, status=422)
     payload = normalized or payload
     store = current_app.extensions["store"]
     payload["customer_code"] = available_customer_code(store, name)
@@ -102,6 +99,9 @@ def create_customer():
     payload.setdefault("default_tax_mode", "no_tax")
     payload.setdefault("tax_enabled", False)
     payload.setdefault("assigned_salesperson", (current_user() or {}).get("_id"))
+    creator_id = (current_user() or {}).get("_id")
+    payload["created_by_user_id"] = creator_id
+    payload["assigned_user_ids"] = [creator_id] if creator_id else []
     row = store.insert_one("customers", payload)
     if row.get("customer_id") != row.get("_id"):
         row = current_app.extensions["store"].update_one("customers", {"_id": row["_id"]}, {"customer_id": row["_id"]}) or row
@@ -141,7 +141,7 @@ def update_customer(customer_id: str):
         # Customer codes are stable identifiers and are not renamed with the display name.
     normalized, error = normalize_customer_profile(changes, existing)
     if error:
-        return failure(error, status=422)
+        return failure(validation_message(error), error=error, status=422)
     changes = normalized or changes
     if changes.get("status") and changes["status"] not in {"active", "inactive", "archived"}:
         return failure("Invalid customer status", status=422)

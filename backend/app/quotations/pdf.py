@@ -116,13 +116,29 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     except (ImportError, OSError, ValueError):
         logo = Paragraph("<font size='22'><b>MONEDA</b></font><br/><font size='8'>T E C H N O L O G I E S</font>", normal)
     quote_number = safe(quotation.get("quotation_number"))
-    title = Paragraph(f"<font size='20'>QUOTATION</font><br/><font color='#df3731'><b>{quote_number}</b></font>", right)
+    title = Paragraph(
+        f"<font size='20'>QUOTATION</font><br/><font color='#df3731'><b>{quote_number}</b></font>"
+        f"<br/><font color='#70706b' size='7'>{safe(_display_date(quotation.get('created_at')))}</font>", right,
+    )
     header = Table([[logo, title]], colWidths=[118 * mm, 66 * mm])
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     story.append(header)
-    stripe = Table([["", "", ""]], colWidths=[77 * mm, 55 * mm, 52 * mm], rowHeights=[2.2 * mm])
+    stripe = Table([["", "", ""]], colWidths=[184 * mm / 3] * 3, rowHeights=[2.2 * mm])
     stripe.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, 0), palette["black"]), ("BACKGROUND", (1, 0), (1, 0), palette["red"]), ("BACKGROUND", (2, 0), (2, 0), palette["yellow"]), ("PADDING", (0, 0), (-1, -1), 0)]))
     story.extend([stripe, Spacer(1, 6 * mm)])
+
+    meta = [
+        ("Proforma validity", f"{int(quotation.get('proforma_validity_days') or quotation.get('validity_days') or 30)} Days"),
+        ("Currency", quotation.get("currency")),
+        ("Payment terms", quotation.get("payment_terms") or "Advance"),
+        ("Transport", (quotation.get("transport") or {}).get("label") or "By Consignee"),
+    ]
+    meta_table = Table(
+        [[Paragraph(safe(key.upper()), label) for key, _ in meta], [Paragraph(safe(value), normal) for _, value in meta]],
+        colWidths=[46 * mm] * 4,
+    )
+    meta_table.setStyle(TableStyle([("LINEABOVE", (0, 0), (-1, 0), .5, palette["line"]), ("LINEBELOW", (0, -1), (-1, -1), .5, palette["line"]), ("LINEAFTER", (0, 0), (-2, -1), .5, palette["line"]), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, 0), 7), ("BOTTOMPADDING", (0, -1), (-1, -1), 7)]))
+    story.extend([meta_table, Spacer(1, 5 * mm)])
 
     issuer = quotation.get("issuer_snapshot") or {"name": "Moneda Technologies", "email": "business@monedatechnologies.com"}
     customer_company = quotation.get("customer_company_snapshot") or quotation.get("company_snapshot") or {}
@@ -145,40 +161,20 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     ]))
     story.extend([parties, Spacer(1, 5 * mm)])
 
-    salesperson = quotation.get("salesperson_snapshot") or {}
-    meta = [
-        ("Quotation", quotation.get("quotation_number")), ("Issue date", _display_date(quotation.get("created_at"))),
-        ("Valid until", _display_date(quotation.get("expiry_date"))), ("Prepared by", salesperson.get("name")),
-        ("Currency", quotation.get("currency")),
-    ]
-    # Transpose the label/value pairs into a single five-column information band.
-    meta_table = Table([[Paragraph(safe(key.upper()), label) for key, _ in meta], [Paragraph(safe(value), normal) for _, value in meta]], colWidths=[36.8 * mm] * 5)
-    meta_table.setStyle(TableStyle([("LINEABOVE", (0, 0), (-1, 0), .5, palette["line"]), ("LINEBELOW", (0, -1), (-1, -1), .5, palette["line"]), ("LINEAFTER", (0, 0), (-2, -1), .5, palette["line"]), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, 0), 7), ("BOTTOMPADDING", (0, -1), (-1, -1), 7)]))
-    story.extend([meta_table, Spacer(1, 4 * mm)])
     currency = str(quotation.get("currency", "EUR"))
-    if currency != "EUR":
-        rate = float(quotation.get("exchange_rate", 1))
-        provider = safe(quotation.get("exchange_rate_provider") or "cached provider")
-        rate_box = Table([[Paragraph(f"Converted from the EUR master catalog at 1 EUR = {rate:.4f} {safe(currency)}. Rate provider: {provider}.", muted)]], colWidths=[184 * mm])
-        rate_box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff9de")), ("LINEBEFORE", (0, 0), (0, 0), 2, palette["yellow"]), ("PADDING", (0, 0), (-1, -1), 7)]))
-        story.extend([rate_box, Spacer(1, 4 * mm)])
 
     story.append(Paragraph("PRODUCTS AND CONFIGURATION", ParagraphStyle("Section", parent=heading, fontSize=8, leading=10, spaceAfter=5)))
     totals = quotation.get("totals") or {}
     currency = str(quotation.get("currency", "EUR")).upper()
     has_tax = currency == "INR" and bool(float(totals.get("tax_amount", 0) or 0) or float(totals.get("transport_tax_amount", 0) or 0))
     header_row = [
-        Paragraph("NO.", white_center), Paragraph("PRODUCT AND SPECIFICATION", white), Paragraph("QTY", white_center),
-        Paragraph("UNIT", white_center), Paragraph("UNIT PRICE", white_right),
+        Paragraph("PRODUCT AND DESCRIPTION", white), Paragraph("QTY", white_center),
+        Paragraph("UNIT PRICE", white_right), Paragraph("TOTAL", white_right),
     ]
-    if has_tax:
-        header_row.append(Paragraph("PRODUCT TAX", white_center))
-    header_row.append(Paragraph("LINE TOTAL", white_right))
     table_data: list[list[Any]] = [header_row]
-    for index, line in enumerate(quotation.get("lines") or [], 1):
-        article = safe(line.get("article_no") or line.get("sku") or line.get("product_id"))
+    for line in quotation.get("lines") or []:
         product = Paragraph(
-            f"<font color='#df3731' size='6'><b>ART. {article}</b></font><br/><b>{safe(line.get('product_name'))}</b>"
+            f"<b>{safe(line.get('product_name'))}</b>"
             f"<br/><font color='#70706b' size='6'>{safe(line.get('description'))}</font>"
             f"<br/><font size='6'>{safe(_line_configuration(line))}</font>", normal,
         )
@@ -187,17 +183,14 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         quantity = float(line.get("quantity", 1)) or 1
         display_unit_price = float(line.get("unit_price", net_subtotal / quantity)) if has_tax else net_subtotal / quantity
         display_line_total = float(line.get("line_total", net_subtotal)) if has_tax else net_subtotal
-        unit_price = f"{currency} {display_unit_price:,.2f}" + (f"<br/><font color='#70706b'>-{discount:.1f}%</font>" if discount else "")
+        discount_label = f"{discount:g}% discount"
+        unit_price = f"<b>{currency} {display_unit_price:,.2f}</b>" + (f"<br/><font color='#df3731'><b>{discount_label}</b></font>" if discount else "")
         row = [
-            Paragraph(str(index), center), product, Paragraph(f"{float(line.get('quantity', 0)):g}", center),
-            Paragraph(safe(line.get("pricing_unit")), center), Paragraph(unit_price, right),
+            product, Paragraph(f"{float(line.get('quantity', 0)):g}", center), Paragraph(unit_price, right),
+            Paragraph(f"<b>{safe(currency)} {display_line_total:,.2f}</b>", right),
         ]
-        if has_tax:
-            row.append(Paragraph(f"{float(line.get('tax_rate', 0)):.1f}%<br/><font color='#70706b'>{safe(line.get('tax_mode', 'exclusive')).replace('_', ' ').title()}</font>" if line.get("tax_amount") else "-", center))
-        row.append(Paragraph(f"<b>{safe(currency)} {display_line_total:,.2f}</b>", right))
         table_data.append(row)
-    # Keep the compact "NO." heading on one line in the ReportLab fallback.
-    column_widths = [10 * mm, 63 * mm, 13 * mm, 15 * mm, 25 * mm, 22 * mm, 36 * mm] if has_tax else [10 * mm, 73 * mm, 13 * mm, 15 * mm, 28 * mm, 45 * mm]
+    column_widths = [106 * mm, 16 * mm, 29 * mm, 33 * mm]
     items = Table(table_data, colWidths=column_widths, repeatRows=1)
     items.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), palette["black"]), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -212,9 +205,11 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     if totals.get("discount_amount"):
         total_rows.append(("Discount", -float(totals.get("discount_amount", 0))))
     if has_tax:
+        inclusive_tax = all(line.get("tax_mode") == "inclusive" for line in quotation.get("lines", []) if line.get("tax_amount"))
+        gst_label = f"GST {'included ' if inclusive_tax else ''}({float(next((line.get('tax_rate', 18) for line in quotation.get('lines', []) if line.get('tax_amount')), 18)):.0f}%)"
         total_rows.extend([
             ("Taxable amount", totals.get("taxable_amount", 0)),
-            ("Tax", float(totals.get("tax_amount", 0))),
+            (gst_label, float(totals.get("tax_amount", 0))),
         ])
     if totals.get("transport_cost"):
         total_rows.append(("Transport / freight", totals["transport_cost"]))
@@ -235,8 +230,8 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     condition_rows = [
         [Paragraph("PAYMENT", label), Paragraph("PROFORMA VALIDITY", label)],
         [Paragraph(safe(quotation.get("payment_terms") or conditions.get("payment") or "As agreed"), muted), Paragraph(f"{int(quotation.get('proforma_validity_days') or quotation.get('validity_days') or 30)} Days", muted)],
-        [Paragraph("TRANSPORT", label), Paragraph("INCOTERMS", label)],
-        [Paragraph(safe(transport.get("description") or conditions.get("duties_taxes_bank_charges") or "As agreed"), muted), Paragraph(safe(conditions.get("incoterms") or "As agreed"), muted)],
+        [Paragraph("TRANSPORT", label), Paragraph("", label)],
+        [Paragraph(safe(transport.get("description") or conditions.get("duties_taxes_bank_charges") or "As agreed"), muted), Paragraph("", muted)],
     ]
     commercial = Table(condition_rows, colWidths=[58 * mm, 58 * mm])
     commercial.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (0, 0), (-1, -1), 1.2, palette["line"]), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
@@ -249,7 +244,7 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         commercial_block.append(Spacer(1, 2 * mm))
         commercial_block.append(note)
     story.append(KeepTogether(commercial_block))
-    story.extend([Spacer(1, 4 * mm), Paragraph("This document preserves the product configuration, EUR master price, selected currency, exchange-rate metadata and discount snapshot effective when the quotation was created.", muted)])
+    story.append(Spacer(1, 4 * mm))
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return stream.getvalue()
 

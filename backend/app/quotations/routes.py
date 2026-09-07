@@ -120,6 +120,11 @@ def preview_quotation():
         return failure(str(exc), status=404)
     except (ValueError, TypeError) as exc:
         return failure(str(exc), status=422)
+    try:
+        document["preview_pdf_base64"] = base64.b64encode(render_quotation_pdf(document)).decode("ascii")
+    except Exception:
+        current_app.logger.exception("quotation preview PDF rendering failed")
+        return failure("Quotation preview PDF could not be generated", status=503, error="PDF_GENERATION_FAILED")
     return success(document, "Quotation preview calculated")
 
 
@@ -177,6 +182,10 @@ def quotation_pdf(quotation_id: str):
 @bp.post("/<quotation_id>/send")
 @permission_required("quotations.send")
 def send_quotation(quotation_id: str):
+    current_app.logger.info(
+        "quotation_send_email quotation_id=%s provider=zoho_mail_api result=START",
+        quotation_id,
+    )
     store = current_app.extensions["store"]
     row = store.find_one("quotations", {"_id": quotation_id})
     if not row:
@@ -193,24 +202,49 @@ def send_quotation(quotation_id: str):
     payload = request.get_json(silent=True) or {}
     subject = str(payload.get("subject") or f"Quotation {row['quotation_number']} - Moneda Technologies")[:200]
     message = str(payload.get("message") or f"<p>Please find quotation <strong>{row['quotation_number']}</strong> attached.</p><p>Total: {row['currency']} {row['totals']['grand_total']:,.2f}</p>")
-    sent_by = (current_user() or {}).get("_id")
-    routing = current_app.extensions["email_service"].recipients.resolved()
-    request_id = f"quotation-{quotation_id}"
+    user = current_user() or {}
+    sent_by = user.get("_id")
+    sender_email = str(user.get("email") or "").strip()
     try:
-        pdf = render_quotation_pdf(row)
+        sender_email = validate_email(sender_email, check_deliverability=False).normalized
+    except EmailNotValidError:
+        return failure("A valid authenticated user email is required before sending", status=422, error="SENDER_USER_EMAIL_REQUIRED")
+    email_service = current_app.extensions["email_service"]
+    routing = email_service.recipients.resolved_for_quotation(to=[recipient], sender_user_email=sender_email)
+    request_id = f"quotation-{quotation_id}"
+
+    def mark_failed(*, error_code: str, diagnostic_id: str, stage: str) -> None:
+        failed_history = [*row.get("history", []), {"status": "send_failed", "at": utcnow(), "by": sent_by, "error_code": error_code, "diagnostic_id": diagnostic_id}]
+        store.update_one("quotations", {"_id": quotation_id}, {"status": "send_failed", "email_status": "send_failed", "email_error_code": error_code, "email_diagnostic_id": diagnostic_id, "history": failed_history})
+        store.insert_one("email_logs", {
+            "quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject,
+            "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"),
+            "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by,
+            "status": "failed", "submission_status": "failed", "error_code": error_code, "diagnostic_id": diagnostic_id,
+            "stage": stage, "channel": "email", "created_at": utcnow(),
+        })
+
+    try:
+        try:
+            pdf = render_quotation_pdf(row)
+        except Exception:
+            diagnostic_id = email_diagnostic_id()
+            current_app.logger.exception("quotation email failed diagnostic_id=%s stage=pdf_generation", diagnostic_id)
+            mark_failed(error_code="PDF_GENERATION_FAILED", diagnostic_id=diagnostic_id, stage="pdf_generation")
+            return failure("Quotation PDF could not be generated.", status=503, error="PDF_GENERATION_FAILED", diagnostic_id=diagnostic_id, stage="pdf_generation")
         result = current_app.extensions["email_service"].send_quotation(
             to=[recipient], subject=subject,
             html=f"<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>{message}</div>",
             attachments=[{"filename": f"{row['quotation_number']}.pdf", "content": base64.b64encode(pdf).decode("ascii")}],
+            sender_user_email=sender_email,
             request_id=request_id,
         )
     except EmailDeliveryError as exc:
-        store.insert_one("email_logs", {
-            "quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject,
-            "message_type": "quotation", "sent_by": sent_by, "status": "failed",
-            "error_code": exc.error_code, "diagnostic_id": exc.diagnostic_id, "stage": exc.stage,
-            "channel": "email", "created_at": utcnow(),
-        })
+        current_app.logger.info(
+            "quotation_send_email quotation_id=%s provider=zoho_mail_api result=FAIL error_code=%s stage=%s diagnostic_id=%s",
+            quotation_id, exc.error_code, exc.stage, exc.diagnostic_id,
+        )
+        mark_failed(error_code=exc.error_code, diagnostic_id=exc.diagnostic_id, stage=exc.stage)
         message = (
             "Email service is not connected. Please contact the administrator."
             if exc.error_code == "OAUTH_NOT_CONNECTED" else "Quotation email could not be delivered."
@@ -222,12 +256,15 @@ def send_quotation(quotation_id: str):
     except Exception as exc:
         diagnostic_id = email_diagnostic_id()
         current_app.logger.exception("quotation email failed diagnostic_id=%s stage=email_service", diagnostic_id)
-        store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "failed", "error_code": "MESSAGE_SUBMISSION_FAILED", "diagnostic_id": diagnostic_id, "stage": "email_service", "channel": "email", "created_at": utcnow()})
+        mark_failed(error_code="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
         return failure("Quotation email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
-    user = current_user() or {}
     history = [*row.get("history", []), {"status": "Sent", "at": utcnow(), "by": user.get("_id")}]
-    updated = store.update_one("quotations", {"_id": quotation_id}, {"status": "Sent", "history": history})
-    store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "sent_by": sent_by, "status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
+    current_app.logger.info(
+        "quotation_send_email quotation_id=%s provider=zoho_mail_api result=PASS",
+        quotation_id,
+    )
+    updated = store.update_one("quotations", {"_id": quotation_id}, {"status": "Sent", "email_status": "sent", "history": history})
+    store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"), "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by, "status": "sent", "submission_status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
     store.insert_one("notifications", {
         "user_id": user.get("_id"), "customer_id": row.get("customer_id") or row.get("customer_company_id") or row.get("company_id"), "type": "quotation_sent",
         "title": f"Quotation {row['quotation_number']} sent", "quotation_id": quotation_id, "read": False,

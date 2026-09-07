@@ -225,6 +225,10 @@ def price_preview(product_id: str):
     if not enforce_active_customer(customer_id):
         return failure("Customer access denied", status=403)
     try:
+        current_app.logger.info(
+            "discount_debug item_id=%s backend_received_discount=%s",
+            payload.get("item_id") or "preview", payload.get("discount_percent", 0),
+        )
         currency = resolve_customer_currency(customer_company, payload.get("currency"), store, current_user())
         # New clients explicitly send the toggle. Modern customer-scoped
         # requests default to tax-free; the legacy company_id bridge keeps
@@ -234,9 +238,9 @@ def price_preview(product_id: str):
         legacy_india = str(customer_company.get("country") or region or customer_company.get("tax_jurisdiction") or "").strip().casefold() == "india"
         country_code = customer_company.get("country_code") or region_code or ("IN" if legacy_india else None)
         india_customer = country_code == "IN"
-        legacy_tax_default = "customer_company_id" not in payload and "company_id" in payload
-        apply_tax = (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else (india_customer or legacy_tax_default))
-        tax_mode = str(payload["tax_mode"]).lower() if "tax_mode" in payload else None
+        apply_tax = (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else india_customer) and india_customer
+        is_gst_inclusive = bool(payload.get("is_gst_inclusive")) if "is_gst_inclusive" in payload else str(payload.get("tax_mode", "")).lower() == "inclusive"
+        tax_mode = "inclusive" if is_gst_inclusive else (str(payload["tax_mode"]).lower() if "tax_mode" in payload else None)
         rate, rate_meta = current_app.extensions["exchange_rate_service"].rate_for(currency)
         user = current_user() or {}
         configuration = payload.get("configuration", {})
@@ -249,6 +253,17 @@ def price_preview(product_id: str):
             privileged_discount="pricing.discount.override" in user.get("permissions", []),
             adjustments=resolve_product_adjustments(store, product_row, configuration), business_rules=settings,
             apply_tax=apply_tax, tax_mode_override=tax_mode,
+        )
+        line["gst_applicable"] = bool(india_customer and line.get("tax_rate", 0) > 0 and apply_tax)
+        line["is_gst_inclusive"] = bool(line.get("gst_applicable") and is_gst_inclusive)
+        current_app.logger.info(
+            "price_preview_context customer_id=%s product_id=%s currency=%s discount_percent=%s discount_source=%s gst_applicable=%s is_gst_inclusive=%s gst_rate=%s taxable_subtotal=%s gst_amount=%s final_total=%s tax_result=%s",
+            customer_id, product_id, currency, line["discount_percent"], line["discount_source"], line["gst_applicable"], line["is_gst_inclusive"],
+            line.get("gst_rate", 0), line.get("taxable_subtotal", 0), line.get("gst_amount", 0), line.get("total", 0), "PASS",
+        )
+        current_app.logger.info(
+            "discount_debug item_id=%s pricing_engine_discount=%s response_discount=%s",
+            payload.get("item_id") or "preview", line["discount_percent"], line["discount_percent"],
         )
         return success({"line": line, "rate": rate_meta})
     except PricingUnavailable as exc:

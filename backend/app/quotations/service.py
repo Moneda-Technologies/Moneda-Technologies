@@ -4,6 +4,8 @@ from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from flask import current_app
+
 from app.pricing.engine import (
     calculate_line, calculate_quote_totals, company_tax_values, resolve_product_adjustments,
 )
@@ -96,6 +98,11 @@ class QuotationService:
                 privileged_discount="pricing.discount.override" in user.get("permissions", []),
                 adjustments=resolve_product_adjustments(self.store, product, configuration), business_rules=settings,
                 apply_tax=item_tax_enabled, tax_mode_override=item_tax_mode,
+            )
+            line["discount_source"] = "saved_cart_item"
+            current_app.logger.info(
+                "quotation_discount quotation=%s cart_item_id=%s customer_id=%s product_id=%s discount_percent=%s discount_source=saved_cart_item",
+                "create" if persist else "preview", cart_item.get("_id"), customer_id, product["_id"], line["discount_percent"],
             )
             line["thickness"] = configuration.get("thickness_mm") or configuration.get("thickness_micron")
             line["dimensions"] = {

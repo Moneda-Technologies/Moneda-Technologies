@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, request, session
 
 from app.api.responses import success
-from app.middleware.access import current_user, customer_record, login_required, selected_customer_id
+from app.middleware.access import can_view_all_customers, current_user, customer_record, login_required, permitted_customer_query, selected_customer_id
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -61,14 +61,21 @@ def me():
     user.pop("password_hash", None)
     user.pop("currency_preference", None)
     store = current_app.extensions["store"]
-    if user.get("role_id") == "superadmin":
-        customers = [row for row in store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=500, sort="name", direction=1)[0] if not row.get("is_issuer")]
+    if can_view_all_customers(user):
+        customers = [row for row in store.list("customers", permitted_customer_query(user), limit=500, sort="name", direction=1)[0] if not row.get("is_issuer")]
     else:
         customers = [customer_record(customer_id) for customer_id in (user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", []))]
         customers = [customer for customer in customers if customer and not customer.get("is_issuer")]
     customers = [{**customer, "customer_id": customer.get("_id"), "company_name": customer.get("name")} for customer in customers]
     selected = selected_customer_id()
+    active = customer_record(selected)
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
+    current_app.logger.info(
+        "active_customer_load active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_currency=%s active_customer_gst_applicable=%s",
+        selected or "null", (active or {}).get("name", "unknown"), (active or {}).get("country_code", "unknown"),
+        (active or {}).get("preferred_currency") or (active or {}).get("default_currency", "unknown"),
+        bool((active or {}).get("gst_applicable") or (active or {}).get("tax_profile", {}).get("gst_applicable")),
+    )
     return success({
         "user": user,
         "customers": customers,

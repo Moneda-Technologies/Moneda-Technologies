@@ -5,7 +5,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
-import type { CartItem, CatalogOption, PriceLine, Product } from "../types/domain";
+import type { CartItem, CatalogOption, Customer, PriceLine, Product } from "../types/domain";
 import { emptyState, escapeHtml, formatDate, formatMoney, skeleton } from "../utils/dom";
 
 const familyCopy: Record<string, { icon: string; label: string; detail: string }> = {
@@ -113,12 +113,22 @@ function configurationFromForm(product: Product, form: HTMLFormElement): Record<
 
 function pricingMarkup(line: PriceLine, rate: { provider: string; provider_source?: string; source?: string; fetched_at: string; stale: boolean; warning?: string }): string {
   const showMaster = appStore.can("pricing.history");
-  const showTax = line.currency === "INR" && line.tax_amount > 0;
-  const netTotal = showTax ? line.line_total : line.subtotal;
-  if (showTax) {
-    line = { ...line, adjustments: [...line.adjustments, { type: "tax", label: `Tax ${line.tax_rate}% (${line.tax_mode})`, amount_master: line.tax_amount / line.exchange_rate }] };
-  }
-  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>Pricing Summary</span>${rate.stale ? '<span class="rate-stale">Cached rate</span>' : '<span class="rate-live">Rate verified</span>'}</div><div class="live-price-rows">${showMaster ? `<div><span>Master price</span><strong>${formatMoney(line.master_unit_price, "EUR")} / ${escapeHtml(line.pricing_unit)}</strong></div>` : ""}${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${line.adjustments.map((item) => `<div><span>${escapeHtml(item.label)}${item.quantity ? ` × ${item.quantity}` : ""}</span><strong>${formatMoney(item.amount_master * line.exchange_rate, line.currency)}</strong></div>`).join("")}<div><span>Subtotal</span><strong>${formatMoney(line.subtotal, line.currency)}</strong></div>${line.discount_amount ? `<div><span>Discount ${line.discount_percent}%</span><strong>- ${formatMoney(line.discount_amount, line.currency)}</strong></div>` : ""}</div><div class="live-price-total"><span>Total</span><strong>${formatMoney(netTotal, line.currency)}</strong></div><p class="rate-caption">1 EUR = ${line.exchange_rate.toFixed(4)} ${line.currency} · ${escapeHtml(rate.provider_source ?? rate.provider)} · ${rate.source === "cached" || rate.stale ? "cached" : "live"} · ${formatDate(rate.fetched_at)}</p>${rate.warning ? `<p class="rate-warning">${escapeHtml(rate.warning)}</p>` : ""}`;
+  const hasGst = line.tax_amount > 0;
+  const inclusive = hasGst && line.tax_mode === "inclusive";
+  const amountRows = inclusive
+    ? ""
+    : `<div><span>Subtotal</span><strong>${formatMoney(line.subtotal, line.currency)}</strong></div>${line.discount_amount ? `<div><span>Discount ${line.discount_percent}%</span><strong>- ${formatMoney(line.discount_amount, line.currency)}</strong></div>` : ""}${hasGst ? `<div><span>GST (${line.gst_rate ?? line.tax_rate}%)</span><strong>${formatMoney(line.gst_amount ?? line.tax_amount, line.currency)}</strong></div>` : ""}`;
+  const commercialRows = inclusive ? "" : `${showMaster ? `<div><span>Master price</span><strong>${formatMoney(line.master_unit_price, "EUR")} / ${escapeHtml(line.pricing_unit)}</strong></div>` : ""}${line.adjustments.map((item) => `<div><span>${escapeHtml(item.label)}${item.quantity ? ` × ${item.quantity}` : ""}</span><strong>${formatMoney(item.amount_master * line.exchange_rate, line.currency)}</strong></div>`).join("")}`;
+  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>Pricing Summary</span>${rate.stale ? '<span class="rate-stale">Cached rate</span>' : '<span class="rate-live">Rate verified</span>'}</div><div class="live-price-rows">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${commercialRows}${amountRows}</div><div class="live-price-total"><span>Total</span><strong>${formatMoney(line.total ?? line.line_total, line.currency)}</strong></div><p class="rate-caption">1 EUR = ${line.exchange_rate.toFixed(4)} ${line.currency} · ${escapeHtml(rate.provider_source ?? rate.provider)} · ${rate.source === "cached" || rate.stale ? "cached" : "live"} · ${formatDate(rate.fetched_at)}</p>${rate.warning ? `<p class="rate-warning">${escapeHtml(rate.warning)}</p>` : ""}`;
+}
+
+function discountOptions(product: Product, initialDiscount = 0): string {
+  const rules = product.discount_rules;
+  const maximum = appStore.can("pricing.discount.override") ? rules.privileged_max_percent : rules.default_max_percent;
+  const step = Number(rules.step) > 0 ? Number(rules.step) : 0.5;
+  const allowed = rules.enabled ? Array.from({ length: Math.floor(maximum / step) + 1 }, (_, index) => Number((index * step).toFixed(4))) : [0];
+  if (!allowed.includes(initialDiscount)) allowed.push(initialDiscount);
+  return allowed.sort((a, b) => a - b).map((discount) => `<option value="${discount}" ${selected(initialDiscount, discount)}>${discount.toFixed(1)}%</option>`).join("");
 }
 
 interface ConfiguratorOptions {
@@ -130,9 +140,12 @@ interface ConfiguratorOptions {
 function renderConfigurator(host: HTMLElement, product: Product, options: ConfiguratorOptions): void {
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
   if (!customerCompany) return;
+  const customerProfile = customerCompany as Customer;
+  const indiaCustomer = customerProfile.country_code === "IN" && (customerProfile.continent === "Asia" || customerProfile.region?.continent === "Asia" || customerProfile.tax_profile?.gst_applicable === true);
   const initial = options.initial?.configuration ?? {};
   const configured = product.pricing_status === "configured";
-  host.innerHTML = `<section class="inline-configurator"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount permissions and tax rules are validated on the server.</p></div></div><div class="form-grid"><label>Quantity<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${Array.from({ length: 21 }, (_, index) => index * 0.5).map((discount) => `<option value="${discount}" ${selected(options.initial?.discount_percent ?? 0, discount)}>${discount.toFixed(1)}%</option>`).join("")}</select></label></div><button class="button button-primary button-full" type="submit" ${configured ? "" : "disabled"}><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button></form><aside class="live-price inline-price-summary panel"><div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div></aside></section>`;
+  const initialDiscount = Number(options.initial?.discount_percent ?? 0);
+  host.innerHTML = `<section class="inline-configurator"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount permissions and tax rules are validated on the server.</p></div></div><div class="form-grid"><label>Quantity<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${discountOptions(product, initialDiscount)}</select></label></div><button class="button button-primary button-full" type="submit" ${configured ? "" : "disabled"}><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button></form><aside class="live-price inline-price-summary panel"><div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div></aside></section>`;
   const form = host.querySelector<HTMLFormElement>(".configure-form")!;
   const machineInput = form.querySelector<HTMLInputElement>("[name=machine]");
   const machineList = form.querySelector<HTMLDataListElement>("[data-machine-options]");
@@ -160,11 +173,11 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   void loadMachines();
   machineInput?.addEventListener("blur", () => { void ensureMachineStored().catch((error) => toast(error instanceof Error ? error.message : "Machine could not be saved", "error")); });
   const commercialNote = form.querySelectorAll<HTMLElement>(".form-section")[1]?.querySelector("p");
-  if (commercialNote) commercialNote.textContent = "Discount permissions are validated on the server. INR tax is optional.";
-  if (appStore.state.currency === "INR") {
+  if (commercialNote) commercialNote.textContent = indiaCustomer ? "India GST is calculated from the selected customer and server tax rules." : "No Indian GST applies to this customer.";
+  if (indiaCustomer) {
     const controls = document.createElement("div");
     controls.className = "tax-controls product-tax-controls";
-    controls.innerHTML = `<label class="check-row"><input name="tax_enabled" type="checkbox" ${options.initial?.tax_enabled ? "checked" : ""}><span>Apply INR tax to this product</span></label><label>Tax mode<select name="tax_mode"><option value="exclusive" ${options.initial?.tax_mode !== "inclusive" ? "selected" : ""}>Tax exclusive</option><option value="inclusive" ${options.initial?.tax_mode === "inclusive" ? "selected" : ""}>Tax inclusive</option></select></label>`;
+    controls.innerHTML = `<label class="check-row"><input name="tax_inclusive" type="checkbox" ${options.initial?.tax_mode === "inclusive" ? "checked" : ""}><span>Is this price GST inclusive?</span></label>`;
     form.querySelector<HTMLButtonElement>("button[type=submit]")?.before(controls);
   }
   const preview = host.querySelector<HTMLElement>(".live-price")!;
@@ -205,9 +218,12 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     if (unit) unit.value = "mm";
   };
   let timer = 0;
+  let previewSequence = 0;
   const calculatePreview = () => {
+    const sequence = ++previewSequence;
     window.clearTimeout(timer);
     timer = window.setTimeout(async () => {
+      if (sequence !== previewSequence) return;
       if (!configured || !form.checkValidity()) {
         preview.innerHTML = '<div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to calculate.</p></div>';
         refreshIcons(preview); return;
@@ -215,19 +231,25 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       try {
         preview.classList.add("loading");
         const data = new FormData(form);
-        const taxEnabled = appStore.state.currency === "INR" && form.querySelector<HTMLInputElement>("[name=tax_enabled]")?.checked === true;
-        const taxMode = form.querySelector<HTMLSelectElement>("[name=tax_mode]")?.value ?? "exclusive";
+        const taxEnabled = indiaCustomer;
+        const taxMode = form.querySelector<HTMLInputElement>("[name=tax_inclusive]")?.checked ? "inclusive" : "exclusive";
+        const selectedDiscount = Number(data.get("discount_percent"));
+        console.debug("discount_debug", { item_id: options.initial?._id ?? "new", ui_selected_discount: selectedDiscount, price_preview_requested_discount: selectedDiscount });
         const result = await catalogApi.preview(product._id, {
-          customer_id: customerCompany._id, currency: appStore.state.currency,
+          item_id: options.initial?._id, customer_id: customerCompany._id, currency: appStore.state.currency,
           configuration: configurationFromForm(product, form),
-          quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")),
-          tax_enabled: taxEnabled, tax_mode: taxMode,
+          quantity: Number(data.get("quantity")), discount_percent: selectedDiscount,
+          tax_enabled: taxEnabled, tax_mode: taxMode, is_gst_inclusive: taxMode === "inclusive",
         });
+        if (sequence !== previewSequence) return;
+        console.debug("discount_debug", { item_id: options.initial?._id ?? "new", response_discount: result.line.discount_percent });
+        console.debug("add_to_cart_ui", { step: "PRICE_PREVIEW_COMPLETE", item_id: options.initial?._id ?? "new" });
         preview.innerHTML = pricingMarkup(result.line, result.rate); refreshIcons(preview);
       } catch (error) {
+        if (sequence !== previewSequence) return;
         preview.innerHTML = `<div class="notice warning"><i data-lucide="circle-alert"></i><div><strong>Preview unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Check the configuration")}</p></div></div>`;
         refreshIcons(preview);
-      } finally { preview.classList.remove("loading"); }
+      } finally { if (sequence === previewSequence) preview.classList.remove("loading"); }
     }, 220);
   };
   form.querySelector<HTMLSelectElement>("[name=format_type]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
@@ -239,19 +261,33 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
-    button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Calculating…";
-    const taxEnabled = appStore.state.currency === "INR" && form.querySelector<HTMLInputElement>("[name=tax_enabled]")?.checked === true;
-    const taxMode = form.querySelector<HTMLSelectElement>("[name=tax_mode]")?.value ?? "exclusive";
-    const payload = { customer_id: customerCompany._id, product_id: product._id, currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")), tax_enabled: taxEnabled, tax_mode: taxMode };
+    button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Adding to Cart…";
+    console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });
+    const taxEnabled = indiaCustomer;
+    const taxMode = form.querySelector<HTMLInputElement>("[name=tax_inclusive]")?.checked ? "inclusive" : "exclusive";
+    const payload = { customer_id: customerCompany._id, product_id: product._id, currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")), tax_enabled: taxEnabled, tax_mode: taxMode, is_gst_inclusive: taxMode === "inclusive" };
     try {
       await ensureMachineStored();
       const item = options.mode === "edit" && options.initial ? await cartApi.update(options.initial._id, payload) : await cartApi.add(payload);
+      console.debug("add_to_cart_ui", { step: "CART_POST_COMPLETE", status: 201, item_id: item._id });
       if (options.mode === "add") appStore.set({ cartCount: appStore.state.cartCount + 1 });
       toast(options.mode === "edit" ? "Cart item updated." : `${product.name} added · ${formatMoney(item.pricing_preview.line_total, item.currency)}`);
-      await options.onSaved?.(item);
+      try {
+        console.debug("add_to_cart_ui", { step: "CART_REFRESH_START", item_id: item._id });
+        await options.onSaved?.(item);
+        console.debug("add_to_cart_ui", { step: "CART_REFRESH_COMPLETE", item_id: item._id });
+      } catch (refreshError) {
+        // The cart write already succeeded; a secondary refresh failure must
+        // not turn a successful add into a stuck or misleading error state.
+        toast(refreshError instanceof ApiError ? `Item saved, but cart refresh failed: ${refreshError.message}` : "Item saved, but the cart could not be refreshed.", "error");
+      }
     } catch (error) {
       toast(error instanceof ApiError ? error.message : "Product could not be saved", "error");
-      button.disabled = false; button.innerHTML = `<i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}`; refreshIcons(button);
+    } finally {
+      button.disabled = false;
+      button.innerHTML = `<i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}`;
+      console.debug("add_to_cart_ui", { step: "LOADING_RESET", item_id: options.initial?._id ?? "new" });
+      refreshIcons(button);
     }
   });
   toggleBars(); updateWidthGuidance(); calculatePreview(); refreshIcons(host);

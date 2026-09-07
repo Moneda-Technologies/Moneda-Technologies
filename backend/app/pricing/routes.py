@@ -83,6 +83,10 @@ def get_cart():
                 updated = store.update_one("cart_items", {"_id": row["_id"]}, {
                     "currency": requested_currency, "pricing_preview": line, "exchange_rate_meta": rate_meta,
                 })
+                current_app.logger.info(
+                    "discount_debug item_id=%s cart_saved_discount=%s response_discount=%s",
+                    row["_id"], row.get("discount_percent", 0), line.get("discount_percent", 0),
+                )
                 refreshed.append(updated or row)
         except PricingUnavailable as exc:
             return failure(str(exc), status=409)
@@ -114,8 +118,9 @@ def _calculate(payload: dict):
         raise ValueError("Only the product can override the normal tax rate")
     currency = resolve_customer_currency(customer_company, payload.get("currency"), store, current_user())
     india_customer = customer_company.get("country_code") == "IN" or (customer_company.get("region") or {}).get("country_code") == "IN"
-    tax_enabled = currency == "INR" and (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else india_customer)
-    tax_mode = str(payload.get("tax_mode", "exclusive")).lower()
+    tax_enabled = (bool(payload.get("tax_enabled")) if "tax_enabled" in payload else india_customer) and india_customer
+    is_gst_inclusive = bool(payload.get("is_gst_inclusive")) if "is_gst_inclusive" in payload else str(payload.get("tax_mode", "exclusive")).lower() == "inclusive"
+    tax_mode = "inclusive" if is_gst_inclusive else str(payload.get("tax_mode", "exclusive")).lower()
     if tax_mode not in {"exclusive", "inclusive"}:
         tax_mode = "exclusive"
     rate, rate_meta = current_app.extensions["exchange_rate_service"].rate_for(currency)
@@ -131,6 +136,8 @@ def _calculate(payload: dict):
         adjustments=resolve_product_adjustments(store, product, configuration), business_rules=settings,
         apply_tax=tax_enabled, tax_mode_override=tax_mode,
     )
+    line["gst_applicable"] = bool(india_customer and line.get("tax_rate", 0) > 0 and tax_enabled)
+    line["is_gst_inclusive"] = bool(line.get("gst_applicable") and is_gst_inclusive)
     return customer_company, product, line, rate_meta
 
 
@@ -167,10 +174,15 @@ def add_cart_item():
             "cart_id": cart["_id"],
             "configuration": merged_line["configuration"],
             "quantity": merged_line["requested_quantity"], "discount_percent": merged_line["discount_percent"],
-            "tax_enabled": line["currency"] == "INR" and bool(payload.get("tax_enabled", False)),
+            "tax_enabled": bool(payload.get("tax_enabled", False)) and customer_company.get("country_code") == "IN",
             "tax_mode": str(payload.get("tax_mode", "exclusive")).lower() if str(payload.get("tax_mode", "exclusive")).lower() in {"exclusive", "inclusive"} else "exclusive",
+            "is_gst_inclusive": bool(payload.get("is_gst_inclusive", str(payload.get("tax_mode", "exclusive")).lower() == "inclusive")),
             "pricing_preview": merged_line, "exchange_rate_meta": merged_rate_meta,
         })
+        current_app.logger.info(
+            "cart_item_discount action=merge cart_item_id=%s customer_id=%s product_id=%s discount_percent=%s discount_source=calculator_selection",
+            existing["_id"], customer_company["_id"], product["_id"], merged_line["discount_percent"],
+        )
         return success(row, "Matching configuration combined in the cart")
     row = store.insert_one("cart_items", {
             "cart_id": cart["_id"], "user_id": user["_id"], "customer_id": customer_company["_id"], "product_id": product["_id"],
@@ -178,10 +190,15 @@ def add_cart_item():
         "configuration": line["configuration"], "configuration_fingerprint": fingerprint,
         "quantity": line["requested_quantity"],
         "discount_percent": line["discount_percent"], "currency": line["currency"],
-        "tax_enabled": line["currency"] == "INR" and bool(payload.get("tax_enabled", False)),
+        "tax_enabled": bool(payload.get("tax_enabled", False)) and customer_company.get("country_code") == "IN",
         "tax_mode": str(payload.get("tax_mode", "exclusive")).lower() if str(payload.get("tax_mode", "exclusive")).lower() in {"exclusive", "inclusive"} else "exclusive",
+        "is_gst_inclusive": bool(payload.get("is_gst_inclusive", str(payload.get("tax_mode", "exclusive")).lower() == "inclusive")),
         "pricing_preview": line, "exchange_rate_meta": rate_meta,
     })
+    current_app.logger.info(
+        "cart_item_discount action=create cart_item_id=%s customer_id=%s product_id=%s discount_percent=%s discount_source=calculator_selection",
+        row["_id"], customer_company["_id"], product["_id"], row["discount_percent"],
+    )
     return success(row, "Added to quotation", 201)
 
 
@@ -216,6 +233,19 @@ def update_cart_item(item_id: str):
         "tax_mode": str(payload.get("tax_mode", "exclusive")).lower() if str(payload.get("tax_mode", "exclusive")).lower() in {"exclusive", "inclusive"} else "exclusive",
         "pricing_preview": line, "exchange_rate_meta": rate_meta,
     })
+    current_app.logger.info(
+        "cart_item_discount action=update cart_item_id=%s customer_id=%s product_id=%s discount_percent=%s discount_source=calculator_selection",
+        item_id, row.get("customer_id") if row else existing.get("customer_id"), product["_id"], line["discount_percent"],
+    )
+    current_app.logger.info(
+        "cart_item_discount_update item_id=%s requested_discount=%s stored_discount=%s result=%s discount_source=saved_cart_item",
+        item_id, payload.get("discount_percent", 0), row.get("discount_percent") if row else None,
+        "PASS" if row and float(row.get("discount_percent", 0)) == float(line.get("discount_percent", 0)) else "FAIL",
+    )
+    current_app.logger.info(
+        "cart_item_after_patch item_id=%s discount_percent=%s",
+        item_id, row.get("discount_percent") if row else None,
+    )
     return success(row, "Cart updated")
 
 

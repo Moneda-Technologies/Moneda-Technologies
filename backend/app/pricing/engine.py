@@ -44,9 +44,11 @@ def company_tax_values(company: dict[str, Any]) -> tuple[Any, str]:
     country_code = company.get("country_code") or region_code or ("IN" if legacy_india else None)
     if country_code and country_code != "IN":
         return 0, "no_tax"
-    if company.get("tax_enabled") is False:
-        return 0, "no_tax"
-    return company.get("default_tax_rate", 18), company.get("default_tax_mode", "exclusive")
+    if country_code == "IN":
+        rate = company.get("default_tax_rate")
+        mode = company.get("default_tax_mode")
+        return rate if rate in {5, 12, 18} else 18, mode if mode in {"exclusive", "inclusive"} else "exclusive"
+    return 0, "no_tax"
 
 
 def pricing_value(product: dict[str, Any], configuration: dict[str, Any] | None = None) -> tuple[Decimal, str, str]:
@@ -238,21 +240,6 @@ def _rule_adjustments(
     }]
 
 
-def _effective_discount(
-    product: dict[str, Any], quantity: int, requested: Decimal, business_rules: dict[str, Any],
-) -> tuple[Decimal, str | None]:
-    rule = business_rules.get("discount_rules", {}).get("bulk_rolls", {})
-    if (
-        rule.get("enabled")
-        and product.get("category_id") in rule.get("applies_to_categories", [])
-        and quantity >= int(rule.get("minimum_quantity", 10))
-    ):
-        automatic = decimal_value(rule.get("discount_percent", 0), "bulk discount")
-        if automatic > requested:
-            return automatic, f"Automatic bulk discount for {quantity} rolls"
-    return requested, None
-
-
 def calculate_line(
     product: dict[str, Any],
     configuration: dict[str, Any],
@@ -282,7 +269,10 @@ def calculate_line(
     discount_step = Decimal(str(rules.get("step", 0.5)))
     if discount_step and requested_discount % discount_step:
         raise ValueError(f"Discount must use {discount_step}% increments")
-    discount, discount_reason = _effective_discount(product, quantity, requested_discount, business_rules or {})
+    # Discounts are always explicit. Quantity, product family, customer,
+    # currency and tax context must never silently change the selected value.
+    discount = requested_discount
+    discount_source = "user_selected" if discount else "default"
     max_discount = Decimal(str(rules.get("privileged_max_percent" if privileged_discount else "default_max_percent", 0)))
     if discount > max_discount:
         raise ValueError(f"Discount exceeds the allowed {max_discount}% maximum")
@@ -324,9 +314,10 @@ def calculate_line(
         "master_price_eur": float(unit_master), "converted_price": float(unit_selected),
         "unit_price": float(unit_selected), "subtotal": float(subtotal),
         "requested_discount_percent": float(requested_discount), "discount_percent": float(discount),
-        "discount_reason": discount_reason, "discount_amount": float(discount_amount),
-        "taxable_amount": float(tax.net), "tax_rate": float(tax.rate), "tax_mode": tax.mode,
-        "tax_amount": float(tax.tax), "line_total": float(tax.total),
+        "discount_reason": None, "discount_source": discount_source, "discount_amount": float(discount_amount),
+        "taxable_amount": float(tax.net), "taxable_subtotal": float(tax.net), "tax_rate": float(tax.rate), "gst_rate": float(tax.rate), "tax_mode": tax.mode,
+        "tax_amount": float(tax.tax), "gst_amount": float(tax.tax), "line_total": float(tax.total), "total": float(tax.total),
+        "is_gst_inclusive": tax.mode == "inclusive",
     }
     if packaging:
         result["packaging"] = packaging

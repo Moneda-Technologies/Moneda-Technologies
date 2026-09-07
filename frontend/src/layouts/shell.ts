@@ -67,6 +67,9 @@ const navItems: NavItem[] = [
 
 export function renderShell(): HTMLElement {
   const state = appStore.state;
+  const customerOptions = state.customer && !state.customers.some((customer) => (customer.customer_id ?? customer._id) === (state.customer?.customer_id ?? state.customer?._id))
+    ? [state.customer, ...state.customers]
+    : state.customers;
   const root = document.createElement("div");
   root.className = `app-shell ${localStorage.getItem("moneda-sidebar") === "collapsed" ? "sidebar-collapsed" : ""}`;
   let currentSection = "";
@@ -87,7 +90,7 @@ export function renderShell(): HTMLElement {
         <button class="icon-button mobile-menu" aria-label="Open navigation" title="Open navigation"><i data-lucide="menu"></i></button>
         <button class="search-trigger"><i data-lucide="search"></i><span>Search customers, quotes, products…</span><kbd>Ctrl K</kbd></button>
         <div class="top-actions">
-          ${state.customer ? `<label class="compact-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer">${state.customers.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
+          ${state.customer ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer">${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
           <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Currency</span><select id="currency-switcher" aria-label="Select quotation currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
           <div class="notification-control"><button class="icon-button" id="notification-button" aria-label="Notifications" title="Notifications" aria-expanded="false"><i data-lucide="bell"></i><span class="notification-dot" data-notification-count>${state.notificationCount || ""}</span></button><div id="notification-popover" class="notification-popover" role="dialog" aria-label="Notifications" hidden></div></div>
           <div class="user-menu-control"><button class="avatar avatar-button" id="user-menu-button" aria-label="Open user menu" aria-expanded="false">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button><div id="user-menu" class="user-menu" role="menu" hidden><div class="user-menu-head"><strong>${escapeHtml(state.user?.name ?? "User")}</strong><span>${escapeHtml(state.user?.role_display_name ?? "User")}</span></div><a href="/profile" data-route="/profile" role="menuitem"><i data-lucide="user-round"></i>Profile</a><button type="button" data-open-notifications role="menuitem"><i data-lucide="bell"></i>Notifications</button><div class="user-menu-divider"></div><button type="button" data-sign-out role="menuitem"><i data-lucide="log-out"></i>Sign out</button></div></div>

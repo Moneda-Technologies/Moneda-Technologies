@@ -45,8 +45,6 @@ def load_current_user() -> dict[str, Any] | None:
         role = current_app.extensions["store"].find_one("roles", {"_id": user.get("role_id")}) or {}
         user["permissions"] = role.get("permissions", [])
         user["role_display_name"] = role.get("display_name", user.get("role_id"))
-        if user.get("role_id") == "superadmin":
-            user["name"] = "Superadmin"
     g.current_user = user
     return user
 
@@ -72,7 +70,18 @@ def permission_required(permission: str) -> Callable[[F], F]:
             if not user:
                 return failure("Authentication required", status=401)
             if permission not in user.get("permissions", []):
-                return failure("You do not have permission to perform this action", status=403)
+                if permission == "quotations.send":
+                    current_app.logger.info(
+                        "quotation_send_authorization quotation_id=%s user_authorized=false permission=%s result=FAIL",
+                        kwargs.get("quotation_id", "unknown"), permission,
+                    )
+                message = "You do not have permission to send quotations." if permission == "quotations.send" else "You do not have permission to perform this action"
+                return failure(message, status=403)
+            if permission == "quotations.send":
+                current_app.logger.info(
+                    "quotation_send_authorization quotation_id=%s user_authorized=true permission=%s result=PASS",
+                    kwargs.get("quotation_id", "unknown"), permission,
+                )
             return fn(*args, **kwargs)
         return wrapped  # type: ignore[return-value]
     return decorator
@@ -92,16 +101,35 @@ def customer_record(customer_id: str | None) -> dict[str, Any] | None:
     return None
 
 
+def can_view_all_customers(user: dict[str, Any] | None = None) -> bool:
+    user = user or current_user() or {}
+    return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "customers.view_all" in user.get("permissions", [])
+
+
+def permitted_customer_query(user: dict[str, Any] | None = None) -> dict[str, Any]:
+    user = user or current_user() or {}
+    query: dict[str, Any] = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
+    if can_view_all_customers(user):
+        return query
+    user_id = user.get("_id")
+    legacy_ids = user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])
+    query["$or"] = [{"assigned_user_ids": user_id}, {"created_by_user_id": user_id}]
+    if legacy_ids:
+        query["$or"].append({"_id": {"$in": legacy_ids}})
+    return query
+
+
 def enforce_customer(customer_id: str | None) -> bool:
     user = current_user()
     if not user or not customer_id:
         return False
     if not customer_record(customer_id):
         return False
-    if user.get("role_id") == "superadmin":
+    if can_view_all_customers(user):
         return True
-    permitted = user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])
-    return customer_id in permitted
+    if customer_id in (user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])):
+        return True
+    return customer_id in (customer_record(customer_id) or {}).get("assigned_user_ids", []) or (customer_record(customer_id) or {}).get("created_by_user_id") == user.get("_id")
 
 
 def enforce_company(company_id: str | None) -> bool:

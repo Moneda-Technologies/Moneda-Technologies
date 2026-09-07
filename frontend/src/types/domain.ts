@@ -196,6 +196,12 @@ export interface PriceLine {
   tax_rate: number;
   tax_mode: string;
   tax_amount: number;
+  taxable_subtotal?: number;
+  gst_applicable?: boolean;
+  gst_rate?: number;
+  gst_amount?: number;
+  is_gst_inclusive?: boolean;
+  total?: number;
   line_total: number;
 }
 
@@ -246,6 +252,7 @@ export interface Quotation {
   transport?: { mode: string; label: string; description: string; charges: number; taxable?: boolean; tax_rate?: number; tax_mode?: string };
   notes?: string;
   preview?: boolean;
+  preview_pdf_base64?: string;
   created_at: string;
   expiry_date: string;
 }

@@ -16,10 +16,8 @@
     .document-title { text-align: right; }
     .document-title h1 { font-size: 22px; font-weight: 500; letter-spacing: 2.7px; margin: 0; }
     .document-number { color: #d9342f; font-size: 10px; font-weight: 700; margin-top: 3px; }
-    .brand-stripe { display: flex; height: 2.2mm; margin-bottom: 6mm; width: 100%; }
-    .brand-stripe span:nth-child(1) { background: #171717; width: 42%; }
-    .brand-stripe span:nth-child(2) { background: #df3731; width: 30%; }
-    .brand-stripe span:nth-child(3) { background: #f2c800; width: 28%; }
+    .document-date { color: #70706b; font-size: 7px; margin-top: 2px; }
+    .brand-stripe { background: linear-gradient(to right,#171717 0%,#171717 33.333333%,#df3731 33.333333%,#df3731 66.666666%,#f2c800 66.666666%,#f2c800 100%); height: 2.2mm; margin-bottom: 6mm; width: 100%; }
     .parties { display: flex; gap: 4mm; margin-bottom: 5mm; }
     .party { background: #f5f5f2; border: 1px solid #e0e0dc; border-radius: 2mm; min-height: 32mm; padding: 4mm; width: 50%; }
     .party.company { background: #1c1c1c; border-color: #1c1c1c; color: #fff; }
@@ -29,7 +27,7 @@
     .party p { color: #676762; margin: .7mm 0; white-space: pre-line; }
     .party.company p { color: #bdbdbd; }
     .meta-band { align-items: stretch; border-bottom: 1px solid #dadad6; border-top: 1px solid #dadad6; display: flex; margin-bottom: 5mm; padding: 3mm 0; }
-    .meta-item { border-right: 1px solid #dededa; padding: 0 3mm; width: 20%; }
+    .meta-item { border-right: 1px solid #dededa; padding: 0 3mm; width: 25%; }
     .meta-item:first-child { padding-left: 0; }
     .meta-item:last-child { border: 0; padding-right: 0; }
     .meta-item span, .meta-item strong { display: block; }
@@ -46,17 +44,14 @@
     .items th { background: #1b1b1b; color: #fff; font-size: 6.5px; font-weight: 700; letter-spacing: .55px; padding: 2.4mm 1.7mm; text-align: left; text-transform: uppercase; }
     .items td { border-bottom: 1px solid #dededa; padding: 2.8mm 1.7mm; vertical-align: top; }
     .items tbody tr:nth-child(even) td { background: #fafaf8; }
-    .items .col-no { width: 6%; }
-    .items .col-product { width: 35%; }
-    .items .col-qty { width: 8%; }
-    .items .col-unit { width: 8%; }
-    .items .col-price { width: 13%; }
-    .items .col-tax { width: 12%; }
-    .items .col-total { width: 18%; }
-    .article { color: #d9342f; font-size: 6.4px; font-weight: 700; letter-spacing: .35px; text-transform: uppercase; }
-    .product-name { display: block; font-size: 8.4px; margin: .8mm 0 .5mm; }
+    .items .col-product { width: 58%; }
+    .items .col-qty { width: 9%; }
+    .items .col-price { width: 16%; }
+    .items .col-total { width: 17%; }
+    .product-name { display: block; font-size: 8.4px; margin: 0 0 .5mm; }
     .description { color: #6f6f6a; font-size: 6.8px; line-height: 1.35; }
     .configuration { color: #4d4d49; font-size: 6.7px; margin-top: 1mm; }
+    .line-discount { color: #d9342f; font-size: 6.7px; font-weight: 700; margin-top: 1mm; }
     .right { text-align: right !important; }
     .center { text-align: center !important; }
     .muted { color: #858580; }
@@ -86,9 +81,16 @@
   {% set has_tax = quotation.currency == 'INR' and (quotation.totals.tax_amount or quotation.totals.transport_tax_amount) %}
   <header class="header">
     <img class="brand" src="{{ logo_uri }}" alt="Moneda Technologies">
-    <div class="document-title"><h1>QUOTATION</h1><div class="document-number">{{ quotation.quotation_number }}</div></div>
+    <div class="document-title"><h1>QUOTATION</h1><div class="document-number">{{ quotation.quotation_number }}</div><div class="document-date">{{ display_date(quotation.created_at) }}</div></div>
   </header>
-  <div class="brand-stripe"><span></span><span></span><span></span></div>
+  <div class="brand-stripe"></div>
+
+  <section class="meta-band">
+    <div class="meta-item"><span>Proforma validity</span><strong>{{ quotation.proforma_validity_days or quotation.validity_days or 30 }} Days</strong></div>
+    <div class="meta-item"><span>Currency</span><strong>{{ quotation.currency }}</strong></div>
+    <div class="meta-item"><span>Payment terms</span><strong>{{ quotation.payment_terms or 'Advance' }}</strong></div>
+    <div class="meta-item"><span>Transport</span><strong>{{ quotation.transport.label or 'By Consignee' }}</strong></div>
+  </section>
 
   <section class="parties">
     <div class="party company">
@@ -109,35 +111,20 @@
     </div>
   </section>
 
-  <section class="meta-band">
-    <div class="meta-item"><span>Quotation</span><strong>{{ quotation.quotation_number }}</strong></div>
-    <div class="meta-item"><span>Issue date</span><strong>{{ display_date(quotation.created_at) }}</strong></div>
-    <div class="meta-item"><span>Valid until</span><strong>{{ display_date(quotation.expiry_date) }}</strong></div>
-    <div class="meta-item"><span>Prepared by</span><strong>{{ quotation.salesperson_snapshot.name or '-' }}</strong></div>
-    <div class="meta-item"><span>Currency</span><strong>{{ quotation.currency }}</strong></div>
-  </section>
-  {% if quotation.currency != 'EUR' %}
-  <div class="exchange-note">Converted from the EUR master catalog at 1 EUR = {{ '%.4f'|format(quotation.exchange_rate) }} {{ quotation.currency }}. Rate provider: {{ quotation.exchange_rate_provider or 'cached provider' }}.</div>
-  {% endif %}
-
   <div class="section-heading"><h3>Products and configuration</h3><span>{{ quotation.lines|length }} line item{% if quotation.lines|length != 1 %}s{% endif %}</span></div>
   <table class="items">
-    <thead><tr><th class="col-no center">No.</th><th class="col-product">Product and specification</th><th class="col-qty center">Qty</th><th class="col-unit center">Unit</th><th class="col-price right">Unit price</th>{% if has_tax %}<th class="col-tax center">Product tax</th>{% endif %}<th class="col-total right">Line total</th></tr></thead>
+    <colgroup><col class="col-product"><col class="col-qty"><col class="col-price"><col class="col-total"></colgroup>
+    <thead><tr><th>Product and description</th><th class="center">Qty</th><th class="right">Unit price</th><th class="right">Total</th></tr></thead>
     <tbody>
       {% for line in quotation.lines %}
       <tr>
-        <td class="center">{{ loop.index }}</td>
         <td>
-          <span class="article">Art. {{ line.article_no or line.sku or line.product_id }}</span>
           <strong class="product-name">{{ line.product_name }}</strong>
           {% if line.description %}<div class="description">{{ line.description }}</div>{% endif %}
           <div class="configuration">{{ line_configuration(line) }}</div>
-          {% if line.discount_reason %}<div class="configuration">{{ line.discount_reason }}</div>{% endif %}
         </td>
         <td class="center">{{ '%g'|format(line.quantity) }}</td>
-        <td class="center muted">{{ line.pricing_unit or '-' }}</td>
-        <td class="right">{{ quotation.currency }} {{ '%.2f'|format(line.unit_price) }}{% if line.discount_percent %}<div class="muted">-{{ '%.1f'|format(line.discount_percent) }}%</div>{% endif %}</td>
-        {% if has_tax %}<td class="center">{% if line.tax_amount %}{{ '%.1f'|format(line.tax_rate) }}%<div class="muted">{{ line.tax_mode|replace('_',' ')|title }}</div>{% else %}—{% endif %}</td>{% endif %}
+        <td class="right">{{ quotation.currency }} {{ '%.2f'|format(line.unit_price) }}{% if line.discount_percent %}<div class="line-discount">{{ '%g'|format(line.discount_percent) }}% discount</div>{% endif %}</td>
         <td class="right"><strong>{{ quotation.currency }} {{ '%.2f'|format(line.line_total) }}</strong></td>
       </tr>
       {% endfor %}
@@ -149,7 +136,8 @@
       <tr><td>Subtotal</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.subtotal) }}</td></tr>
       {% if quotation.totals.discount_amount %}<tr><td>Discount</td><td>- {{ quotation.currency }} {{ '%.2f'|format(quotation.totals.discount_amount) }}</td></tr>{% endif %}
       {% if has_tax %}<tr><td>Taxable amount</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.taxable_amount) }}</td></tr>
-      <tr><td>Tax</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.tax_amount) }}</td></tr>{% endif %}
+      {% set taxable_lines = quotation.lines|selectattr('tax_amount')|list %}
+      <tr><td>GST{% if taxable_lines %} {{ '%g'|format(taxable_lines[0].tax_rate) }}%{% endif %}</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.tax_amount) }}</td></tr>{% endif %}
       {% if quotation.totals.transport_cost %}<tr><td>Transport / freight</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.transport_cost) }}</td></tr>{% endif %}
       <tr class="grand"><td>Grand total</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.grand_total) }}</td></tr>
     </table>
@@ -162,7 +150,6 @@
         <div class="term"><strong>Payment</strong><span>{{ quotation.payment_terms or quotation.commercial_conditions.payment or 'As agreed' }}</span></div>
         <div class="term"><strong>Proforma validity</strong><span>{{ quotation.proforma_validity_days or quotation.validity_days or 30 }} Days</span></div>
         <div class="term"><strong>Transport</strong><span>{{ quotation.transport.description or quotation.commercial_conditions.duties_taxes_bank_charges or 'As agreed' }}</span></div>
-        <div class="term"><strong>Incoterms</strong><span>{{ quotation.commercial_conditions.incoterms or 'As agreed' }}</span></div>
       </div>
       {% if quotation.notes %}<div class="notes"><strong>Notes:</strong> {{ quotation.notes }}</div>{% endif %}
     </div>
@@ -172,6 +159,5 @@
       <div class="signature-line"><strong>For Moneda Technologies</strong><span>Authorized signatory</span></div>
     </div>
   </section>
-  <div class="snapshot-note">This document preserves the product configuration, EUR master price, selected currency, exchange-rate metadata and discount snapshot effective when the quotation was created.</div>
 </body>
 </html>

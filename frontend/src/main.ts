@@ -26,7 +26,10 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     clearCustomerContextState();
     if (hadServerContext) await customerCompanyApi.clearSelection().catch(() => undefined);
   }
-  const selectedId = mustSelectCustomer ? null : (localStorage.getItem("moneda-active-customer-id") ?? localStorage.getItem("moneda-selected-customer-company") ?? localStorage.getItem("moneda-selected-company") ?? session.active_customer_id ?? session.selected_customer_id ?? session.selected_customer_company_id ?? session.active_company_id ?? null);
+  // The Flask session is authoritative. Local storage is only a migration
+  // fallback for sessions that predate the active_customer_id field.
+  const serverSelectedId = session.active_customer_id ?? session.selected_customer_id ?? session.selected_customer_company_id ?? session.active_company_id ?? null;
+  const selectedId = mustSelectCustomer ? null : (serverSelectedId ?? localStorage.getItem("moneda-active-customer-id") ?? localStorage.getItem("moneda-selected-customer-company") ?? localStorage.getItem("moneda-selected-company") ?? null);
   const customer = customers.find((item) => item._id === selectedId || item.customer_id === selectedId) ?? null;
   const customerCompany = customer as unknown as Company | null;
   if (customer && session.active_customer_id !== (customer.customer_id ?? customer._id)) await customerCompanyApi.select(customer.customer_id ?? customer._id);

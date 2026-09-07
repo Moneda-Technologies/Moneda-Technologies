@@ -23,6 +23,18 @@ def test_fixed_price_flow_with_discount_conversion_and_tax():
     assert line["line_total"] == 17936
 
 
+def test_india_tax_mode_switches_between_exclusive_and_inclusive():
+    exclusive = calculate_line(base_product(price=1000), {}, quantity=1, discount_percent=0, currency="INR", exchange_rate=1,
+                               company_tax_rate=18, company_tax_mode="exclusive", apply_tax=True, tax_mode_override="exclusive")
+    inclusive = calculate_line(base_product(price=1000), {}, quantity=1, discount_percent=0, currency="INR", exchange_rate=1,
+                               company_tax_rate=18, company_tax_mode="exclusive", apply_tax=True, tax_mode_override="inclusive")
+    assert exclusive["tax_amount"] == 180
+    assert exclusive["line_total"] == 1180
+    assert inclusive["tax_amount"] == 152.54
+    assert inclusive["taxable_amount"] == 847.46
+    assert inclusive["line_total"] == 1000
+
+
 def test_area_normalization_from_inches():
     price = calculate_master_unit_price(base_product("per_sqm", 10), {"length": 10, "width": 10, "dimension_unit": "inch"})
     assert float(price) == 0.65
@@ -56,7 +68,7 @@ def test_quote_totals_include_transport_once():
                       "transport_total": 10.0, "grand_total": 128.0}
 
 
-def test_bulk_discount_and_cut_format_surcharge_are_server_rules():
+def test_quantity_does_not_inject_bulk_discount_but_cut_format_surcharge_remains_server_rule():
     settings = {
         "discount_rules": {"bulk_rolls": {"enabled": True, "minimum_quantity": 10, "discount_percent": 2.5, "applies_to_categories": ["blankets"]}},
         "surcharge_rules": {"cut_format": {"enabled": True, "percent": 5, "applies_to_categories": ["blankets"]}},
@@ -68,9 +80,11 @@ def test_bulk_discount_and_cut_format_surcharge_are_server_rules():
         company_tax_rate=0, company_tax_mode="no_tax", business_rules=settings,
     )
     assert line["master_unit_price"] == 105
-    assert line["discount_percent"] == 2.5
-    assert line["discount_reason"] == "Automatic bulk discount for 10 rolls"
-    assert line["line_total"] == 1023.75
+    assert line["requested_discount_percent"] == 0
+    assert line["discount_percent"] == 0
+    assert line["discount_source"] == "default"
+    assert line["discount_reason"] is None
+    assert line["line_total"] == 1050
 
 
 def test_only_enabled_product_tax_overrides_company_tax():
