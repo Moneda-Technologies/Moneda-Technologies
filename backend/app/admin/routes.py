@@ -11,7 +11,6 @@ from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
 from app.middleware.access import current_user, customer_record, permission_required
-from app.pricing.tax import ALLOWED_MODES, ALLOWED_RATES
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -92,7 +91,6 @@ def update_pricing(product_id: str):
         return failure("Product not found", status=404)
     payload = request.get_json(silent=True) or {}
     pricing = {**product.get("pricing", {})}
-    tax = {**product.get("tax", {})}
     try:
         supplied_price = payload.get("price", payload.get("base_price"))
         if "price" in payload or "base_price" in payload:
@@ -130,19 +128,6 @@ def update_pricing(product_id: str):
             pricing.pop("type", None)
         if payload.get("unit"):
             pricing["unit"] = payload["unit"]
-        if "tax_rate" in payload:
-            rate = Decimal(str(payload["tax_rate"])) if payload["tax_rate"] is not None else None
-            if rate is not None and rate not in ALLOWED_RATES:
-                raise ValueError("Unsupported tax rate")
-            tax["rate"] = float(rate) if rate is not None else None
-        if payload.get("tax_mode"):
-            if payload["tax_mode"] not in ALLOWED_MODES:
-                raise ValueError("Unsupported tax mode")
-            tax["mode"] = payload["tax_mode"]
-        if "tax_override_enabled" in payload:
-            tax["override_enabled"] = bool(payload["tax_override_enabled"])
-        elif "tax_rate" in payload or "tax_mode" in payload:
-            tax["override_enabled"] = tax.get("rate") is not None or bool(tax.get("mode"))
     except (InvalidOperation, ValueError) as exc:
         return failure(str(exc), status=422)
     user = current_user() or {}
@@ -151,7 +136,7 @@ def update_pricing(product_id: str):
         "old_price": product.get("pricing", {}).get("price", product.get("pricing", {}).get("base_price")),
         "new_price": pricing.get("price"), "currency": "EUR", "unit": pricing.get("unit"),
         "old_pricing": product.get("pricing"), "new_pricing": pricing,
-        "old_tax": product.get("tax"), "new_tax": tax, "changed_by": user.get("_id"),
+        "changed_by": user.get("_id"),
         "pricing_type": pricing.get("pricing_type"), "source": "admin",
         "reason": str(payload.get("reason", ""))[:500],
     })
@@ -165,7 +150,7 @@ def update_pricing(product_id: str):
         for thickness in valid_thicknesses
     )
     updated = store.update_one("products", {"_id": product_id}, {
-        "pricing": pricing, "tax": tax,
+        "pricing": pricing,
         "pricing_status": "configured" if pricing.get("price") is not None or variant_complete else missing_status,
     })
     audit("pricing.update", "product", product_id, {"history_id": history["_id"]})
@@ -495,23 +480,11 @@ def update_settings():
     if forbidden.intersection(payload):
         return failure("Master currency and numbering prefix cannot be changed here", status=422)
     allowed = {
-        "brand_name", "brand_logo_path", "tax_rates", "default_tax_rate", "default_tax_mode",
+        "brand_name", "brand_logo_path",
         "quotation_validity_days", "commercial_conditions", "discount_rules", "surcharge_rules",
-        "payment_terms", "transport_options", "transport_taxable_by_default", "issuer",
+        "payment_terms", "transport_options", "issuer",
     }
     changes = {key: value for key, value in payload.items() if key in allowed}
-    if "tax_rates" in changes:
-        try:
-            rates = [float(rate) for rate in changes["tax_rates"]]
-        except (TypeError, ValueError):
-            return failure("Tax rates must be numeric", status=422)
-        if not rates or any(rate not in {0.0, 5.0, 12.0, 18.0} for rate in rates):
-            return failure("Tax rates must use the supported values 0, 5, 12 or 18", status=422)
-        changes["tax_rates"] = rates
-    if "default_tax_rate" in changes and float(changes["default_tax_rate"]) not in {0.0, 5.0, 12.0, 18.0}:
-        return failure("Default tax rate is not supported", status=422)
-    if "default_tax_mode" in changes and changes["default_tax_mode"] not in ALLOWED_MODES:
-        return failure("Default tax mode is not supported", status=422)
     if "issuer" in changes:
         issuer = changes["issuer"] if isinstance(changes["issuer"], dict) else {}
         changes["issuer"] = {

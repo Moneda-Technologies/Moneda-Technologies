@@ -13,6 +13,7 @@ export interface AppState {
   companies: Company[];
   company: Company | null;
   currency: Currency;
+  fxRates: Record<string, number> | null;
   cartCount: number;
   notificationCount: number;
 }
@@ -31,6 +32,7 @@ const initial: AppState = {
   companies: [],
   company: null,
   currency: "EUR",
+  fxRates: null,
   cartCount: 0,
   notificationCount: 0,
 };

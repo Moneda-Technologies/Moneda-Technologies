@@ -38,6 +38,27 @@
 .filter-button { align-items: center; background: #fff; border: 1px solid var(--border); border-radius: 7px; display: flex; font-size: .72rem; font-weight: 700; gap: 7px; height: 38px; padding: 0 12px; }
 .result-count, .table-toolbar > span { color: var(--text-muted); font-size: .68rem; padding: 0 8px; white-space: nowrap; }
 .result-count strong { color: var(--text); }
+.quotation-filters { margin-bottom: 13px; padding: 17px; }
+.quotation-filter-head { align-items: flex-start; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+.quotation-filter-head h2 { font-size: 1.05rem; margin: 4px 0; }
+.quotation-filter-head p { color: var(--text-muted); font-size: .67rem; margin: 0; }
+.quotation-filter-grid { display: grid; gap: 10px; grid-template-columns: minmax(220px, 1.6fr) repeat(5, minmax(120px, 1fr)); }
+.quotation-filter-grid label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.quotation-filter-grid label > span { color: var(--text-muted); font-size: .59rem; font-weight: 750; text-transform: uppercase; }
+.quotation-filter-grid label > span small { font-size: .52rem; font-weight: 500; text-transform: none; }
+.quotation-filter-grid input, .quotation-filter-grid select { background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 7px; font-size: .68rem; height: 36px; min-width: 0; padding: 0 9px; }
+.quotation-filter-grid .field-search { min-width: 0; }
+.quotation-filter-grid .field-search input { padding-left: 33px; width: 100%; }
+.quotation-list-meta { align-items: center; color: var(--text-muted); display: flex; font-size: .65rem; justify-content: space-between; margin: 0 2px 8px; }
+.quotation-list-meta [data-quotation-scope] { color: var(--text); font-weight: 700; }
+.quotation-pagination { align-items: center; display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+.quotation-pagination > span { color: var(--text-muted); font-size: .65rem; }
+.quotation-empty { padding: 28px 0; }
+.quotation-history-page .data-table { overflow-x: auto; }
+.quotation-history-page .data-table table { min-width: 930px; }
+.quotation-history-page th:last-child, .quotation-history-page td:last-child { min-width: 230px; width: 230px; }
+.quotation-history-page .row-actions { align-items: center; gap: 3px; justify-content: flex-start; white-space: nowrap; }
+.quotation-history-page .row-actions .icon-button { flex: 0 0 32px; height: 32px; width: 32px; }
 .category-strip { display: grid; gap: 8px; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 13px; }
 .category-chip { background: #fff; border: 1px solid var(--border); border-radius: 9px; display: grid; grid-template-columns: 34px 1fr; min-height: 68px; padding: 10px; text-align: left; transition: .15s ease; }
 .category-chip:hover { border-color: #bbbdb8; transform: translateY(-1px); }
@@ -107,6 +128,8 @@
 .cart-qty small, .cart-price small { color: var(--text-muted); font-size: .56rem; }
 .cart-qty strong, .cart-price strong { font-size: .72rem; margin-top: 3px; }
 .cart-price { text-align: right; }
+.cart-reference { color: var(--text-muted); display: block; font-size: .53rem; margin-top: 4px; }
+.cart-summary-reference { background: var(--surface-muted); border-radius: 7px; margin-bottom: 12px; padding: 8px 9px; }
 .quote-history-title { margin-top: 27px; }
 .quote-summary { padding: 20px; position: sticky; top: calc(var(--topbar-height) + 14px); }
 .summary-head { border-bottom: 1px solid var(--border); margin-bottom: 10px; padding-bottom: 15px; }
@@ -416,6 +439,8 @@
 .live-price-total { align-items: center; border-top: 1px solid #333; display: flex; justify-content: space-between; padding-top: 12px; }
 .live-price-total span { color: #aaa; font-size: .66rem; }
 .live-price-total strong { color: var(--brand-yellow); font-size: 1.08rem; }
+.live-price-reference { align-items: center; background: #222; border-radius: 7px; color: #9d9d9d; display: flex; font-size: .56rem; justify-content: space-between; margin-top: 11px; padding: 8px 10px; }
+.live-price-reference strong { color: #d8d8d8; font-size: .62rem; }
 .rate-caption { color: #6f6f6f; font-size: .51rem; line-height: 1.45; margin: 12px 0 0; }
 
 .section-title-actions { align-items: center; display: flex; gap: 7px; }
@@ -511,6 +536,9 @@
   .catalog-toolbar { align-items: stretch; flex-wrap: wrap; }.field-search { flex-basis: 100%; }.result-count { margin-left: auto; }
   .cart-line { grid-template-columns: 36px 1fr 35px; }.cart-qty { display: none; }.cart-price { grid-column: 2; text-align: left; }.remove-cart { grid-column: 3; grid-row: 1 / span 2; }
   .data-table { overflow-x: auto; }.data-table table { min-width: 720px; }
+  .quotation-filter-head { align-items: stretch; flex-direction: column; }
+  .quotation-filter-grid { grid-template-columns: 1fr 1fr; }
+  .quotation-filter-grid .filter-search { grid-column: 1 / -1; }
   .pipeline-metrics { align-items: stretch; flex-direction: column; gap: 10px; }.pipeline-metrics > div { border-bottom: 1px solid #333; border-right: 0; margin: 0; padding: 0 0 10px; }.pipeline-metrics > div:last-child { border-bottom: 0; }
   .report-stats { align-items: flex-start; display: grid; grid-template-columns: 1fr 1fr; }
   .compact-metrics { grid-template-columns: 1fr; }

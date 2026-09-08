@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, request, session
 
 from app.api.responses import failure, success
 from app.customers.codes import available_customer_code, customer_code
-from app.customers.metadata import customer_gst_applicable, normalize_customer_profile, validation_message
+from app.customers.metadata import normalize_customer_profile, validation_message
 from app.middleware.access import customer_record, enforce_customer, permission_required, permitted_customer_query
 from app.services.audit import audit
 
@@ -23,10 +23,6 @@ def _customer_view(row: dict) -> dict:
     preferred_currency = customer.get("preferred_currency") or customer.get("default_currency") or "EUR"
     customer["preferred_currency"] = preferred_currency
     customer["default_currency"] = preferred_currency
-    customer.setdefault("default_tax_rate", 0)
-    customer.setdefault("default_tax_mode", "no_tax")
-    customer.setdefault("tax_enabled", False)
-    customer["gst_applicable"] = customer_gst_applicable(customer)
     customer.setdefault("active", customer.get("status", "active") != "archived")
     return customer
 
@@ -76,10 +72,9 @@ def select_customer():
     session["active_company_id"] = customer_id
     selected = customer_record(customer_id) or {}
     current_app.logger.info(
-        "active_customer_selected active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_currency=%s active_customer_gst_applicable=%s",
+        "active_customer_selected active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_display_currency=%s",
         customer_id, selected.get("name", "unknown"), selected.get("country_code", "unknown"),
         selected.get("preferred_currency") or selected.get("default_currency", "unknown"),
-        bool(selected.get("gst_applicable") or selected.get("tax_profile", {}).get("gst_applicable")),
     )
     audit("customer.select", "customer", customer_id)
     return success({"customer_id": customer_id, "customer_company_id": customer_id, "company_id": customer_id}, "Customer selected")
@@ -112,9 +107,6 @@ def create_customer_compat():
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("preferred_currency", "EUR")
     customer.setdefault("default_currency", customer["preferred_currency"])
-    customer.setdefault("default_tax_rate", 0)
-    customer.setdefault("default_tax_mode", "no_tax")
-    customer.setdefault("tax_enabled", False)
     customer.setdefault("status", "active")
     customer.setdefault("active", True)
     from app.middleware.access import current_user

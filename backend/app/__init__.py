@@ -192,7 +192,21 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     @app.after_request
     def security_headers(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "DENY")
+        quotation_pdf_preview = (
+            request.method == "GET"
+            and request.path.startswith("/api/v1/quotations/")
+            and request.path.endswith("/pdf")
+            and request.args.get("preview") == "true"
+        )
+        if quotation_pdf_preview:
+            # The authenticated PDF is intentionally embedded by the Moneda
+            # frontend. Keep framing closed to every origin except configured
+            # application origins; all other responses retain DENY below.
+            response.headers.pop("X-Frame-Options", None)
+            frame_sources = {"'self'", app.config["FRONTEND_ORIGIN"], app.config["APP_BASE_URL"]}
+            response.headers.setdefault("Content-Security-Policy", f"frame-ancestors {' '.join(sorted(frame_sources))}")
+        else:
+            response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         if request.path.startswith("/api/"):

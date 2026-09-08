@@ -112,9 +112,13 @@ def test_quotation_persists_eur_master_and_conversion_snapshot(app, authenticate
     assert created.status_code == 201
     quote = created.json["data"]
     assert quote["master_currency"] == "EUR"
-    assert quote["quotation_currency"] == "USD"
-    assert quote["exchange_rate"] == 1.2
-    assert quote["exchange_rate_provider"] == "test-rates"
-    assert quote["exchange_rate_source"] in {"live", "cached"}
+    assert quote["quotation_currency"] == "EUR"
+    assert quote["currency"] == "EUR"
+    assert quote["pricing_policy"] == "eur_only_no_tax_v1"
+    assert quote["exchange_rate"] == 1
+    assert quote["exchange_rate_provider"] == "master"
+    assert quote["exchange_rate_source"] == "master"
     assert quote["lines"][0]["master_price_eur"] == quote["lines"][0]["master_unit_price"]
     assert quote["lines"][0]["converted_price"] == quote["lines"][0]["unit_price"]
+    assert "tax_amount" not in quote["lines"][0]
+    assert "tax_amount" not in quote["totals"]

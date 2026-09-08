@@ -5,7 +5,7 @@ import json
 from decimal import Decimal, ROUND_CEILING
 from typing import Any
 
-from app.pricing.tax import calculate_tax, money
+from app.pricing.tax import money
 
 
 MASTER_CURRENCY = "EUR"
@@ -38,16 +38,7 @@ def decimal_value(value: Any, field: str) -> Decimal:
 
 
 def company_tax_values(company: dict[str, Any]) -> tuple[Any, str]:
-    region = company.get("region") or {}
-    region_code = region.get("country_code") if isinstance(region, dict) else None
-    legacy_india = str(company.get("country") or region or company.get("tax_jurisdiction") or "").strip().casefold() == "india"
-    country_code = company.get("country_code") or region_code or ("IN" if legacy_india else None)
-    if country_code and country_code != "IN":
-        return 0, "no_tax"
-    if country_code == "IN":
-        rate = company.get("default_tax_rate")
-        mode = company.get("default_tax_mode")
-        return rate if rate in {5, 12, 18} else 18, mode if mode in {"exclusive", "inclusive"} else "exclusive"
+    """Legacy compatibility helper; active Moneda pricing is always tax-free."""
     return 0, "no_tax"
 
 
@@ -269,8 +260,8 @@ def calculate_line(
     discount_step = Decimal(str(rules.get("step", 0.5)))
     if discount_step and requested_discount % discount_step:
         raise ValueError(f"Discount must use {discount_step}% increments")
-    # Discounts are always explicit. Quantity, product family, customer,
-    # currency and tax context must never silently change the selected value.
+    # Discounts are always explicit. Quantity, product family, customer and
+    # display currency must never silently change the selected value.
     discount = requested_discount
     discount_source = "user_selected" if discount else "default"
     max_discount = Decimal(str(rules.get("privileged_max_percent" if privileged_discount else "default_max_percent", 0)))
@@ -285,21 +276,18 @@ def calculate_line(
     all_adjustments = [*(adjustments or []), *_rule_adjustments(product, configuration, base_master, business_rules or {})]
     adjustment_master = money(sum((Decimal(str(item.get("amount_master", 0))) for item in all_adjustments), Decimal("0")))
     unit_master = money(base_master + adjustment_master)
-    unit_selected = money(unit_master * rate)
     effective_quantity, packaging = _effective_quantity(product, configuration, quantity)
-    subtotal = money(unit_selected * effective_quantity)
-    discount_amount = money(subtotal * discount / Decimal("100"))
-    discounted = money(subtotal - discount_amount)
+    # Calculate the complete commercial value in EUR first. Display currency
+    # conversion happens only after discounting, so FX rounding never changes
+    # the authoritative commercial result.
+    master_subtotal = money(unit_master * effective_quantity)
+    master_discount_amount = money(master_subtotal * discount / Decimal("100"))
+    master_total = money(master_subtotal - master_discount_amount)
+    unit_selected = money(unit_master * rate)
+    subtotal = money(master_subtotal * rate)
+    discount_amount = money(master_discount_amount * rate)
+    discounted = money(master_total * rate)
 
-    tax_config = product.get("tax", {})
-    has_override = bool(tax_config.get("override_enabled"))
-    product_rate = tax_config.get("rate")
-    tax_rate = product_rate if has_override and product_rate is not None else company_tax_rate
-    product_mode = tax_config.get("mode")
-    tax_mode = tax_mode_override or (product_mode if has_override and product_mode else company_tax_mode)
-    if tax_mode not in {"exclusive", "inclusive", "no_tax"}:
-        raise ValueError("Tax mode must be exclusive, inclusive or no_tax")
-    tax = calculate_tax(discounted, tax_rate if apply_tax else 0, tax_mode if apply_tax else "no_tax")
     result = {
         "product_id": product["_id"], "article_no": product.get("article_no"),
         "product_name": product["name"], "description": product.get("description", ""),
@@ -312,17 +300,63 @@ def calculate_line(
         "adjustment_amount_master": float(adjustment_master), "master_unit_price": float(unit_master),
         # Explicit snapshot fields used by quotations and downstream systems.
         "master_price_eur": float(unit_master), "converted_price": float(unit_selected),
+        "master_subtotal": float(master_subtotal), "master_discount_amount": float(master_discount_amount),
+        "master_total": float(master_total), "master_final_total": float(master_total),
+        "display_unit_price": float(unit_selected),
+        "display_subtotal": float(subtotal), "display_discount_amount": float(discount_amount),
+        "display_total": float(discounted), "display_final_total": float(discounted),
         "unit_price": float(unit_selected), "subtotal": float(subtotal),
         "requested_discount_percent": float(requested_discount), "discount_percent": float(discount),
         "discount_reason": None, "discount_source": discount_source, "discount_amount": float(discount_amount),
-        "taxable_amount": float(tax.net), "taxable_subtotal": float(tax.net), "tax_rate": float(tax.rate), "gst_rate": float(tax.rate), "tax_mode": tax.mode,
-        "tax_amount": float(tax.tax), "gst_amount": float(tax.tax), "line_total": float(tax.total), "total": float(tax.total),
-        "is_gst_inclusive": tax.mode == "inclusive",
+        "line_total": float(discounted), "total": float(discounted),
     }
     if packaging:
         result["packaging"] = packaging
     if product.get("pricing", {}).get("pricing_type") in {"per_sqm", "formula"}:
         result["area_sqm"] = float(area_sqm(configuration))
+    return result
+
+
+def with_display_currency(
+    line: dict[str, Any], currency: str, exchange_rate: Decimal | str | int | float,
+) -> dict[str, Any]:
+    """Render a server-created EUR commercial snapshot in a reference currency."""
+    if str(line.get("master_currency", "")).upper() != MASTER_CURRENCY:
+        raise ValueError("Cart pricing snapshot must use EUR master values")
+    rate = decimal_value(exchange_rate, "exchange_rate")
+    if not rate:
+        raise ValueError("Exchange rate must be greater than zero")
+    required = (
+        "master_unit_price", "master_subtotal", "master_discount_amount",
+        "master_final_total",
+    )
+    if any(line.get(field) is None for field in required):
+        raise ValueError("Cart pricing snapshot is missing EUR commercial values")
+
+    unit = money(Decimal(str(line["master_unit_price"])) * rate)
+    subtotal = money(Decimal(str(line["master_subtotal"])) * rate)
+    discount = money(Decimal(str(line["master_discount_amount"])) * rate)
+    final_total = money(Decimal(str(line["master_final_total"])) * rate)
+    result = dict(line)
+    result.update({
+        "currency": currency, "display_currency": currency,
+        "quotation_currency": MASTER_CURRENCY, "exchange_rate": float(rate),
+        "converted_price": float(unit), "display_unit_price": float(unit),
+        "display_subtotal": float(subtotal),
+        "display_discount_amount": float(discount),
+        "display_total": float(final_total), "display_final_total": float(final_total),
+        # Compatibility fields are display-only. Authoritative consumers use
+        # the explicitly named master_* fields.
+        "unit_price": float(unit), "subtotal": float(subtotal),
+        "discount_amount": float(discount), "line_total": float(final_total),
+        "total": float(final_total),
+    })
+    result.pop("final_total", None)
+    for key in (
+        "taxable_amount", "tax_rate", "tax_mode", "tax_amount", "taxable_subtotal",
+        "gst_applicable", "gst_rate", "gst_amount", "is_gst_inclusive", "vat_amount",
+    ):
+        result.pop(key, None)
     return result
 
 
@@ -332,19 +366,10 @@ def calculate_quote_totals(
 ) -> dict[str, float]:
     subtotal = money(sum((Decimal(str(line["subtotal"])) for line in lines), Decimal("0")))
     discount = money(sum((Decimal(str(line["discount_amount"])) for line in lines), Decimal("0")))
-    taxable = money(sum((Decimal(str(line["taxable_amount"])) for line in lines), Decimal("0")))
-    tax = money(sum((Decimal(str(line["tax_amount"])) for line in lines), Decimal("0")))
     line_total = money(sum((Decimal(str(line["line_total"])) for line in lines), Decimal("0")))
     transport = money(transport_cost or 0)
-    transport_tax = calculate_tax(transport, transport_tax_rate, transport_tax_mode)
-    transport_is_taxable = transport_tax.mode != "no_tax" and transport_tax.rate > 0
-    combined_taxable = money(taxable + (transport_tax.net if transport_is_taxable else Decimal("0")))
-    combined_tax = money(tax + transport_tax.tax)
     return {
         "subtotal": float(subtotal), "discount_amount": float(discount),
-        "taxable_amount": float(combined_taxable), "product_tax_amount": float(tax),
-        "tax_amount": float(combined_tax),
-        "transport_cost": float(transport), "transport_tax_amount": float(transport_tax.tax),
-        "transport_total": float(transport_tax.total),
-        "grand_total": float(money(line_total + transport_tax.total)),
+        "transport_cost": float(transport), "transport_total": float(transport),
+        "grand_total": float(money(line_total + transport)),
     }

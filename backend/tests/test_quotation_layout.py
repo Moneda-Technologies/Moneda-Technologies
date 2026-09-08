@@ -24,7 +24,8 @@ def test_customer_facing_pdf_template_has_four_columns_equal_stripe_and_conditio
         "issuer_snapshot": {"name": "Moneda Technologies"},
         "customer_company_snapshot": {"name": "Moneda Unicus LLP"},
         "customer_snapshot": {"name": "Moneda Unicus LLP"},
-        "salesperson_snapshot": {"name": "Superadmin"}, "payment_terms": "Advance",
+        "creator_snapshot": {"name": "Athul Nair", "email": "athul@example.com", "phone": "+91 98765 43210"},
+        "salesperson_snapshot": {"name": "Changed Later", "email": "changed@example.com"}, "payment_terms": "Advance",
         "transport": {"label": "By Consignee", "description": "To be borne by consignee"},
         "exchange_rate": 109.821, "exchange_rate_provider": "Test",
         "lines": [
@@ -38,6 +39,7 @@ def test_customer_facing_pdf_template_has_four_columns_equal_stripe_and_conditio
             "grand_total": 181070.87,
         },
         "commercial_conditions": {"incoterms": "ICC INCOTERMS 2020: Ex Works unless specified."}, "notes": "",
+        "customer_notes": "Please confirm delivery schedule before dispatch.\n<script>alert(1)</script>",
     }
     with app.app_context():
         html = app.jinja_env.get_template("quotation/quotation.html").render(
@@ -58,6 +60,30 @@ def test_customer_facing_pdf_template_has_four_columns_equal_stripe_and_conditio
     assert "exchange-rate metadata" not in html
     assert "ICC INCOTERMS 2020" not in html
     assert "Ex Works unless specified" not in html
+    assert "Customer Notes" in html
+    assert "Please confirm delivery schedule before dispatch." in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<script>alert(1)</script>" not in html
+    assert "Made by: Athul Nair" in html
+    assert "Creator email: athul@example.com" in html
+    assert "Creator phone: +91 98765 43210" in html
+    assert "Changed Later" not in html
+    assert "Skip to content" not in html
+
+    historical = dict(quotation)
+    historical.pop("customer_notes")
+    historical.pop("creator_snapshot")
+    historical["salesperson_snapshot"] = {"name": "Historical Creator"}
+    with app.app_context():
+        historical_html = app.jinja_env.get_template("quotation/quotation.html").render(
+            quotation=historical, logo_uri="logo.svg", display_date=_display_date,
+            line_configuration=_line_configuration,
+        )
+    assert "Customer Notes" not in historical_html
+    assert "Made by: Historical Creator" in historical_html
+    assert "Creator email:" not in historical_html
+    assert "Creator phone:" not in historical_html
+    assert "undefined" not in historical_html and "None" not in historical_html
 
     with app.app_context():
         pdf_bytes = render_quotation_pdf(quotation)
@@ -66,3 +92,10 @@ def test_customer_facing_pdf_template_has_four_columns_equal_stripe_and_conditio
     assert "Rate provider" not in pdf_text
     assert "ICC INCOTERMS 2020" not in pdf_text
     assert "This document preserves" not in pdf_text
+    assert "CUSTOMER NOTES" in pdf_text
+    assert "Please confirm delivery schedule before dispatch." in pdf_text
+    assert "<script>alert(1)</script>" in pdf_text
+    assert "Made by: Athul Nair" in pdf_text
+    assert "Creator email: athul@example.com" in pdf_text
+    assert "Creator phone: +91 98765 43210" in pdf_text
+    assert "Skip to content" not in pdf_text

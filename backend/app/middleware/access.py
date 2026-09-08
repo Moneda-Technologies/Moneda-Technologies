@@ -106,6 +106,26 @@ def can_view_all_customers(user: dict[str, Any] | None = None) -> bool:
     return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "customers.view_all" in user.get("permissions", [])
 
 
+def can_view_all_quotations(user: dict[str, Any] | None = None) -> bool:
+    """Return whether the central permission model grants global history access."""
+    user = user or current_user() or {}
+    return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "quotations.view_all" in user.get("permissions", [])
+
+
+def permitted_quotation_query(user: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the authorized quotation scope before applying user filters."""
+    user = user or current_user() or {}
+    if can_view_all_quotations(user):
+        return {}
+    user_id = user.get("_id")
+    return {"$or": [
+        {"created_by_user_id": user_id},
+        {"user_id": user_id},
+        {"prepared_by_user_id": user_id},
+        {"salesperson_id": user_id},
+    ]}
+
+
 def permitted_customer_query(user: dict[str, Any] | None = None) -> dict[str, Any]:
     user = user or current_user() or {}
     query: dict[str, Any] = {"active": {"$ne": False}, "status": {"$ne": "archived"}}

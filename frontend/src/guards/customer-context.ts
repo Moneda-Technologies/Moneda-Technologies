@@ -6,8 +6,6 @@ const protectedPrefixes = [
   "/calculator",
   "/products",
   "/cart",
-  "/quotation",
-  "/quotations",
 ];
 
 export function hasCustomerContext(): boolean {
@@ -24,13 +22,14 @@ export function clearCustomerContextState(): void {
 
 export function isCustomerProtectedRoute(path: string): boolean {
   const normalized = path.replace(/\/$/, "") || "/";
+  if (normalized === "/quotation" || normalized === "/quotation/create" || normalized === "/quotations/create") return true;
   return protectedPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
 }
 
 export function customerGuardMessage(path: string): string {
   return path === "/cart" || path.startsWith("/cart/")
     ? "Please select a customer before accessing the cart."
-    : path.startsWith("/quotation") || path.startsWith("/quotations")
+    : path === "/quotation" || path.startsWith("/quotation/create") || path.startsWith("/quotations/create")
       ? "Please select a customer before preparing a quotation."
     : "Please select a customer before using the calculator.";
 }

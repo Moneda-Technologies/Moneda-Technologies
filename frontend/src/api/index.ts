@@ -56,7 +56,12 @@ export const customerApi = {
 };
 
 export const quotationApi = {
-  list: (customerId: string) => api<PageResult<Quotation>>(`/quotations?customer_id=${encodeURIComponent(customerId)}`),
+  list: (params: string | URLSearchParams = "") => {
+    const query = typeof params === "string"
+      ? (params.includes("=") || !params ? params : `customer_id=${encodeURIComponent(params)}`)
+      : params.toString();
+    return api<PageResult<Quotation>>(`/quotations${query ? `?${query}` : ""}`);
+  },
   get: (id: string) => api<Quotation>(`/quotations/${encodeURIComponent(id)}`),
   communications: (id: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/quotations/${encodeURIComponent(id)}/communications`),
   create: (value: unknown) => api<Quotation>("/quotations", jsonBody(value)),
@@ -67,7 +72,7 @@ export const quotationApi = {
 };
 
 export const cartApi = {
-  get: (customerId: string, currency: Currency = "EUR") => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; totals: Record<string, number> }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`),
+  get: (customerId: string, currency: Currency = "EUR") => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; master_currency?: "EUR"; display_currency?: Currency; totals: Record<string, number>; master_totals?: Record<string, number> }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`),
   add: (value: unknown) => api<CartItem>("/cart/items", jsonBody(value)),
   update: (id: string, value: unknown) => api<CartItem>(`/cart/items/${encodeURIComponent(id)}`, patchBody(value)),
   remove: (id: string) => api<null>(`/cart/items/${encodeURIComponent(id)}`, { method: "DELETE" }),

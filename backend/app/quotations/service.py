@@ -7,11 +7,11 @@ from typing import Any
 from flask import current_app
 
 from app.pricing.engine import (
-    calculate_line, calculate_quote_totals, company_tax_values, resolve_product_adjustments,
+    calculate_line, calculate_quote_totals, resolve_product_adjustments,
+    with_display_currency,
 )
 from app.repositories.store import Store, utcnow
 from app.customers.codes import available_customer_code
-from app.customers.metadata import resolve_customer_currency
 
 
 class QuotationService:
@@ -30,9 +30,6 @@ class QuotationService:
     def _build(
         self, *, payload: dict[str, Any], user: dict[str, Any], customer_company: dict[str, Any] | None, persist: bool,
     ) -> dict[str, Any]:
-        forbidden = {"tax_rate", "tax_mode", "tax", "tax_amount"}
-        if forbidden.intersection(payload):
-            raise ValueError("Quotation-level tax override is not supported")
         if not customer_company:
             raise LookupError("Customer company not found")
 
@@ -65,7 +62,9 @@ class QuotationService:
         if transport_mode == "by_consignee":
             transport_charges = Decimal("0")
 
-        currency = resolve_customer_currency(customer_company, payload.get("currency"), self.store, user)
+        # New customer-facing quotations are always authored from EUR master
+        # prices. A submitted currency is a display preference only.
+        currency = "EUR"
         rate, rate_meta = self.exchange_rate_service.rate_for(currency)
         cart = self.store.find_one("carts", {"user_id": user["_id"], "customer_id": customer_id})
         if not cart:
@@ -80,29 +79,44 @@ class QuotationService:
             if cart_item.get("cart_id") != cart["_id"]:
                 self.store.update_one("cart_items", {"_id": cart_item["_id"]}, {"cart_id": cart["_id"]})
 
-        company_tax_rate, company_tax_mode = company_tax_values(customer_company)
         lines = []
         for cart_item in cart_items:
             product = self.store.find_one("products", {"_id": cart_item["product_id"], "active": True})
             if not product:
                 raise LookupError(f"Product {cart_item['product_id']} is unavailable")
             configuration = cart_item.get("configuration", {})
-            item_tax_enabled = currency == "INR" and bool(cart_item.get("tax_enabled", False))
-            item_tax_mode = str(cart_item.get("tax_mode", "exclusive")).lower()
-            if item_tax_mode not in {"exclusive", "inclusive"}:
-                item_tax_mode = "exclusive"
-            line = calculate_line(
-                product, configuration, quantity=int(cart_item.get("quantity", 1)),
-                discount_percent=cart_item.get("discount_percent", 0), currency=currency, exchange_rate=rate,
-                company_tax_rate=company_tax_rate, company_tax_mode=company_tax_mode,
-                privileged_discount="pricing.discount.override" in user.get("permissions", []),
-                adjustments=resolve_product_adjustments(self.store, product, configuration), business_rules=settings,
-                apply_tax=item_tax_enabled, tax_mode_override=item_tax_mode,
+            saved = cart_item.get("pricing_preview") or {}
+            saved_quantity = int(saved.get("requested_quantity", saved.get("quantity", 0)) or 0)
+            use_saved_eur = (
+                saved.get("master_currency") == "EUR"
+                and saved.get("product_id") == cart_item.get("product_id")
+                and saved.get("master_final_total") is not None
+                and saved_quantity == int(cart_item.get("quantity", 1))
+                and float(saved.get("discount_percent", 0)) == float(cart_item.get("discount_percent", 0))
             )
+            if use_saved_eur:
+                # Cart pricing is a trusted server-created snapshot. Preserve
+                # its EUR commercial amount even if a product price or the
+                # user's display currency changes before quotation creation.
+                line = with_display_currency(saved, "EUR", 1)
+                pricing_source = "saved_cart_eur"
+            else:
+                # Compatibility path for historical carts without explicit EUR
+                # snapshots. New and edited carts never take this branch.
+                line = calculate_line(
+                    product, configuration, quantity=int(cart_item.get("quantity", 1)),
+                    discount_percent=cart_item.get("discount_percent", 0), currency=currency, exchange_rate=rate,
+                    company_tax_rate=0, company_tax_mode="no_tax",
+                    privileged_discount="pricing.discount.override" in user.get("permissions", []),
+                    adjustments=resolve_product_adjustments(self.store, product, configuration), business_rules=settings,
+                    apply_tax=False, tax_mode_override="no_tax",
+                )
+                pricing_source = "legacy_cart_recalculated_eur"
             line["discount_source"] = "saved_cart_item"
             current_app.logger.info(
-                "quotation_discount quotation=%s cart_item_id=%s customer_id=%s product_id=%s discount_percent=%s discount_source=saved_cart_item",
-                "create" if persist else "preview", cart_item.get("_id"), customer_id, product["_id"], line["discount_percent"],
+                "quotation_discount quotation=%s cart_item_id=%s customer_id=%s product_id=%s master_currency=EUR master_final_total_eur=%s discount_percent=%s discount_source=saved_cart_item pricing_source=%s",
+                "create" if persist else "preview", cart_item.get("_id"), customer_id, product["_id"],
+                line["master_final_total"], line["discount_percent"], pricing_source,
             )
             line["thickness"] = configuration.get("thickness_mm") or configuration.get("thickness_micron")
             line["dimensions"] = {
@@ -116,13 +130,7 @@ class QuotationService:
             ]
             lines.append(line)
 
-        transport_taxable = False
-        transport_tax_rate = 0
-        transport_tax_mode = "no_tax"
-        totals = calculate_quote_totals(
-            lines, transport_charges,
-            transport_tax_rate=transport_tax_rate, transport_tax_mode=transport_tax_mode,
-        )
+        totals = calculate_quote_totals(lines, transport_charges)
         created_at = utcnow()
         quotation_number = "PREVIEW"
         if persist:
@@ -141,6 +149,11 @@ class QuotationService:
         }
         issuer["email"] = issuer.get("email") or "business@monedatechnologies.com"
         customer_snapshot = self._snapshot(customer_company)
+        creator_snapshot = {
+            key: user.get(key)
+            for key in ("name", "email", "phone")
+            if user.get(key)
+        }
 
         commercial_conditions = {**settings.get("commercial_conditions", {}), **customer_company.get("commercial_conditions", {})}
         transport = {
@@ -148,10 +161,11 @@ class QuotationService:
             "label": "By Moneda Team" if transport_mode == "by_moneda_team" else "By Consignee",
             "description": "Arranged by Moneda Team" if transport_mode == "by_moneda_team" else "To be borne by consignee",
             "charges": float(transport_charges),
-            "taxable": transport_taxable,
-            "tax_rate": float(transport_tax_rate),
-            "tax_mode": transport_tax_mode,
         }
+        explicit_customer_notes = payload.get("customer_notes")
+        legacy_notes = payload.get("notes", "")
+        customer_notes = str(explicit_customer_notes if explicit_customer_notes is not None else legacy_notes).strip()
+        commercial_notes = str(legacy_notes)[:4000] if explicit_customer_notes is not None else ""
         document = {
             "quotation_number": quotation_number,
             "issuer": issuer, "issuer_snapshot": issuer,
@@ -160,9 +174,11 @@ class QuotationService:
             # Deprecated aliases retained as read-only compatibility bridges.
             "customer_company_id": customer_id, "customer_company_snapshot": customer_snapshot,
             "company_id": customer_id, "company_snapshot": customer_snapshot,
+            "created_by_user_id": user["_id"], "creator_snapshot": creator_snapshot,
             "prepared_by_user_id": user["_id"], "salesperson_id": user["_id"],
             "salesperson_snapshot": self._snapshot(user), "user_id": user["_id"],
             "master_currency": "EUR", "base_currency": "EUR", "quotation_currency": currency,
+            "pricing_policy": "eur_only_no_tax_v1",
             "currency": currency, "exchange_rate": rate, "exchange_rate_meta": rate_meta,
             "exchange_rate_provider": rate_meta.get("provider"), "exchange_rate_timestamp": rate_meta.get("fetched_at"),
             "exchange_rate_provider_source": rate_meta.get("provider_source"),
@@ -172,8 +188,8 @@ class QuotationService:
             "master_price_eur": float(sum(Decimal(str(line.get("master_price_eur", 0))) * int(line.get("quantity", 0)) for line in lines)),
             "converted_price": float(sum(Decimal(str(line.get("converted_price", 0))) * int(line.get("quantity", 0)) for line in lines)),
             "lines": lines, "totals": totals, "payment_terms": payment_terms,
-            "tax_enabled": currency == "INR" and any(float(line.get("tax_amount", 0)) > 0 for line in lines),
-            "transport": transport, "notes": str(payload.get("notes", ""))[:4000],
+            "transport": transport, "notes": commercial_notes,
+            "customer_notes": customer_notes,
             "terms": payload.get("terms", []), "commercial_conditions": commercial_conditions,
             "created_at": created_at, "validity_days": validity, "proforma_validity_days": validity,
             "expiry_date": created_at + timedelta(days=validity), "status": "Draft",

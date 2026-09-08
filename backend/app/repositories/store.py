@@ -63,6 +63,10 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
                 return False
             if "$regex" in expected and not re.search(str(expected["$regex"]), str(actual or ""), re.I):
                 return False
+            if "$gte" in expected and (actual is None or actual < expected["$gte"]):
+                return False
+            if "$lte" in expected and (actual is None or actual > expected["$lte"]):
+                return False
         elif isinstance(actual, list):
             if expected not in actual:
                 return False
@@ -179,6 +183,8 @@ class MongoStore:
         self.db.quotations.create_index("quotation_number", unique=True)
         self.db.quotations.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
         self.db.quotations.create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])  # legacy bridge
+        self.db.quotations.create_index([("created_by_user_id", ASCENDING), ("created_at", DESCENDING)])
+        self.db.quotations.create_index([("currency", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)])
         self.db.quotations.create_index([("user_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
         self.db.orders.create_index([("customer_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
         self.db.orders.create_index([("company_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)  # legacy bridge

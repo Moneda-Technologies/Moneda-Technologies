@@ -71,10 +71,9 @@ def me():
     active = customer_record(selected)
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
     current_app.logger.info(
-        "active_customer_load active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_currency=%s active_customer_gst_applicable=%s",
+        "active_customer_load active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_display_currency=%s",
         selected or "null", (active or {}).get("name", "unknown"), (active or {}).get("country_code", "unknown"),
         (active or {}).get("preferred_currency") or (active or {}).get("default_currency", "unknown"),
-        bool((active or {}).get("gst_applicable") or (active or {}).get("tax_profile", {}).get("gst_applicable")),
     )
     return success({
         "user": user,

@@ -165,7 +165,9 @@ def convert_quotation(quotation_id: str):
     if not quotation:
         return failure("Quotation not found", status=404)
     quotation_customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
-    if not enforce_active_customer(quotation_customer_id):
+    # Historical quotations are authorized by quotation ownership/global
+    # permission and do not require the current workspace customer selection.
+    if not enforce_customer(quotation_customer_id):
         return failure("Customer access denied", status=403)
     user = current_user() or {}
     idempotency_key = str(request.headers.get("Idempotency-Key") or (request.get_json(silent=True) or {}).get("idempotency_key") or "").strip()[:160]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import re
+from datetime import datetime, timezone
 
 from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, Response, current_app, request
@@ -8,8 +10,8 @@ from flask import Blueprint, Response, current_app, request
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import (
-    current_user, customer_id_from, customer_record, enforce_active_customer,
-    enforce_customer, enforce_active_customer_company, selected_customer_id,
+    can_view_all_quotations, current_user, customer_id_from, customer_record, enforce_active_customer,
+    enforce_customer, enforce_active_customer_company, permitted_quotation_query, selected_customer_id,
     permission_required,
 )
 from app.pricing.engine import PricingUnavailable
@@ -22,7 +24,17 @@ bp = Blueprint("quotations", __name__, url_prefix="/api/quotations")
 
 
 def _accessible(quotation: dict) -> bool:
-    return enforce_customer(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))
+    user = current_user() or {}
+    if can_view_all_quotations(user):
+        return True
+    owner_ids = {quotation.get("created_by_user_id"), quotation.get("user_id"), quotation.get("prepared_by_user_id"), quotation.get("salesperson_id")}
+    if user.get("_id") in owner_ids:
+        return True
+    # Legacy quotations may not have an owner snapshot; retain the existing
+    # customer authorization bridge for those records.
+    if not any(owner_ids):
+        return enforce_customer(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))
+    return False
 
 
 def _scope_id(payload: dict) -> str | None:
@@ -41,16 +53,83 @@ def _scope_id(payload: dict) -> str | None:
 @bp.get("")
 @permission_required("quotations.view")
 def list_quotations():
-    customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id") or selected_customer_id()
-    if not enforce_active_customer(customer_id):
-        return failure("Customer access denied", status=403)
-    query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
-    if request.args.get("status"):
-        query["status"] = request.args["status"]
-    page = max(int(request.args.get("page", 1)), 1)
-    limit = min(max(int(request.args.get("limit", 25)), 1), 100)
-    rows, total = current_app.extensions["store"].list("quotations", query, page=page, limit=limit)
-    return success({"items": rows, "pagination": {"page": page, "limit": limit, "total": total}})
+    user = current_user() or {}
+    clauses: list[dict] = []
+    authorized = permitted_quotation_query(user)
+    if authorized:
+        clauses.append(authorized)
+
+    customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
+    if customer_id:
+        customer_id = str(customer_id).strip()
+        if not enforce_customer(customer_id):
+            return failure("Customer access denied", status=403)
+        clauses.append({"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]})
+
+    status = str(request.args.get("status") or "").strip()
+    if status:
+        clauses.append({"status": status})
+    currency = str(request.args.get("currency") or "").strip().upper()
+    if currency:
+        clauses.append({"currency": currency})
+
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        clauses.append({"$or": [
+            {"quotation_number": {"$regex": re.escape(search)}},
+            {"customer_snapshot.company_name": {"$regex": re.escape(search)}},
+            {"customer_snapshot.name": {"$regex": re.escape(search)}},
+            {"customer_snapshot.email": {"$regex": re.escape(search)}},
+            {"customer_snapshot.contact_name": {"$regex": re.escape(search)}},
+        ]})
+
+    region = str(request.args.get("region") or "").strip()
+    if region:
+        clauses.append({"$or": [{"customer_snapshot.continent": region}, {"customer_snapshot.region.continent": region}]})
+    country = str(request.args.get("country") or "").strip()
+    if country:
+        clauses.append({"$or": [
+            {"customer_snapshot.country_code": country.upper()},
+            {"customer_snapshot.country_name": country},
+            {"customer_snapshot.country": country},
+            {"customer_snapshot.region.country_code": country.upper()},
+            {"customer_snapshot.region.country_name": country},
+        ]})
+
+    min_total = request.args.get("min_total")
+    max_total = request.args.get("max_total")
+    if (min_total or max_total) and not currency:
+        return failure("Select a currency before filtering quotation totals", status=422, error="CURRENCY_REQUIRED_FOR_TOTAL_FILTER")
+    try:
+        if min_total:
+            clauses.append({"totals.grand_total": {"$gte": float(min_total)}})
+        if max_total:
+            clauses.append({"totals.grand_total": {"$lte": float(max_total)}})
+    except (TypeError, ValueError):
+        return failure("Minimum and maximum totals must be valid numbers", status=422)
+
+    def date_boundary(value: str, end: bool = False) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.replace(hour=23, minute=59, second=59, microsecond=999999) if end else parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        if request.args.get("from_date"):
+            clauses.append({"created_at": {"$gte": date_boundary(request.args["from_date"])}})
+        if request.args.get("to_date"):
+            clauses.append({"created_at": {"$lte": date_boundary(request.args["to_date"], end=True)}})
+    except ValueError:
+        return failure("From and to dates must be valid ISO dates", status=422)
+
+    query: dict = {"$and": clauses} if clauses else {}
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+        limit = min(max(int(request.args.get("limit", 25)), 1), 100)
+    except ValueError:
+        return failure("Page and limit must be valid numbers", status=422)
+    rows, total = current_app.extensions["store"].list("quotations", query, page=page, limit=limit, sort="created_at", direction=-1)
+    return success({"items": rows, "pagination": {"page": page, "limit": limit, "total": total}, "scope": "all" if can_view_all_quotations(user) else "own"})
 
 
 @bp.post("")
@@ -134,7 +213,7 @@ def get_quotation(quotation_id: str):
     row = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
     if not row:
         return failure("Quotation not found", status=404)
-    return success(row) if _accessible(row) else failure("Customer company access denied", status=403)
+    return success(row) if _accessible(row) else failure("Quotation access denied", status=403)
 
 
 @bp.patch("/<quotation_id>")
@@ -151,7 +230,7 @@ def update_quotation(quotation_id: str):
     payload = request.get_json(silent=True) or {}
     if {"tax_rate", "tax_mode", "lines", "totals", "exchange_rate"}.intersection(payload):
         return failure("Money and tax fields cannot be changed directly", status=422)
-    allowed = {"payment_terms", "transport", "notes", "terms", "expiry_date", "validity_days", "proforma_validity_days"}
+    allowed = {"payment_terms", "transport", "notes", "customer_notes", "terms", "expiry_date", "validity_days", "proforma_validity_days"}
     changes = {key: value for key, value in payload.items() if key in allowed}
     updated = store.update_one("quotations", {"_id": quotation_id}, changes)
     audit("quotation.update", "quotation", quotation_id, {"fields": sorted(changes)})
@@ -169,7 +248,8 @@ def quotation_pdf(quotation_id: str):
     try:
         content = render_quotation_pdf(row)
     except RuntimeError as exc:
-        return failure(str(exc), status=503)
+        current_app.logger.error("quotation_pdf_generation quotation_id=%s renderer=unavailable format=pdf result=FAIL", quotation_id)
+        return failure(str(exc), status=503, error="PDF_GENERATION_FAILED")
     disposition = "inline" if request.args.get("preview") == "true" else "attachment"
     current_app.extensions["store"].insert_one("communication_logs", {
         "quotation_id": quotation_id, "customer_id": row.get("customer_id") or row.get("customer_company_id") or row.get("company_id"), "channel": "pdf",
@@ -192,8 +272,8 @@ def send_quotation(quotation_id: str):
         return failure("Quotation not found", status=404)
     if not _accessible(row):
         return failure("Customer company access denied", status=403)
-    if row.get("status") == "Sent":
-        return failure("Quotation has already been sent; retry is available after a failed delivery", status=409)
+    previous_email = store.find_one("email_logs", {"quotation_id": quotation_id, "purpose": "quotation"})
+    send_event = "resend" if previous_email or row.get("status") in {"Sent", "send_failed"} else "initial_send"
     recipient = str(row.get("customer_snapshot", {}).get("email") or "").strip()
     try:
         recipient = validate_email(recipient, check_deliverability=False).normalized
@@ -211,13 +291,16 @@ def send_quotation(quotation_id: str):
         return failure("A valid authenticated user email is required before sending", status=422, error="SENDER_USER_EMAIL_REQUIRED")
     email_service = current_app.extensions["email_service"]
     routing = email_service.recipients.resolved_for_quotation(to=[recipient], sender_user_email=sender_email)
-    request_id = f"quotation-{quotation_id}"
+    request_id = f"quotation-{quotation_id}-{send_event}-{email_diagnostic_id()}"
 
     def mark_failed(*, error_code: str, diagnostic_id: str, stage: str) -> None:
-        failed_history = [*row.get("history", []), {"status": "send_failed", "at": utcnow(), "by": sent_by, "error_code": error_code, "diagnostic_id": diagnostic_id}]
-        store.update_one("quotations", {"_id": quotation_id}, {"status": "send_failed", "email_status": "send_failed", "email_error_code": error_code, "email_diagnostic_id": diagnostic_id, "history": failed_history})
+        history_status = "resend_failed" if send_event == "resend" else "send_failed"
+        failed_history = [*row.get("history", []), {"status": history_status, "event": send_event, "at": utcnow(), "by": sent_by, "error_code": error_code, "diagnostic_id": diagnostic_id}]
+        quotation_status = "Sent" if row.get("status") == "Sent" else "send_failed"
+        store.update_one("quotations", {"_id": quotation_id}, {"status": quotation_status, "email_status": history_status, "email_error_code": error_code, "email_diagnostic_id": diagnostic_id, "history": failed_history})
         store.insert_one("email_logs", {
-            "quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject,
+            "quotation_id": quotation_id, "quotation_number": row.get("quotation_number"), "event": send_event,
+            "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject,
             "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"),
             "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by,
             "status": "failed", "submission_status": "failed", "error_code": error_code, "diagnostic_id": diagnostic_id,
@@ -258,19 +341,20 @@ def send_quotation(quotation_id: str):
         current_app.logger.exception("quotation email failed diagnostic_id=%s stage=email_service", diagnostic_id)
         mark_failed(error_code="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
         return failure("Quotation email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
-    history = [*row.get("history", []), {"status": "Sent", "at": utcnow(), "by": user.get("_id")}]
+    history_event = "Resent" if send_event == "resend" else "Sent"
+    history = [*row.get("history", []), {"status": history_event, "event": send_event, "at": utcnow(), "by": user.get("_id")}]
     current_app.logger.info(
         "quotation_send_email quotation_id=%s provider=zoho_mail_api result=PASS",
         quotation_id,
     )
     updated = store.update_one("quotations", {"_id": quotation_id}, {"status": "Sent", "email_status": "sent", "history": history})
-    store.insert_one("email_logs", {"quotation_id": quotation_id, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"), "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by, "status": "sent", "submission_status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
+    store.insert_one("email_logs", {"quotation_id": quotation_id, "quotation_number": row.get("quotation_number"), "event": send_event, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"), "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by, "status": "sent", "submission_status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
     store.insert_one("notifications", {
         "user_id": user.get("_id"), "customer_id": row.get("customer_id") or row.get("customer_company_id") or row.get("company_id"), "type": "quotation_sent",
-        "title": f"Quotation {row['quotation_number']} sent", "quotation_id": quotation_id, "read": False,
+        "title": f"Quotation {row['quotation_number']} {'sent again' if send_event == 'resend' else 'sent'}", "quotation_id": quotation_id, "read": False,
     })
     audit("quotation.send", "quotation", quotation_id, {"number": row["quotation_number"]})
-    return success(updated, "Quotation sent")
+    return success(updated, "Quotation sent again successfully" if send_event == "resend" else "Quotation sent")
 
 
 @bp.get("/<quotation_id>/communications")

@@ -19,11 +19,14 @@ def main() -> None:
     app = create_app(TestConfig)
     client = app.test_client()
     assert client.post("/api/v1/auth/demo", json={}).status_code == 200
-    assert client.post("/api/v1/companies/select", json={"company_id": "company-moneda-demo"}).status_code == 200
+    app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {
+        "name": "Athul Nair", "email": "athul@example.com", "phone": "+91 98765 43210",
+    })
+    assert client.post("/api/v1/companies/select", json={"company_id": "customer-demo-1"}).status_code == 200
     cart = client.post(
         "/api/v1/cart/items",
         json={
-            "company_id": "company-moneda-demo",
+            "customer_id": "customer-demo-1",
             "product_id": "mtech_active_prime",
             "currency": "EUR",
             "quantity": 10,
@@ -44,14 +47,13 @@ def main() -> None:
     quote = client.post(
         "/api/v1/quotations",
         json={
-            "company_id": "company-moneda-demo",
             "customer_id": "customer-demo-1",
             "currency": "EUR",
             "proforma_validity_days": 30,
             "payment_terms": "Advance",
             "transport_mode": "by_moneda_team",
             "transport_charges": 85,
-            "notes": "Please confirm the press model and final cut dimensions before production.",
+            "customer_notes": "Please confirm delivery schedule before dispatch.\nHandle with care during unloading.",
         },
     )
     assert quote.status_code == 201, quote.get_json()

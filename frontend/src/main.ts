@@ -14,6 +14,10 @@ import { clearCustomerContextState, CUSTOMER_SELECTION_PATH } from "./guards/cus
 interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode: boolean; master_currency: "EUR" }
 
 const app = document.querySelector<HTMLElement>("#app")!;
+const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
+skipLink?.addEventListener("click", () => {
+  window.requestAnimationFrame(() => document.querySelector<HTMLElement>("#main-content")?.focus({ preventScroll: true }));
+});
 
 async function enterWorkspace(forceCompanySelection = false, existingSession?: Awaited<ReturnType<typeof authApi.me>>): Promise<void> {
   const session = existingSession ?? await authApi.me();

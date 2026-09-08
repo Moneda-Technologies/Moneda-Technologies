@@ -1,4 +1,4 @@
-import { cartApi, customerApi, customerCompanyApi, profileApi, rateApi } from "../api";
+import { cartApi, customerCompanyApi, profileApi, rateApi } from "../api";
 import { api } from "../api/client";
 import { appStore } from "../state/store";
 import { escapeHtml } from "../utils/dom";
@@ -25,22 +25,21 @@ function fxDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function fxValue(base: string, target: string, rates: Record<string, number>): number | null {
+function fxValue(target: string, rates: Record<string, number>): number | null {
   const eurUsd = Number(rates.USD); const eurInr = Number(rates.INR);
   if (!(eurUsd > 0) || !(eurInr > 0)) return null;
-  if (base === "EUR") return target === "USD" ? eurUsd : eurInr;
-  if (base === "USD") return target === "EUR" ? 1 / eurUsd : eurInr / eurUsd;
-  return target === "EUR" ? 1 / eurInr : eurUsd / eurInr;
+  return target === "USD" ? eurUsd : eurInr;
 }
 
 function fxSymbol(currency: string): string { return currency === "USD" ? "$" : currency === "INR" ? "₹" : "€"; }
 
-function renderFxPopover(popover: HTMLElement, currency: string): void {
+function renderFxPopover(popover: HTMLElement): void {
+  const currency = "EUR";
   const snapshot = fxSnapshot;
   if (!snapshot) { popover.innerHTML = `<span class="eyebrow">FX Rates</span><strong>FX rates unavailable</strong><small>Try again when the rate service is available.</small>`; return; }
-  const targets = currency === "EUR" ? ["INR", "USD"] : currency === "USD" ? ["INR", "EUR"] : ["EUR", "USD"];
+  const targets = ["USD", "INR"];
   const rows = targets.map((target) => {
-    const value = fxValue(currency, target, snapshot.rates);
+    const value = fxValue(target, snapshot.rates);
     return `<div class="fx-rate-row"><span>1 ${currency}</span><strong>= ${value === null ? "—" : `${fxSymbol(target)}${value.toFixed(4)}`}</strong><em>${target}</em></div>`;
   }).join("");
   const status = snapshot.stale || snapshot.source === "cached" ? "Cached" : "Live";
@@ -91,7 +90,7 @@ export function renderShell(): HTMLElement {
         <button class="search-trigger"><i data-lucide="search"></i><span>Search customers, quotes, products…</span><kbd>Ctrl K</kbd></button>
         <div class="top-actions">
           ${state.customer ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer">${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
-          <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Currency</span><select id="currency-switcher" aria-label="Select quotation currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
+          <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Display Currency</span><select id="currency-switcher" aria-label="Select display currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
           <div class="notification-control"><button class="icon-button" id="notification-button" aria-label="Notifications" title="Notifications" aria-expanded="false"><i data-lucide="bell"></i><span class="notification-dot" data-notification-count>${state.notificationCount || ""}</span></button><div id="notification-popover" class="notification-popover" role="dialog" aria-label="Notifications" hidden></div></div>
           <div class="user-menu-control"><button class="avatar avatar-button" id="user-menu-button" aria-label="Open user menu" aria-expanded="false">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button><div id="user-menu" class="user-menu" role="menu" hidden><div class="user-menu-head"><strong>${escapeHtml(state.user?.name ?? "User")}</strong><span>${escapeHtml(state.user?.role_display_name ?? "User")}</span></div><a href="/profile" data-route="/profile" role="menuitem"><i data-lucide="user-round"></i>Profile</a><button type="button" data-open-notifications role="menuitem"><i data-lucide="bell"></i>Notifications</button><div class="user-menu-divider"></div><button type="button" data-sign-out role="menuitem"><i data-lucide="log-out"></i>Sign out</button></div></div>
         </div>
@@ -168,21 +167,17 @@ export function renderShell(): HTMLElement {
   fxControl?.addEventListener("mouseleave", scheduleFxClose);
   currencySelect?.addEventListener("focus", () => setFxOpen(true));
   currencySelect?.addEventListener("click", () => setFxOpen(true));
-  currencySelect?.addEventListener("change", async (event) => {
+  currencySelect?.addEventListener("change", (event) => {
     const nextCurrency = (event.target as HTMLSelectElement).value as "USD" | "INR" | "EUR";
-    const activeCustomer = appStore.state.customer;
-    if (!activeCustomer) { currencySelect.value = appStore.state.currency; return; }
-    currencySelect.disabled = true;
-    try {
-      const updated = await customerApi.update(activeCustomer._id, { preferred_currency: nextCurrency });
-      const merged = { ...activeCustomer, ...updated, preferred_currency: nextCurrency, default_currency: nextCurrency };
-      const customers = appStore.state.customers.map((item) => (item._id === merged._id ? { ...item, ...merged } : item));
-      appStore.set({ customers, customer: merged, customerCompany: merged as unknown as import("../types/domain").Company, company: merged as unknown as import("../types/domain").Company, currency: nextCurrency });
-      window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname }));
-    } catch (error) {
-      currencySelect.value = appStore.state.currency;
-      toast(error instanceof Error ? error.message : "Currency change failed", "error");
-    } finally { currencySelect.disabled = false; }
+    const previousCurrency = appStore.state.currency;
+    if (nextCurrency === previousCurrency) return;
+    // Display currency is session/UI state only. Do not persist it on the
+    // customer, select the customer again, or navigate/remount the route.
+    appStore.set({ currency: nextCurrency });
+    if (import.meta.env.DEV) console.debug("display_currency_changed", {
+      previous_currency: previousCurrency, new_currency: nextCurrency,
+      route_unchanged: true, calculator_state_preserved: true,
+    });
   });
   currencySelect?.addEventListener("keydown", (event) => { if (event.key === "Escape") { setFxOpen(false); currencySelect.blur(); } });
   fxPopover?.addEventListener("mouseenter", () => setFxOpen(true));
@@ -192,10 +187,13 @@ export function renderShell(): HTMLElement {
     if (!fxControl?.contains(event.target as Node)) setFxOpen(false);
   };
   document.addEventListener("click", closeFxOutside);
-  const renderFx = () => { if (fxPopover) renderFxPopover(fxPopover, appStore.state.currency); };
+  const renderFx = () => { if (fxPopover) renderFxPopover(fxPopover); };
   renderFx();
-  void loadFxSnapshot().then(renderFx);
-  appStore.subscribe((nextState) => { if (root.isConnected) renderFxPopover(fxPopover!, nextState.currency); });
+  void loadFxSnapshot().then((snapshot) => {
+    if (snapshot) appStore.set({ fxRates: snapshot.rates });
+    renderFx();
+  });
+  appStore.subscribe(() => { if (root.isConnected) renderFxPopover(fxPopover!); });
   void profileApi.notifications().then((result) => {
     appStore.set({ notificationCount: result.unread });
     const badge = root.querySelector<HTMLElement>("[data-notification-count]");

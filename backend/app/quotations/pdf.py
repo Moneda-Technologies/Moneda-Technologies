@@ -86,6 +86,9 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     def safe(value: Any) -> str:
         return escape(str(value or "-"))
 
+    def safe_multiline(value: Any) -> str:
+        return escape(str(value or "")).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br/>")
+
     def lines(*values: Any) -> str:
         return "<br/>".join(safe(value) for value in values if value)
 
@@ -141,18 +144,24 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     story.extend([meta_table, Spacer(1, 5 * mm)])
 
     issuer = quotation.get("issuer_snapshot") or {"name": "Moneda Technologies", "email": "business@monedatechnologies.com"}
+    creator = quotation.get("creator_snapshot") or quotation.get("salesperson_snapshot") or {}
     customer_company = quotation.get("customer_company_snapshot") or quotation.get("company_snapshot") or {}
     customer = quotation.get("customer_snapshot") or customer_company
     issued_by = [
         Paragraph("FROM", ParagraphStyle("YellowLabel", parent=label, textColor=palette["yellow"])),
         Paragraph(safe(issuer.get("name") or "Moneda Technologies"), white_heading),
-        Paragraph(lines(issuer.get("address"), issuer.get("email"), issuer.get("phone"), f"Made by: {(quotation.get('salesperson_snapshot') or {}).get('name')}"), ParagraphStyle("WhiteMuted", parent=muted, textColor=colors.HexColor("#bdbdbd"))),
+        Paragraph(lines(
+            issuer.get("address"), issuer.get("email"), issuer.get("phone"),
+            f"Made by: {creator.get('name')}" if creator.get("name") else None,
+            f"Creator email: {creator.get('email')}" if creator.get("email") else None,
+            f"Creator phone: {creator.get('phone')}" if creator.get("phone") else None,
+        ), ParagraphStyle("WhiteMuted", parent=muted, textColor=colors.HexColor("#bdbdbd"))),
     ]
     prepared_for = [
         Paragraph("TO", label), Paragraph(safe(customer_company.get("name") or customer.get("name")), heading),
         Paragraph(lines(f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None, customer.get("address"), customer.get("email"), customer.get("phone")), muted),
     ]
-    parties = Table([[issued_by, prepared_for]], colWidths=[90 * mm, 90 * mm], rowHeights=[32 * mm])
+    parties = Table([[issued_by, prepared_for]], colWidths=[90 * mm, 90 * mm], rowHeights=[38 * mm])
     parties.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, 0), palette["black"]), ("BACKGROUND", (1, 0), (1, 0), palette["soft"]),
         ("BOX", (0, 0), (0, 0), .5, palette["black"]), ("BOX", (1, 0), (1, 0), .5, palette["line"]),
@@ -237,7 +246,15 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     commercial.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (0, 0), (-1, -1), 1.2, palette["line"]), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     signature = Table([[Paragraph("AUTHORIZATION", label)], [Spacer(1, 15 * mm)], [Paragraph("<b>For Moneda Technologies</b><br/><font color='#70706b' size='6'>Authorized signatory</font>", normal)]], colWidths=[58 * mm])
     signature.setStyle(TableStyle([("LINEABOVE", (0, -1), (0, -1), .7, palette["black"]), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    commercial_block: list[Any] = [Paragraph("COMMERCIAL CONDITIONS", ParagraphStyle("TermsHeading", parent=heading, fontSize=8, leading=10, spaceAfter=6)), Table([[commercial, signature]], colWidths=[122 * mm, 58 * mm], style=[("VALIGN", (0, 0), (-1, -1), "TOP")])]
+    commercial_block: list[Any] = []
+    if quotation.get("customer_notes"):
+        customer_note = Table(
+            [[Paragraph("CUSTOMER NOTES", label)], [Paragraph(safe_multiline(quotation["customer_notes"]), normal)]],
+            colWidths=[180 * mm],
+        )
+        customer_note.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), palette["soft"]), ("BOX", (0, 0), (-1, -1), .5, palette["line"]), ("PADDING", (0, 0), (-1, -1), 7)]))
+        commercial_block.extend([customer_note, Spacer(1, 4 * mm)])
+    commercial_block.extend([Paragraph("COMMERCIAL CONDITIONS", ParagraphStyle("TermsHeading", parent=heading, fontSize=8, leading=10, spaceAfter=6)), Table([[commercial, signature]], colWidths=[122 * mm, 58 * mm], style=[("VALIGN", (0, 0), (-1, -1), "TOP")])])
     if quotation.get("notes"):
         note = Table([[Paragraph(f"<b>Notes:</b> {safe(quotation['notes'])}", muted)]], colWidths=[116 * mm])
         note.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), palette["soft"]), ("PADDING", (0, 0), (-1, -1), 7)]))
@@ -251,6 +268,13 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
 
 def render_quotation_pdf(quotation: dict[str, Any]) -> bytes:
     logo_path = _logo_path()
+    renderer_preference = str(current_app.config.get("PDF_RENDERER", "auto")).lower()
+    if renderer_preference not in {"auto", "weasyprint", "reportlab"}:
+        raise RuntimeError("PDF_RENDERER must be auto, weasyprint, or reportlab")
+    if renderer_preference == "reportlab":
+        content = _render_reportlab_pdf(quotation, logo_path)
+        current_app.logger.info("quotation_pdf_generation quotation_id=%s renderer=reportlab format=pdf result=PASS", quotation.get("_id", "preview"))
+        return content
     html = render_template(
         "quotation/quotation.html",
         quotation=quotation,
@@ -260,6 +284,13 @@ def render_quotation_pdf(quotation: dict[str, Any]) -> bytes:
     )
     try:
         from weasyprint import HTML
-    except (ImportError, OSError):
-        return _render_reportlab_pdf(quotation, logo_path)
-    return HTML(string=html, base_url=str(Path(current_app.root_path).parents[1])).write_pdf()
+        content = HTML(string=html, base_url=str(Path(current_app.root_path).parents[1])).write_pdf()
+        current_app.logger.info("quotation_pdf_generation quotation_id=%s renderer=weasyprint format=pdf result=PASS", quotation.get("_id", "preview"))
+        return content
+    except (ImportError, OSError) as exc:
+        if renderer_preference == "weasyprint":
+            current_app.logger.error("quotation_pdf_generation quotation_id=%s renderer=weasyprint format=pdf result=FAIL error_type=%s", quotation.get("_id", "preview"), type(exc).__name__)
+            raise RuntimeError("WeasyPrint is unavailable; install its native Pango/GLib runtime or set PDF_RENDERER=reportlab") from exc
+        content = _render_reportlab_pdf(quotation, logo_path)
+        current_app.logger.warning("quotation_pdf_generation quotation_id=%s renderer=reportlab format=pdf result=PASS fallback=weasyprint_unavailable error_type=%s", quotation.get("_id", "preview"), type(exc).__name__)
+        return content

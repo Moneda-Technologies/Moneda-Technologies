@@ -1,4 +1,4 @@
-"""Authoritative customer region, currency, tax, and payment metadata."""
+"""Authoritative customer region, display-currency, and payment metadata."""
 
 from __future__ import annotations
 
@@ -19,11 +19,10 @@ VALIDATION_MESSAGES = {
     "CONTINENT_INVALID": "Continent / region is not recognized",
     "COUNTRY_REQUIRED": "Country is required",
     "COUNTRY_CONTINENT_MISMATCH": "Country must belong to the selected continent",
-    "CUSTOMER_CURRENCY_REQUIRED": "Preferred currency is required",
+    "CUSTOMER_CURRENCY_REQUIRED": "Display currency is required",
     "PAYMENT_TERMS_REQUIRED": "Payment terms are required",
     "CUSTOM_PAYMENT_DAYS_REQUIRED": "Custom payment term must be a positive whole number of days",
     "CUSTOMER_ADDRESS_REQUIRED": "Address is required",
-    "GST_NUMBER_REQUIRED_FOR_INDIA": "GST / tax number is required for India customers",
 }
 
 
@@ -32,10 +31,8 @@ def validation_message(code: str) -> str:
 
 
 def customer_gst_applicable(customer: dict) -> bool:
-    region = customer.get("region") if isinstance(customer.get("region"), dict) else {}
-    country_code = str(customer.get("country_code") or region.get("country_code") or "").upper()
-    continent = str(customer.get("continent") or region.get("continent") or "")
-    return country_code == "IN" and continent == "Asia"
+    """Deprecated compatibility hook; customer location never activates tax."""
+    return False
 SUPPORTED_CURRENCIES = ("EUR", "USD", "INR")
 
 COUNTRIES_BY_CONTINENT = {
@@ -98,11 +95,16 @@ def country_for(continent: str | None, country_code: str | None, country_name: s
 
 
 def phone_is_valid(value: str) -> bool:
-    return not value or bool(re.fullmatch(r"[+0-9().\-\s]{3,30}", value))
+    if not value:
+        return True
+    if not re.fullmatch(r"\+?[0-9().\-\s]{2,29}", value):
+        return False
+    digits = re.sub(r"\D", "", value)
+    return 3 <= len(digits) <= 15
 
 
 def resolve_customer_currency(customer: dict, requested: str | None, store, user: dict | None = None) -> str:
-    """Resolve currency from the customer; persist an authorized workspace override."""
+    """Resolve the customer's display/reference currency only."""
     stored = str(customer.get("preferred_currency") or customer.get("default_currency") or "EUR").upper()
     if stored not in SUPPORTED_CURRENCIES:
         stored = "EUR"
@@ -121,7 +123,7 @@ def resolve_customer_currency(customer: dict, requested: str | None, store, user
 
 
 def normalize_customer_profile(payload: dict, existing: dict | None = None, *, require_complete: bool = False) -> tuple[dict | None, str | None]:
-    """Normalize region/tax/payment fields and return (changes, validation error)."""
+    """Normalize region, display-currency, and payment fields."""
     existing = existing or {}
     changes = dict(payload)
     required = lambda key: require_complete or key in changes
@@ -176,8 +178,6 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
         changes["country_name"] = country["name"]
         changes["country"] = country["name"]
         changes["region"] = {"continent": country["continent"], "country_code": country["code"], "country_name": country["name"]}
-        if "preferred_currency" not in changes and not existing.get("preferred_currency"):
-            changes["preferred_currency"] = country["default_currency"]
     currency = str(changes.get("preferred_currency") or changes.get("default_currency") or existing.get("preferred_currency") or "EUR").upper()
     if require_complete and not (changes.get("preferred_currency") or changes.get("default_currency")):
         return None, "CUSTOMER_CURRENCY_REQUIRED"
@@ -206,23 +206,4 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
     else:
         changes.pop("custom_payment_days", None)
         changes["payment_terms_display"] = payment
-    is_india = changes.get("country_code") == "IN"
-    tax_number = str(changes.get("tax_number") or changes.get("gst_vat_number") or "").strip()
-    if is_india:
-        if require_complete and not tax_number:
-            return None, "GST_NUMBER_REQUIRED_FOR_INDIA"
-        changes["gst_vat_number"] = tax_number
-        changes["tax_number"] = tax_number
-        changes["gst_applicable"] = True
-        changes["tax_enabled"] = True
-        changes["default_tax_rate"] = existing.get("default_tax_rate") if existing.get("default_tax_rate") in {5, 12, 18} else 18
-        changes["default_tax_mode"] = existing.get("default_tax_mode") if existing.get("default_tax_mode") in {"exclusive", "inclusive"} else "exclusive"
-    else:
-        changes["gst_vat_number"] = ""
-        changes["tax_number"] = ""
-        changes["gst_applicable"] = False
-        changes["tax_enabled"] = False
-        changes["default_tax_rate"] = 0
-        changes["default_tax_mode"] = "no_tax"
-    changes["tax_profile"] = {"gst_applicable": is_india, "tax_number": tax_number if is_india else ""}
     return changes, None

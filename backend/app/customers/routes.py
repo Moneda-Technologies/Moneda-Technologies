@@ -8,7 +8,7 @@ from app.api.responses import failure, success
 from app.middleware.access import customer_record, current_user, enforce_customer, permission_required, permitted_customer_query
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
-from app.customers.metadata import customer_gst_applicable, normalize_customer_profile, validation_message
+from app.customers.metadata import normalize_customer_profile, validation_message
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
@@ -31,10 +31,6 @@ def _view(row: dict) -> dict:
     preferred_currency = customer.get("preferred_currency") or customer.get("default_currency") or "EUR"
     customer["preferred_currency"] = preferred_currency
     customer["default_currency"] = preferred_currency
-    customer.setdefault("default_tax_rate", 0)
-    customer.setdefault("default_tax_mode", "no_tax")
-    customer.setdefault("tax_enabled", False)
-    customer["gst_applicable"] = customer_gst_applicable(customer)
     customer.setdefault("active", customer.get("status", "active") != "archived")
     return customer
 
@@ -95,9 +91,6 @@ def create_customer():
         return failure("Unsupported customer currency", status=422)
     payload.setdefault("preferred_currency", payload.get("default_currency", "EUR"))
     payload.setdefault("default_currency", payload["preferred_currency"])
-    payload.setdefault("default_tax_rate", 0)
-    payload.setdefault("default_tax_mode", "no_tax")
-    payload.setdefault("tax_enabled", False)
     payload.setdefault("assigned_salesperson", (current_user() or {}).get("_id"))
     creator_id = (current_user() or {}).get("_id")
     payload["created_by_user_id"] = creator_id

@@ -180,10 +180,21 @@ export interface PriceLine {
   pricing_unit: string;
   quantity: number;
   currency: Currency;
+  display_currency?: Currency;
+  quotation_currency?: "EUR";
   master_currency: "EUR";
   exchange_rate: number;
   master_price_eur?: number;
   converted_price?: number;
+  master_subtotal?: number;
+  master_discount_amount?: number;
+  master_total?: number;
+  master_final_total?: number;
+  display_unit_price?: number;
+  display_subtotal?: number;
+  display_discount_amount?: number;
+  display_total?: number;
+  display_final_total?: number;
   master_unit_price: number;
   base_unit_price_master: number;
   adjustments: Array<{ type: string; label: string; amount_master: number; quantity?: number }>;
@@ -192,10 +203,10 @@ export interface PriceLine {
   subtotal: number;
   discount_percent: number;
   discount_amount: number;
-  taxable_amount: number;
-  tax_rate: number;
-  tax_mode: string;
-  tax_amount: number;
+  taxable_amount?: number;
+  tax_rate?: number;
+  tax_mode?: string;
+  tax_amount?: number;
   taxable_subtotal?: number;
   gst_applicable?: boolean;
   gst_rate?: number;
@@ -215,6 +226,12 @@ export interface CartItem {
   quantity: number;
   discount_percent: number;
   currency: Currency;
+  master_currency?: "EUR";
+  display_currency?: Currency;
+  master_unit_price_eur?: number;
+  master_subtotal?: number;
+  master_discount_amount?: number;
+  master_final_total?: number;
   tax_enabled?: boolean;
   tax_mode?: "exclusive" | "inclusive" | "no_tax";
   pricing_preview: PriceLine;
@@ -229,6 +246,8 @@ export interface Quotation {
   issuer_snapshot?: Issuer;
   customer_company_snapshot?: Company;
   prepared_by_user_id?: string;
+  created_by_user_id?: string;
+  creator_snapshot?: Pick<User, "name" | "email" | "phone">;
   salesperson_snapshot?: User;
   customer_snapshot: Customer;
   company_snapshot?: Company;
@@ -245,12 +264,13 @@ export interface Quotation {
   exchange_rate_source?: "live" | "cached" | "master";
   status: string;
   lines: PriceLine[];
-  totals: { subtotal: number; discount_amount: number; taxable_amount?: number; product_tax_amount?: number; tax_amount: number; transport_cost: number; transport_tax_amount?: number; transport_total?: number; grand_total: number };
+  totals: { subtotal: number; discount_amount: number; taxable_amount?: number; product_tax_amount?: number; tax_amount?: number; transport_cost: number; transport_tax_amount?: number; transport_total?: number; grand_total: number };
   payment_terms?: string;
   validity_days?: number;
   proforma_validity_days?: number;
   transport?: { mode: string; label: string; description: string; charges: number; taxable?: boolean; tax_rate?: number; tax_mode?: string };
   notes?: string;
+  customer_notes?: string;
   preview?: boolean;
   preview_pdf_base64?: string;
   created_at: string;
@@ -261,6 +281,7 @@ export interface PageResult<T> {
   items: T[];
   pagination?: { page: number; limit: number; total: number; pages?: number };
   total?: number;
+  scope?: "own" | "all";
 }
 
 export interface DashboardData {

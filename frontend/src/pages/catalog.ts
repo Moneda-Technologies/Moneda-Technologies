@@ -5,8 +5,8 @@ import { openModal } from "../components/modal";
 import { pageScaffold } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
-import type { CartItem, CatalogOption, Customer, PriceLine, Product } from "../types/domain";
-import { emptyState, escapeHtml, formatDate, formatMoney, skeleton } from "../utils/dom";
+import type { CartItem, CatalogOption, Currency, PriceLine, Product } from "../types/domain";
+import { emptyState, escapeHtml, formatMoney, skeleton } from "../utils/dom";
 
 const familyCopy: Record<string, { icon: string; label: string; detail: string }> = {
   blankets: { icon: "rectangle-horizontal", label: "Printing Blankets", detail: "Select a blanket group, product, thickness, dimensions and format." },
@@ -16,6 +16,8 @@ const familyCopy: Record<string, { icon: string; label: string; detail: string }
 
 type ConfigValue = string | number | boolean;
 type Config = Record<string, unknown>;
+
+const configuratorSubscriptions = new WeakMap<HTMLElement, () => void>();
 
 function productChoice(product: Product): string {
   return `${product.name} — Art. ${product.article_no ?? product.sku}`;
@@ -111,15 +113,68 @@ function configurationFromForm(product: Product, form: HTMLFormElement): Record<
   return result;
 }
 
-function pricingMarkup(line: PriceLine, rate: { provider: string; provider_source?: string; source?: string; fetched_at: string; stale: boolean; warning?: string }): string {
-  const showMaster = appStore.can("pricing.history");
-  const hasGst = line.tax_amount > 0;
-  const inclusive = hasGst && line.tax_mode === "inclusive";
-  const amountRows = inclusive
-    ? ""
-    : `<div><span>Subtotal</span><strong>${formatMoney(line.subtotal, line.currency)}</strong></div>${line.discount_amount ? `<div><span>Discount ${line.discount_percent}%</span><strong>- ${formatMoney(line.discount_amount, line.currency)}</strong></div>` : ""}${hasGst ? `<div><span>GST (${line.gst_rate ?? line.tax_rate}%)</span><strong>${formatMoney(line.gst_amount ?? line.tax_amount, line.currency)}</strong></div>` : ""}`;
-  const commercialRows = inclusive ? "" : `${showMaster ? `<div><span>Master price</span><strong>${formatMoney(line.master_unit_price, "EUR")} / ${escapeHtml(line.pricing_unit)}</strong></div>` : ""}${line.adjustments.map((item) => `<div><span>${escapeHtml(item.label)}${item.quantity ? ` × ${item.quantity}` : ""}</span><strong>${formatMoney(item.amount_master * line.exchange_rate, line.currency)}</strong></div>`).join("")}`;
-  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>Pricing Summary</span>${rate.stale ? '<span class="rate-stale">Cached rate</span>' : '<span class="rate-live">Rate verified</span>'}</div><div class="live-price-rows">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${commercialRows}${amountRows}</div><div class="live-price-total"><span>Total</span><strong>${formatMoney(line.total ?? line.line_total, line.currency)}</strong></div><p class="rate-caption">1 EUR = ${line.exchange_rate.toFixed(4)} ${line.currency} · ${escapeHtml(rate.provider_source ?? rate.provider)} · ${rate.source === "cached" || rate.stale ? "cached" : "live"} · ${formatDate(rate.fetched_at)}</p>${rate.warning ? `<p class="rate-warning">${escapeHtml(rate.warning)}</p>` : ""}`;
+function roundDisplay(value: number): number { return Number(value.toFixed(2)); }
+
+function lineForDisplay(line: PriceLine, currency: Currency, rates: Record<string, number> | null): PriceLine {
+  const masterUnit = Number(line.master_unit_price ?? line.master_price_eur ?? 0);
+  const masterSubtotal = Number(line.master_subtotal ?? 0);
+  const masterDiscount = Number(line.master_discount_amount ?? 0);
+  const masterTotal = Number(line.master_final_total ?? line.master_total ?? 0);
+  const rate = currency === "EUR" ? 1 : Number(rates?.[currency]);
+  const convert = (value: number) => roundDisplay(value * rate);
+  if (!(rate > 0)) {
+    return {
+      ...line,
+      currency,
+      display_currency: currency,
+      exchange_rate: 0,
+      converted_price: undefined,
+      display_unit_price: undefined,
+      display_subtotal: undefined,
+      display_discount_amount: undefined,
+      display_total: undefined,
+      display_final_total: undefined,
+      unit_price: masterUnit,
+      subtotal: masterSubtotal,
+      discount_amount: masterDiscount,
+      total: masterTotal,
+      line_total: masterTotal,
+    };
+  }
+  const displayUnit = convert(masterUnit);
+  const displaySubtotal = convert(masterSubtotal);
+  const displayDiscount = convert(masterDiscount);
+  const displayTotal = convert(masterTotal);
+  return {
+    ...line,
+    currency,
+    display_currency: currency,
+    exchange_rate: rate,
+    converted_price: displayUnit,
+    display_unit_price: displayUnit,
+    display_subtotal: displaySubtotal,
+    display_discount_amount: displayDiscount,
+    display_total: displayTotal,
+    display_final_total: displayTotal,
+    unit_price: displayUnit,
+    subtotal: displaySubtotal,
+    discount_amount: displayDiscount,
+    total: displayTotal,
+    line_total: displayTotal,
+  };
+}
+
+function pricingMarkup(line: PriceLine, _rate: { provider: string; provider_source?: string; source?: string; fetched_at: string; stale: boolean; warning?: string }): string {
+  const displayCurrency = line.display_currency ?? line.currency;
+  const masterSubtotal = line.master_subtotal ?? 0;
+  const masterDiscount = line.master_discount_amount ?? 0;
+  const masterTotalEur = line.master_final_total ?? line.master_total ?? 0;
+  const displayTotal = line.display_final_total ?? line.display_total;
+  const adjustmentRows = line.adjustments.map((item) => `<div><span>${escapeHtml(item.label)}${item.quantity ? ` × ${item.quantity}` : ""}</span><strong>${formatMoney(item.amount_master, "EUR")}</strong></div>`).join("");
+  const reference = displayCurrency !== "EUR"
+    ? `<div class="live-price-reference"><span>${escapeHtml(displayCurrency)} reference</span><strong>${displayTotal === undefined ? "Unavailable" : formatMoney(displayTotal, displayCurrency)}</strong></div>`
+    : "";
+  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>Pricing Summary</span><span class="rate-live">EUR commercial</span></div><div class="live-price-rows">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${adjustmentRows}<div><span>Subtotal</span><strong>${formatMoney(masterSubtotal, "EUR")}</strong></div><div><span>Discount ${line.discount_percent}%</span><strong>${masterDiscount ? `- ${formatMoney(masterDiscount, "EUR")}` : "—"}</strong></div></div><div class="live-price-total"><span>Total</span><strong>${formatMoney(masterTotalEur, "EUR")}</strong></div>${reference}`;
 }
 
 function discountOptions(product: Product, initialDiscount = 0): string {
@@ -138,14 +193,15 @@ interface ConfiguratorOptions {
 }
 
 function renderConfigurator(host: HTMLElement, product: Product, options: ConfiguratorOptions): void {
+  configuratorSubscriptions.get(host)?.();
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
   if (!customerCompany) return;
-  const customerProfile = customerCompany as Customer;
-  const indiaCustomer = customerProfile.country_code === "IN" && (customerProfile.continent === "Asia" || customerProfile.region?.continent === "Asia" || customerProfile.tax_profile?.gst_applicable === true);
   const initial = options.initial?.configuration ?? {};
   const configured = product.pricing_status === "configured";
   const initialDiscount = Number(options.initial?.discount_percent ?? 0);
   host.innerHTML = `<section class="inline-configurator"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount permissions and tax rules are validated on the server.</p></div></div><div class="form-grid"><label>Quantity<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${discountOptions(product, initialDiscount)}</select></label></div><button class="button button-primary button-full" type="submit" ${configured ? "" : "disabled"}><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button></form><aside class="live-price inline-price-summary panel"><div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div></aside></section>`;
+  const commercialCopy = [...host.querySelectorAll(".form-section h4")].find((heading) => heading.textContent === "Commercial Details")?.nextElementSibling;
+  if (commercialCopy) commercialCopy.textContent = "Discount permissions are validated on the server. Quotations are issued in EUR.";
   const form = host.querySelector<HTMLFormElement>(".configure-form")!;
   const machineInput = form.querySelector<HTMLInputElement>("[name=machine]");
   const machineList = form.querySelector<HTMLDataListElement>("[data-machine-options]");
@@ -173,13 +229,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   void loadMachines();
   machineInput?.addEventListener("blur", () => { void ensureMachineStored().catch((error) => toast(error instanceof Error ? error.message : "Machine could not be saved", "error")); });
   const commercialNote = form.querySelectorAll<HTMLElement>(".form-section")[1]?.querySelector("p");
-  if (commercialNote) commercialNote.textContent = indiaCustomer ? "India GST is calculated from the selected customer and server tax rules." : "No Indian GST applies to this customer.";
-  if (indiaCustomer) {
-    const controls = document.createElement("div");
-    controls.className = "tax-controls product-tax-controls";
-    controls.innerHTML = `<label class="check-row"><input name="tax_inclusive" type="checkbox" ${options.initial?.tax_mode === "inclusive" ? "checked" : ""}><span>Is this price GST inclusive?</span></label>`;
-    form.querySelector<HTMLButtonElement>("button[type=submit]")?.before(controls);
-  }
+  if (commercialNote) commercialNote.textContent = "Discount is applied to the EUR master price; USD/INR are display references only.";
   const preview = host.querySelector<HTMLElement>(".live-price")!;
   const toggleBars = () => {
     const barFields = form.querySelector<HTMLElement>(".bar-fields");
@@ -219,6 +269,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   };
   let timer = 0;
   let previewSequence = 0;
+  let latestPreviewLine: PriceLine | null = null;
   const calculatePreview = () => {
     const sequence = ++previewSequence;
     window.clearTimeout(timer);
@@ -231,17 +282,15 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       try {
         preview.classList.add("loading");
         const data = new FormData(form);
-        const taxEnabled = indiaCustomer;
-        const taxMode = form.querySelector<HTMLInputElement>("[name=tax_inclusive]")?.checked ? "inclusive" : "exclusive";
         const selectedDiscount = Number(data.get("discount_percent"));
         console.debug("discount_debug", { item_id: options.initial?._id ?? "new", ui_selected_discount: selectedDiscount, price_preview_requested_discount: selectedDiscount });
         const result = await catalogApi.preview(product._id, {
-          item_id: options.initial?._id, customer_id: customerCompany._id, currency: appStore.state.currency,
+          item_id: options.initial?._id, customer_id: customerCompany._id, display_currency: appStore.state.currency,
           configuration: configurationFromForm(product, form),
           quantity: Number(data.get("quantity")), discount_percent: selectedDiscount,
-          tax_enabled: taxEnabled, tax_mode: taxMode, is_gst_inclusive: taxMode === "inclusive",
         });
         if (sequence !== previewSequence) return;
+        latestPreviewLine = result.line;
         console.debug("discount_debug", { item_id: options.initial?._id ?? "new", response_discount: result.line.discount_percent });
         console.debug("add_to_cart_ui", { step: "PRICE_PREVIEW_COMPLETE", item_id: options.initial?._id ?? "new" });
         preview.innerHTML = pricingMarkup(result.line, result.rate); refreshIcons(preview);
@@ -252,6 +301,34 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       } finally { if (sequence === previewSequence) preview.classList.remove("loading"); }
     }, 220);
   };
+  let lastDisplayCurrency = appStore.state.currency;
+  let displayCurrencySequence = 0;
+  const renderLocalDisplay = (currency: Currency, rates: Record<string, number> | null) => {
+    if (!latestPreviewLine) return;
+    preview.innerHTML = pricingMarkup(lineForDisplay(latestPreviewLine, currency, rates), {
+      provider: "cached", fetched_at: new Date().toISOString(), stale: true,
+    });
+    refreshIcons(preview);
+  };
+  const unsubscribeCurrency = appStore.subscribe((nextState) => {
+    if (!host.isConnected) { unsubscribeCurrency(); return; }
+    if (nextState.currency === lastDisplayCurrency) return;
+    lastDisplayCurrency = nextState.currency;
+    // Display currency is derived locally from the latest EUR master line.
+    // Never re-run the product preview merely because the selector changed.
+    const sequence = ++displayCurrencySequence;
+    renderLocalDisplay(nextState.currency, nextState.fxRates);
+    if (nextState.currency !== "EUR" && !(Number(nextState.fxRates?.[nextState.currency]) > 0)) {
+      void rateApi.get().then((snapshot) => {
+        if (sequence !== displayCurrencySequence || !host.isConnected || appStore.state.currency !== nextState.currency) return;
+        appStore.set({ fxRates: snapshot.rates });
+        renderLocalDisplay(nextState.currency, snapshot.rates);
+      }).catch(() => {
+        if (sequence === displayCurrencySequence && host.isConnected && appStore.state.currency === nextState.currency) renderLocalDisplay(nextState.currency, null);
+      });
+    }
+  });
+  configuratorSubscriptions.set(host, unsubscribeCurrency);
   form.querySelector<HTMLSelectElement>("[name=format_type]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
   form.querySelector<HTMLInputElement>("[name=use_second_bar]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
   form.querySelector<HTMLSelectElement>("[name=thickness_mm]")?.addEventListener("change", () => { updateWidthGuidance(); calculatePreview(); });
@@ -263,15 +340,13 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
     button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Adding to Cart…";
     console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });
-    const taxEnabled = indiaCustomer;
-    const taxMode = form.querySelector<HTMLInputElement>("[name=tax_inclusive]")?.checked ? "inclusive" : "exclusive";
-    const payload = { customer_id: customerCompany._id, product_id: product._id, currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")), tax_enabled: taxEnabled, tax_mode: taxMode, is_gst_inclusive: taxMode === "inclusive" };
+    const payload = { customer_id: customerCompany._id, product_id: product._id, display_currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")) };
     try {
       await ensureMachineStored();
       const item = options.mode === "edit" && options.initial ? await cartApi.update(options.initial._id, payload) : await cartApi.add(payload);
       console.debug("add_to_cart_ui", { step: "CART_POST_COMPLETE", status: 201, item_id: item._id });
       if (options.mode === "add") appStore.set({ cartCount: appStore.state.cartCount + 1 });
-      toast(options.mode === "edit" ? "Cart item updated." : `${product.name} added · ${formatMoney(item.pricing_preview.line_total, item.currency)}`);
+      toast(options.mode === "edit" ? "Cart item updated." : `${product.name} added · ${formatMoney(item.pricing_preview.master_final_total ?? 0, "EUR")}`);
       try {
         console.debug("add_to_cart_ui", { step: "CART_REFRESH_START", item_id: item._id });
         await options.onSaved?.(item);

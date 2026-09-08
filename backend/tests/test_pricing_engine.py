@@ -1,6 +1,6 @@
 import pytest
 
-from app.pricing.engine import PricingUnavailable, calculate_line, calculate_master_unit_price, calculate_quote_totals
+from app.pricing.engine import PricingUnavailable, calculate_line, calculate_master_unit_price, calculate_quote_totals, with_display_currency
 
 
 def base_product(pricing_type="fixed", price=100, category_id="test"):
@@ -13,26 +13,50 @@ def base_product(pricing_type="fixed", price=100, category_id="test"):
     }
 
 
-def test_fixed_price_flow_with_discount_conversion_and_tax():
+def test_fixed_price_flow_with_discount_conversion_and_no_tax():
     line = calculate_line(base_product(), {}, quantity=2, discount_percent=5, currency="INR", exchange_rate=80,
                           company_tax_rate=18, company_tax_mode="exclusive")
     assert line["unit_price"] == 8000
     assert line["subtotal"] == 16000
     assert line["discount_amount"] == 800
-    assert line["tax_amount"] == 2736
-    assert line["line_total"] == 17936
+    assert "tax_amount" not in line
+    assert line["line_total"] == 15200
 
 
-def test_india_tax_mode_switches_between_exclusive_and_inclusive():
+def test_legacy_tax_inputs_do_not_change_active_pricing():
     exclusive = calculate_line(base_product(price=1000), {}, quantity=1, discount_percent=0, currency="INR", exchange_rate=1,
                                company_tax_rate=18, company_tax_mode="exclusive", apply_tax=True, tax_mode_override="exclusive")
     inclusive = calculate_line(base_product(price=1000), {}, quantity=1, discount_percent=0, currency="INR", exchange_rate=1,
                                company_tax_rate=18, company_tax_mode="exclusive", apply_tax=True, tax_mode_override="inclusive")
-    assert exclusive["tax_amount"] == 180
-    assert exclusive["line_total"] == 1180
-    assert inclusive["tax_amount"] == 152.54
-    assert inclusive["taxable_amount"] == 847.46
-    assert inclusive["line_total"] == 1000
+    assert exclusive["line_total"] == inclusive["line_total"] == 1000
+    assert "tax_amount" not in exclusive
+    assert "tax_amount" not in inclusive
+
+
+def test_discount_is_calculated_in_eur_before_display_conversion():
+    inr = calculate_line(base_product(price=100), {}, quantity=1, discount_percent=3, currency="INR", exchange_rate=80,
+                         company_tax_rate=18, company_tax_mode="exclusive")
+    usd = calculate_line(base_product(price=100), {}, quantity=1, discount_percent=3, currency="USD", exchange_rate=1.2,
+                         company_tax_rate=18, company_tax_mode="exclusive")
+    assert inr["master_subtotal"] == usd["master_subtotal"] == 100
+    assert inr["master_discount_amount"] == usd["master_discount_amount"] == 3
+    assert inr["master_total"] == usd["master_total"] == 97
+    assert inr["display_total"] == 7760
+    assert usd["display_total"] == 116.4
+
+
+def test_saved_eur_snapshot_can_switch_reference_currency_without_double_conversion():
+    original = calculate_line(base_product(price=53), {}, quantity=2, discount_percent=3,
+                              currency="INR", exchange_rate=100,
+                              company_tax_rate=0, company_tax_mode="no_tax")
+    usd = with_display_currency(original, "USD", 1.2)
+    back_to_eur = with_display_currency(usd, "EUR", 1)
+    assert original["master_subtotal"] == usd["master_subtotal"] == back_to_eur["master_subtotal"] == 106
+    assert original["master_final_total"] == usd["master_final_total"] == back_to_eur["master_final_total"] == 102.82
+    assert usd["display_final_total"] == 123.38
+    assert back_to_eur["display_final_total"] == 102.82
+    assert "final_total" not in usd
+    assert "tax_amount" not in usd
 
 
 def test_area_normalization_from_inches():
@@ -63,9 +87,8 @@ def test_quote_totals_include_transport_once():
     line = calculate_line(base_product(), {}, quantity=1, discount_percent=0, currency="EUR", exchange_rate=1,
                           company_tax_rate=18, company_tax_mode="exclusive")
     totals = calculate_quote_totals([line], 10)
-    assert totals == {"subtotal": 100.0, "discount_amount": 0.0, "taxable_amount": 100.0,
-                      "product_tax_amount": 18.0, "tax_amount": 18.0, "transport_cost": 10.0, "transport_tax_amount": 0.0,
-                      "transport_total": 10.0, "grand_total": 128.0}
+    assert totals == {"subtotal": 100.0, "discount_amount": 0.0,
+                      "transport_cost": 10.0, "transport_total": 10.0, "grand_total": 110.0}
 
 
 def test_quantity_does_not_inject_bulk_discount_but_cut_format_surcharge_remains_server_rule():
@@ -87,11 +110,11 @@ def test_quantity_does_not_inject_bulk_discount_but_cut_format_surcharge_remains
     assert line["line_total"] == 1050
 
 
-def test_only_enabled_product_tax_overrides_company_tax():
+def test_product_tax_configuration_is_ignored_by_active_pricing():
     product = base_product()
     product["tax"] = {"mode": "no_tax", "rate": 0, "override_enabled": True}
     line = calculate_line(product, {}, quantity=1, discount_percent=0, currency="EUR", exchange_rate=1,
                           company_tax_rate=18, company_tax_mode="exclusive")
-    assert line["tax_rate"] == 0
-    assert line["tax_mode"] == "no_tax"
+    assert "tax_rate" not in line
+    assert "tax_mode" not in line
     assert line["line_total"] == 100

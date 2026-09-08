@@ -15,7 +15,7 @@ PERMISSIONS = [
     "products.archive", "products.delete", "pricing.view", "pricing.edit", "pricing.update", "pricing.history",
     "pricing.discount.override", "taxes.view", "taxes.manage", "currency.view", "currency.manage",
     "cart.view", "cart.manage", "customers.view", "customers.create", "customers.update",
-    "customers.delete", "customers.view_all", "quotations.view", "quotations.create", "quotations.edit",
+    "customers.delete", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
     "quotations.delete", "quotations.send", "quotations.download", "orders.view", "orders.create",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
     "reminders.view", "reminders.manage", "reports.view", "users.view", "users.create",
@@ -31,7 +31,7 @@ ROLE_PERMISSIONS = {
     "manager_sales_admin": [
         permission for permission in PERMISSIONS
         if permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
-        and permission not in {"products.delete", "customers.delete", "quotations.delete", "pricing.edit", "pricing.update"}
+        and permission not in {"products.delete", "customers.delete", "quotations.delete", "quotations.view_all", "pricing.edit", "pricing.update"}
     ],
     "user": [
         "dashboard.view", "calculator.view", "products.view", "pricing.view", "currency.view",
@@ -302,19 +302,10 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": customer_access_migration, "applied_at": utcnow()})
 
-    india_tax_migration = "customer-india-tax-default-v1"
-    if not store.find_one("system_migrations", {"_id": india_tax_migration}):
-        india_customers, _ = store.list("customers", {"country_code": "IN"}, limit=10_000)
-        for customer in india_customers:
-            rate = customer.get("default_tax_rate")
-            mode = customer.get("default_tax_mode")
-            store.update_one("customers", {"_id": customer["_id"]}, {
-                "gst_applicable": True,
-                "tax_enabled": True,
-                "default_tax_rate": rate if rate in {5, 12, 18} else 18,
-                "default_tax_mode": mode if mode in {"exclusive", "inclusive"} else "exclusive",
-            })
-        store.insert_one("system_migrations", {"_id": india_tax_migration, "applied_at": utcnow()})
+    pricing_policy_migration = "eur-only-no-tax-v1"
+    if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
+        # This deliberately does not rewrite historical quotations or customer tax fields.
+        store.insert_one("system_migrations", {"_id": pricing_policy_migration, "applied_at": utcnow()})
 
     catalog = _catalog_seed(data_directory)
     families = catalog["families"]
@@ -402,9 +393,6 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             else:
                 store.insert_one(collection, item)
 
-    tax_rules = catalog["tax_rules"]
-    india_tax = tax_rules.get("company_defaults", {}).get("india", {})
-
     if not store.find_one("app_settings", {"_id": "system"}):
         store.insert_one("app_settings", {
             "_id": "system",
@@ -418,11 +406,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             },
             "master_currency": "EUR",
             "supported_currencies": ["EUR", "USD", "INR"],
-            "tax_rates": tax_rules.get("rates", [0, 5, 12, 18]),
-            "default_tax_rate": india_tax.get("rate", 18),
-            "default_tax_mode": india_tax.get("mode", "exclusive"),
-            "product_tax_override_only": bool(tax_rules.get("product_override_only", True)),
-            "quotation_tax_override_allowed": bool(tax_rules.get("quotation_override_allowed", False)),
+            "quotation_pricing_policy": "eur_only_no_tax_v1",
             "quotation_prefix": "MON_Q",
             "quotation_validity_days": 30,
             "commercial_conditions": {
@@ -439,7 +423,6 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             },
             "payment_terms": ["Advance", "POD", "15 Days", "30 Days"],
             "transport_options": ["by_consignee", "by_moneda_team"],
-            "transport_taxable_by_default": bool(tax_rules.get("transport_taxable_by_default", False)),
             "post_order_follow_up_days": [15, 25],
         })
     else:
@@ -467,12 +450,9 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             },
             "surcharge_rules": surcharge_rules,
             "discount_rules": discount_rules,
-            "tax_rates": tax_rules.get("rates", [0, 5, 12, 18]),
-            "product_tax_override_only": bool(tax_rules.get("product_override_only", True)),
-            "quotation_tax_override_allowed": bool(tax_rules.get("quotation_override_allowed", False)),
+            "quotation_pricing_policy": "eur_only_no_tax_v1",
             "payment_terms": ["Advance", "POD", "15 Days", "30 Days"],
             "transport_options": ["by_consignee", "by_moneda_team"],
-            "transport_taxable_by_default": bool(tax_rules.get("transport_taxable_by_default", False)),
         })
 
     if demo_mode:
@@ -522,10 +502,9 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     "_id": customer_id, "customer_id": customer_id, "name": name, "company_name": name,
                     "contact_name": contact, "email": email, "phone": "+91 00000 00000",
                     "address": "Customer address pending", "country": "India", "preferred_currency": preferred_currency,
-                    "continent": "Asia", "country_code": "IN", "country_name": "India", "gst_applicable": customer_id != company_id,
-                    "tax_profile": {"gst_applicable": customer_id != company_id, "tax_number": ""},
-                    "default_currency": preferred_currency, "default_tax_rate": 18, "default_tax_mode": "exclusive",
-                    "tax_enabled": True, "payment_terms": "30 days", "status": "active", "active": True,
+                    "continent": "Asia", "country_code": "IN", "country_name": "India",
+                    "default_currency": preferred_currency,
+                    "payment_terms": "30 days", "status": "active", "active": True,
                     "demo": True, "is_issuer": customer_id == company_id, "customer_code": customer_code(name),
                 })
             else:
@@ -533,8 +512,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     "customer_id": customer_id, "name": name, "company_name": name,
                     "contact_name": contact, "email": email, "active": True, "status": "active",
                     "preferred_currency": preferred_currency, "default_currency": preferred_currency,
-                    "continent": "Asia", "country_code": "IN", "country_name": "India", "gst_applicable": customer_id != company_id,
-                    "tax_profile": {"gst_applicable": customer_id != company_id, "tax_number": ""},
-                    "default_tax_rate": 18, "default_tax_mode": "exclusive", "customer_code": (store.find_one("customers", {"_id": customer_id}) or {}).get("customer_code") or customer_code(name),
+                    "continent": "Asia", "country_code": "IN", "country_name": "India",
+                    "customer_code": (store.find_one("customers", {"_id": customer_id}) or {}).get("customer_code") or customer_code(name),
                     "is_issuer": customer_id == company_id,
                 })

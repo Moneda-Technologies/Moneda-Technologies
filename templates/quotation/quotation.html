@@ -19,7 +19,7 @@
     .document-date { color: #70706b; font-size: 7px; margin-top: 2px; }
     .brand-stripe { background: linear-gradient(to right,#171717 0%,#171717 33.333333%,#df3731 33.333333%,#df3731 66.666666%,#f2c800 66.666666%,#f2c800 100%); height: 2.2mm; margin-bottom: 6mm; width: 100%; }
     .parties { display: flex; gap: 4mm; margin-bottom: 5mm; }
-    .party { background: #f5f5f2; border: 1px solid #e0e0dc; border-radius: 2mm; min-height: 32mm; padding: 4mm; width: 50%; }
+    .party { background: #f5f5f2; border: 1px solid #e0e0dc; border-radius: 2mm; min-height: 38mm; padding: 4mm; width: 50%; }
     .party.company { background: #1c1c1c; border-color: #1c1c1c; color: #fff; }
     .eyebrow { color: #8b8b86; font-size: 6.4px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
     .party.company .eyebrow { color: #f2c800; }
@@ -69,6 +69,9 @@
     .term strong { font-size: 6.5px; letter-spacing: .4px; text-transform: uppercase; }
     .term span { color: #666661; font-size: 7px; margin-top: .6mm; }
     .notes { background: #f5f5f2; border-radius: 1.5mm; color: #5f5f5a; margin-top: 2.5mm; padding: 2.5mm; white-space: pre-line; }
+    .customer-notes { background: #f5f5f2; border: 1px solid #dededa; margin: 5mm 0; padding: 3.5mm; page-break-inside: avoid; }
+    .customer-notes .eyebrow { margin-bottom: 2mm; }
+    .customer-notes p { font-size: 7.4px; line-height: 1.45; margin: 0; white-space: pre-line; }
     .authorization { margin-left: auto; width: 31%; }
     .signature-space { height: 18mm; }
     .signature-line { border-top: 1px solid #333; padding-top: 1.4mm; }
@@ -92,6 +95,7 @@
     <div class="meta-item"><span>Transport</span><strong>{{ quotation.transport.label or 'By Consignee' }}</strong></div>
   </section>
 
+  {% set creator = quotation.creator_snapshot or quotation.salesperson_snapshot or {} %}
   <section class="parties">
     <div class="party company">
       <div class="eyebrow">From</div>
@@ -99,7 +103,9 @@
       {% if quotation.issuer_snapshot.address %}<p>{{ quotation.issuer_snapshot.address }}</p>{% endif %}
       {% if quotation.issuer_snapshot.email %}<p>{{ quotation.issuer_snapshot.email }}</p>{% endif %}
       {% if quotation.issuer_snapshot.phone %}<p>{{ quotation.issuer_snapshot.phone }}</p>{% endif %}
-      <p>Made by: {{ quotation.salesperson_snapshot.name or '-' }}</p>
+      {% if creator.name %}<p>Made by: {{ creator.name }}</p>{% endif %}
+      {% if creator.email %}<p>Creator email: {{ creator.email }}</p>{% endif %}
+      {% if creator.phone %}<p>Creator phone: {{ creator.phone }}</p>{% endif %}
     </div>
     <div class="party">
       <div class="eyebrow">To</div>
@@ -142,6 +148,13 @@
       <tr class="grand"><td>Grand total</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.grand_total) }}</td></tr>
     </table>
   </div>
+
+  {% if quotation.customer_notes %}
+  <section class="customer-notes">
+    <div class="eyebrow">Customer Notes</div>
+    <p>{{ quotation.customer_notes }}</p>
+  </section>
+  {% endif %}
 
   <section class="commercial">
     <div class="commercial-copy">

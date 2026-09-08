@@ -194,14 +194,14 @@ def test_admin_price_change_records_history(app, authenticated):
     assert app.extensions["store"].count("price_history", {"product_id": "mtech-mpack"}) == 1
 
 
-def test_cart_rejects_quotation_tax_override(app, authenticated):
+def test_cart_ignores_legacy_tax_override(app, authenticated):
     configure_product(app)
     response = authenticated.post("/api/v1/cart/items", json={
         "company_id": COMPANY, "product_id": "mtech-mpack", "currency": "EUR", "quantity": 1,
         "tax_rate": 0, "configuration": {"length": 1000, "width": 1000, "dimension_unit": "mm", "thickness_micron": 100},
     })
-    assert response.status_code == 422
-    assert "Only the product" in response.json["message"]
+    assert response.status_code == 201
+    assert "tax_amount" not in response.json["data"]["pricing_preview"]
 
 
 def test_quotation_sequence_and_snapshot_immutability(app, authenticated):
@@ -219,6 +219,84 @@ def test_quotation_sequence_and_snapshot_immutability(app, authenticated):
     configure_product(app, base_price=50)
     stored = authenticated.get(f"/api/v1/quotations/{quote_id}")
     assert stored.json["data"]["lines"][0]["master_unit_price"] == 10
+
+
+def test_quotation_pdf_preview_returns_valid_pdf_response(app, authenticated):
+    configure_product(app, base_price=10)
+    payload = {
+        "company_id": COMPANY, "product_id": "mtech-mpack", "currency": "EUR", "quantity": 1,
+        "configuration": {"length": 1000, "width": 1000, "dimension_unit": "mm", "thickness_micron": 100},
+    }
+    assert authenticated.post("/api/v1/cart/items", json=payload).status_code == 201
+    quote = authenticated.post("/api/v1/quotations", json={"company_id": COMPANY, "customer_id": "customer-demo-1", "currency": "EUR"})
+    assert quote.status_code == 201
+    response = authenticated.get(f"/api/v1/quotations/{quote.json['data']['_id']}/pdf?preview=true")
+    assert response.status_code == 200
+    assert response.headers["Content-Type"].startswith("application/pdf")
+    assert response.data.startswith(b"%PDF-")
+    assert "X-Frame-Options" not in response.headers
+    assert "frame-ancestors" in response.headers["Content-Security-Policy"]
+    assert authenticated.get(f"/api/v1/quotations/{quote.json['data']['_id']}").headers["X-Frame-Options"] == "DENY"
+
+
+def test_sent_quotation_can_be_resent_without_duplication_and_logs_event(app, authenticated, monkeypatch):
+    configure_product(app, base_price=10)
+    app.extensions["store"].update_one("customers", {"_id": COMPANY}, {"email": "customer@example.com"})
+    app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {
+        "name": "Athul Nair", "email": "salesperson@example.com", "phone": "+91 98765 43210",
+    })
+    payload = {
+        "company_id": COMPANY, "product_id": "mtech-mpack", "currency": "EUR", "quantity": 1,
+        "configuration": {"length": 1000, "width": 1000, "dimension_unit": "mm", "thickness_micron": 100},
+    }
+    assert authenticated.post("/api/v1/cart/items", json=payload).status_code == 201
+    note = "Please confirm delivery schedule before dispatch.\n<script>alert(1)</script>"
+    created = authenticated.post("/api/v1/quotations", json={"company_id": COMPANY, "currency": "EUR", "customer_notes": note})
+    assert created.status_code == 201
+    quotation = created.json["data"]
+    quotation_id = quotation["_id"]
+    quotation_number = quotation["quotation_number"]
+    assert quotation["created_by_user_id"] == "user-demo-admin"
+    assert quotation["creator_snapshot"] == {
+        "name": "Athul Nair", "email": "salesperson@example.com", "phone": "+91 98765 43210",
+    }
+    app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {
+        "name": "Changed Later", "email": "changed@example.com", "phone": None,
+    })
+    historical = authenticated.get(f"/api/v1/quotations/{quotation_id}")
+    assert historical.json["data"]["creator_snapshot"] == quotation["creator_snapshot"]
+
+    first = authenticated.post(f"/api/v1/quotations/{quotation_id}/send", json={})
+    second = authenticated.post(f"/api/v1/quotations/{quotation_id}/send", json={})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json["data"]["_id"] == quotation_id
+    assert second.json["data"]["quotation_number"] == quotation_number
+    assert second.json["data"]["customer_notes"] == note
+
+    rows, total = app.extensions["store"].list("quotations", {"_id": quotation_id}, limit=10)
+    assert total == 1 and rows[0]["status"] == "Sent"
+    logs, log_total = app.extensions["store"].list("email_logs", {"quotation_id": quotation_id}, limit=10)
+    assert log_total == 2
+    assert {row["event"] for row in logs} == {"initial_send", "resend"}
+    assert all(row["quotation_number"] == quotation_number for row in logs)
+    messages = app.extensions["email_provider"].messages
+    assert messages[-1]["from"] == "quotations@monedatechnologies.com"
+    assert messages[-1]["cc"] == ["business@monedatechnologies.com", "changed@example.com"]
+    assert messages[-1]["bcc"] == ["operations@chemo.in"]
+
+    def fail_resend(**_kwargs):
+        raise EmailDeliveryError("forced failure", stage="message_submission", diagnostic_id="email-resend-test")
+
+    monkeypatch.setattr(app.extensions["email_service"], "send_quotation", fail_resend)
+    failed = authenticated.post(f"/api/v1/quotations/{quotation_id}/send", json={})
+    assert failed.status_code == 503
+    stored = app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    assert stored["status"] == "Sent"
+    assert stored["email_status"] == "resend_failed"
+    failure_logs, failure_total = app.extensions["store"].list("email_logs", {"quotation_id": quotation_id}, limit=10)
+    assert failure_total == 3
+    assert any(row["event"] == "resend" and row["submission_status"] == "failed" for row in failure_logs)
 
 
 def test_customer_specific_quotation_sequences_are_independent(app, authenticated):
@@ -309,7 +387,7 @@ def test_customer_code_is_stable_when_customer_name_changes(app, authenticated):
     assert duplicate.json["data"]["customer_code"] == "NORTHSTAR-2"
 
 
-def test_quotation_level_tax_override_rejected(app, authenticated):
+def test_quotation_level_tax_override_is_ignored(app, authenticated):
     configure_product(app)
     authenticated.post("/api/v1/cart/items", json={
         "company_id": COMPANY, "product_id": "mtech-mpack", "currency": "EUR", "quantity": 1,
@@ -318,8 +396,9 @@ def test_quotation_level_tax_override_rejected(app, authenticated):
     response = authenticated.post("/api/v1/quotations", json={
         "company_id": COMPANY, "customer_id": "customer-demo-1", "currency": "EUR", "tax_rate": 0,
     })
-    assert response.status_code == 422
-    assert "Quotation-level" in response.json["message"]
+    assert response.status_code == 201
+    assert response.json["data"]["currency"] == "EUR"
+    assert "tax_amount" not in response.json["data"]["totals"]
 
 
 def test_company_scope_is_enforced(authenticated):
@@ -359,7 +438,7 @@ def test_blanket_bar_format_uses_two_independent_embedded_bars(authenticated):
     assert line["base_unit_price_master"] == 42
     assert line["adjustment_amount_master"] == 5.23
     assert [item["product_id"] for item in line["adjustments"]] == ["aluminium", "steel"]
-    assert line["line_total"] == 55.73
+    assert line["line_total"] == 47.23
 
 
 def test_cut_format_has_no_bars_and_no_surcharge(authenticated):
@@ -392,7 +471,7 @@ def test_cart_edit_can_change_the_product(app, authenticated):
     assert updated.json["data"]["pricing_preview"]["requested_quantity"] == 2
 
 
-def test_international_company_defaults_to_no_tax(app, authenticated):
+def test_customer_country_does_not_add_tax(app, authenticated):
     company = app.extensions["store"].insert_one("companies", {
         "_id": "company-europe", "name": "European Printer", "country": "Germany",
         "default_currency": "EUR", "tax_enabled": False, "default_tax_rate": 0,
@@ -404,12 +483,12 @@ def test_international_company_defaults_to_no_tax(app, authenticated):
         "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
     })
     line = response.json["data"]["line"]
-    assert line["tax_mode"] == "no_tax"
-    assert line["tax_amount"] == 0
+    assert "tax_mode" not in line
+    assert "tax_amount" not in line
     assert line["line_total"] == 42
 
 
-def test_india_price_preview_respects_explicit_gst_inclusive_flag(authenticated):
+def test_india_price_preview_ignores_legacy_gst_flags(authenticated):
     assert authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
     base = {
         "customer_id": "customer-demo-1", "currency": "INR", "quantity": 1, "discount_percent": 0,
@@ -425,14 +504,9 @@ def test_india_price_preview_respects_explicit_gst_inclusive_flag(authenticated)
     assert exclusive_response.status_code == inclusive_response.status_code == 200
     exclusive = exclusive_response.json["data"]["line"]
     inclusive = inclusive_response.json["data"]["line"]
-    assert exclusive["gst_applicable"] is True and exclusive["is_gst_inclusive"] is False
-    assert exclusive["gst_rate"] == 18 and exclusive["gst_amount"] > 0
-    assert exclusive["total"] == round(exclusive["taxable_subtotal"] + exclusive["gst_amount"], 2)
-    assert inclusive["gst_applicable"] is True and inclusive["is_gst_inclusive"] is True
-    assert inclusive["gst_rate"] == 18 and inclusive["gst_amount"] > 0
-    assert inclusive["total"] == inclusive["subtotal"]
-    assert inclusive["taxable_subtotal"] + inclusive["gst_amount"] == inclusive["total"]
-    assert exclusive["total"] > inclusive["total"]
+    assert exclusive["total"] == inclusive["total"] == exclusive["subtotal"]
+    assert "gst_amount" not in exclusive and "tax_amount" not in exclusive
+    assert "gst_amount" not in inclusive and "tax_amount" not in inclusive
 
 
 def test_price_preview_quantity_ten_keeps_explicit_zero_discount(authenticated):
@@ -448,7 +522,7 @@ def test_price_preview_quantity_ten_keeps_explicit_zero_discount(authenticated):
     assert line["discount_percent"] == 0
     assert line["discount_amount"] == 0
     assert line["discount_source"] == "default"
-    assert line["gst_amount"] > 0
+    assert "gst_amount" not in line
 
     created = authenticated.post("/api/v1/cart/items", json={
         "customer_id": "customer-demo-1", "product_id": "mtech_magnum_sf",
@@ -497,7 +571,8 @@ def test_price_preview_discount_options_are_authoritative(authenticated, discoun
     line = response.json["data"]["line"]
     assert line["requested_discount_percent"] == discount
     assert line["discount_percent"] == discount
-    assert line["discount_amount"] == round(line["subtotal"] * discount / 100, 2)
+    assert line["master_discount_amount"] == round(line["master_subtotal"] * discount / 100, 2)
+    assert line["discount_amount"] == round(line["master_discount_amount"] * line["exchange_rate"], 2)
 
 
 def test_quotation_preview_validates_without_saving(app, authenticated):
@@ -506,11 +581,13 @@ def test_quotation_preview_validates_without_saving(app, authenticated):
         "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
     })
     preview = authenticated.post("/api/v1/quotations/preview", json={
-        "company_id": COMPANY, "customer_id": "customer-demo-1", "currency": "EUR",
+        "company_id": COMPANY, "customer_id": "customer-demo-1", "currency": "INR",
         "payment_terms": "Advance", "proforma_validity_days": 30, "transport_mode": "by_consignee",
     })
     assert preview.status_code == 200
     assert preview.json["data"]["quotation_number"] == "PREVIEW"
+    assert preview.json["data"]["currency"] == "EUR"
+    assert "tax_amount" not in preview.json["data"]["totals"]
     assert preview.json["data"]["transport"]["label"] == "By Consignee"
     assert app.extensions["store"].count("quotations") == 0
 
@@ -567,3 +644,109 @@ def test_converted_order_keeps_quotation_number(authenticated):
     order = converted.json["data"]
     assert order["quotation_id"] == quote["_id"]
     assert order["quotation_number"] == quote["quotation_number"]
+
+
+def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):
+    assert authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
+    app.extensions["store"].update_one("products", {"_id": "mtech_active_sf"}, {
+        "pricing": {"pricing_type": "per_sqm", "price": 100, "master_currency": "EUR", "unit": "sqm"},
+        "pricing_status": "configured",
+    })
+    preview = authenticated.post("/api/v1/products/mtech_active_sf/price-preview", json={
+        "customer_id": "customer-demo-1", "display_currency": "INR", "quantity": 1, "discount_percent": 3,
+        "tax_enabled": True, "tax_mode": "exclusive", "tax_rate": 18,
+        "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
+    })
+    assert preview.status_code == 200
+    display_line = preview.json["data"]["line"]
+    assert display_line["master_currency"] == "EUR"
+    assert display_line["display_currency"] == "INR"
+    assert display_line["quotation_currency"] == "EUR"
+    assert display_line["master_final_total"] == display_line["master_total"]
+    assert display_line["display_final_total"] == display_line["display_total"]
+    assert display_line["discount_percent"] == 3
+    assert display_line["master_total"] == 97.0
+    assert display_line["master_subtotal"] == 100.0
+    assert display_line["display_subtotal"] == 10000.0
+    assert display_line["display_discount_amount"] == 300.0
+    assert display_line["display_final_total"] == 9700.0
+    assert display_line["display_total"] == display_line["total"]
+    assert "final_total" not in display_line
+    assert "tax_amount" not in display_line
+
+    added = authenticated.post("/api/v1/cart/items", json={
+        "customer_id": "customer-demo-1", "product_id": "mtech_active_sf", "display_currency": "INR",
+        "quantity": 1, "discount_percent": 3,
+        "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
+    })
+    assert added.status_code == 201
+    saved_item = added.json["data"]
+    assert saved_item["currency"] == saved_item["master_currency"] == "EUR"
+    assert saved_item["display_currency"] == "INR"
+    assert saved_item["master_final_total"] == 97.0
+
+    # Viewing a cart in another reference currency must convert the saved EUR
+    # snapshot, not recalculate it from a newly changed product master price.
+    app.extensions["store"].update_one("products", {"_id": "mtech_active_sf"}, {
+        "pricing": {"pricing_type": "per_sqm", "price": 200, "master_currency": "EUR", "unit": "sqm"},
+    })
+    usd_cart = authenticated.get("/api/v1/cart?customer_id=customer-demo-1&currency=USD")
+    assert usd_cart.status_code == 200
+    assert usd_cart.json["data"]["item_count"] == 1
+    usd_line = usd_cart.json["data"]["items"][0]["pricing_preview"]
+    assert usd_line["master_final_total"] == 97.0
+    assert usd_line["display_currency"] == "USD"
+    assert usd_line["display_final_total"] == 116.4
+
+    quote = authenticated.post("/api/v1/quotations", json={"customer_id": "customer-demo-1", "currency": "INR"})
+    assert quote.status_code == 201
+    document = quote.json["data"]
+    assert document["currency"] == document["quotation_currency"] == "EUR"
+    assert document["lines"][0]["discount_percent"] == 3
+    assert document["lines"][0]["master_final_total"] == 97.0
+    assert document["lines"][0]["line_total"] == 97.0
+    assert document["totals"]["grand_total"] == 97.0
+    assert "tax_amount" not in document["lines"][0]
+    assert "tax_amount" not in document["totals"]
+
+
+def test_magnum_price_preview_uses_seeded_eur_price_and_exact_area(authenticated):
+    authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"})
+    response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
+        "customer_id": "customer-demo-1", "display_currency": "INR",
+        "quantity": 1, "discount_percent": 3,
+        "configuration": {
+            "thickness_mm": 1.96, "length": 585, "width": 875,
+            "dimension_unit": "mm", "format_type": "cut_format",
+        },
+    })
+    assert response.status_code == 200
+    line = response.json["data"]["line"]
+    assert line["area_sqm"] == 0.511875
+    assert line["master_currency"] == "EUR"
+    assert line["master_unit_price"] == 27.13
+    assert line["master_subtotal"] == 27.13
+    assert line["master_discount_amount"] == 0.81
+    assert line["master_final_total"] == 26.32
+    assert line["display_currency"] == "INR"
+    assert line["display_subtotal"] == 2713.0
+    assert line["display_discount_amount"] == 81.0
+    assert line["display_final_total"] == 2632.0
+    assert "final_total" not in line
+    assert not any(key in line for key in ("tax_amount", "gst_amount", "vat_amount"))
+
+
+def test_historical_currency_and_tax_snapshot_is_not_rewritten(app, authenticated):
+    historical = app.extensions["store"].insert_one("quotations", {
+        "_id": "legacy-inr-tax", "quotation_number": "LEGACY-INR-001",
+        "customer_id": COMPANY, "created_by_user_id": "user-demo-admin",
+        "currency": "INR", "lines": [{"tax_amount": 180}],
+        "totals": {"subtotal": 1000, "tax_amount": 180, "grand_total": 1180},
+        "status": "Sent",
+    })
+    response = authenticated.get(f"/api/v1/quotations/{historical['_id']}")
+    assert response.status_code == 200
+    document = response.json["data"]
+    assert document["currency"] == "INR"
+    assert document["totals"]["tax_amount"] == 180
+    assert document["totals"]["grand_total"] == 1180

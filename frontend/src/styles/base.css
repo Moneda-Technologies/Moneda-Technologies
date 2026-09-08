@@ -10,30 +10,29 @@ svg { width: 18px; height: 18px; }
 h1, h2, h3, h4, p { margin-top: 0; }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--brand-yellow) 75%, white); outline-offset: 2px; }
 .skip-link {
-  border: 0;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  padding: 0;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
-  z-index: 1000;
-}
-.skip-link:focus-visible {
   background: var(--primary-black);
-  clip: auto;
-  clip-path: none;
+  border: 2px solid var(--brand-yellow);
+  border-radius: 6px;
   color: #fff;
-  height: auto;
   left: 16px;
-  margin: 0;
-  padding: 10px 14px;
+  max-width: calc(100vw - 32px);
+  opacity: 0;
+  padding: 8px 12px;
+  pointer-events: none;
+  position: fixed;
   top: 16px;
-  width: auto;
+  transform: translateY(calc(-100% - 32px));
+  transition: opacity .12s ease, transform .12s ease;
+  white-space: nowrap;
+  z-index: 10000;
 }
+.skip-link:focus,
+.skip-link:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+@media print { .skip-link { display: none !important; } }
 .hidden { display: none !important; }
 .eyebrow { color: var(--text-muted); display: block; font-size: .68rem; font-weight: 760; letter-spacing: .13em; text-transform: uppercase; }
 .button { align-items: center; border: 1px solid transparent; border-radius: var(--radius-sm); display: inline-flex; font-size: .84rem; font-weight: 700; gap: 8px; justify-content: center; min-height: 40px; padding: 0 15px; transition: transform .16s ease, background .16s ease, border-color .16s ease; }

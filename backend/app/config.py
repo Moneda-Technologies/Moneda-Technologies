@@ -54,6 +54,9 @@ class Config:
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:3005")
     DATA_DIRECTORY = env_path("DATA_DIRECTORY", PROJECT_ROOT / "data")
     PDF_DIRECTORY = env_path("PDF_DIRECTORY", PROJECT_ROOT / "generated" / "quotations")
+    # auto prefers WeasyPrint when its native runtime is available and uses
+    # the portable ReportLab renderer otherwise. Set weasyprint to fail fast.
+    PDF_RENDERER = os.getenv("PDF_RENDERER", "auto").strip().lower()
     UPLOAD_DIRECTORY = env_path("UPLOAD_DIRECTORY", PROJECT_ROOT / "uploads")
     MAIL_TEST_TO = os.getenv("MAIL_TEST_TO", "")
     # Zoho Mail API OAuth.  These values are server-side only; never expose
