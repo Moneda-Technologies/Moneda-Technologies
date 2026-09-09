@@ -1,6 +1,6 @@
 services:
   mongo:
-    image: mongo:8
+    image: mongo:7
     restart: unless-stopped
     volumes:
       - moneda_mongo:/data/db
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/moneda}
+      MONGODB_URI: ${MONGODB_URI}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-moneda}
       DEMO_MODE: "false"
       RATELIMIT_STORAGE_URI: redis://redis:6379/0
