@@ -180,6 +180,8 @@ class MongoStore:
         self.db.customers.create_index("customer_code", unique=True, sparse=True)
         self.db.carts.create_index([("user_id", ASCENDING), ("customer_id", ASCENDING)], unique=True)
         self.db.customers.create_index([("company_id", ASCENDING), ("name", ASCENDING)])  # legacy bridge
+        self.db.customers.create_index("assigned_user_ids")
+        self.db.customers.create_index("created_by_user_id")
         self.db.quotations.create_index("quotation_number", unique=True)
         self.db.quotations.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
         self.db.quotations.create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])  # legacy bridge

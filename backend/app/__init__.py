@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from flask import Flask, request, session
+from flask import Flask, g, request, session
 from flask_cors import CORS
 from redis import Redis
 from redis.exceptions import RedisError
@@ -19,9 +19,10 @@ from app.config import Config
 from app.exchange_rates.provider import FrankfurterProvider
 from app.exchange_rates.service import ExchangeRateService
 from app.extensions import limiter
+from app.middleware.access import repair_customer_assignments
 from app.quotations.service import QuotationService
 from app.repositories.store import build_store
-from app.services.seed import seed
+from app.services.seed import seed, sync_blanket_catalog, sync_commercial_units, sync_machine_catalog, sync_underpacking_catalog
 
 
 _OAUTH_QUERY_SECRET = re.compile(r"([?&](?:code|state)=)[^&\s\"]+", re.IGNORECASE)
@@ -107,6 +108,34 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     limiter.init_app(app)
     if app.config.get("AUTO_SEED") or app.config.get("TESTING"):
         seed(store, Path(app.config["DATA_DIRECTORY"]), demo_mode=app.config["DEMO_MODE"])
+    # The full catalog remains opt-in for production restarts, but the
+    # Underpacking catalog is source-owned and must not serve retired products
+    # or stale pending MPack configuration. Reconcile that focused slice on
+    # every startup so a deployment picks up the canonical data immediately.
+    blanket_sync = sync_blanket_catalog(store, Path(app.config["DATA_DIRECTORY"]))
+    underpacking_sync = sync_underpacking_catalog(store, Path(app.config["DATA_DIRECTORY"]))
+    machine_catalog_count = sync_machine_catalog(store, Path(app.config["DATA_DIRECTORY"]))
+    app.logger.info(
+        "catalog_products_active=%s catalog_blankets_active=%s catalog_underpacking_active=%s "
+        "catalog_print_master_bl_active=%s catalog_print_master_gr_active=%s catalog_legacy_products_deactivated=%s",
+        store.count("products", {"active": True}), blanket_sync["canonical_products"],
+        store.count("products", {"category_id": "mpacks", "active": True}),
+        1 if store.find_one("products", {"_id": "image_print_master_bl", "active": True}) else 0,
+        1 if store.find_one("products", {"_id": "image_print_master_gr", "active": True}) else 0,
+        blanket_sync["deactivated"] + underpacking_sync["deactivated"],
+    )
+    app.logger.info("machine_catalog_sync loaded=%s", machine_catalog_count)
+    commercial_units_updated = sync_commercial_units(store)
+    if underpacking_sync["deactivated"]:
+        app.logger.info(
+            "underpacking_catalog_sync deactivated=%s canonical_products=%s",
+            underpacking_sync["deactivated"], underpacking_sync["canonical_products"],
+        )
+    if commercial_units_updated:
+        app.logger.info("commercial_unit_sync updated=%s", commercial_units_updated)
+    repaired_assignments = repair_customer_assignments(store)
+    if repaired_assignments:
+        app.logger.info("customer_access_migration repaired=%s", repaired_assignments)
     configured_provider = str(app.config.get("EMAIL_PROVIDER") or "zoho_mail_api").strip().lower()
     if configured_provider != "zoho_mail_api":
         raise RuntimeError("EMAIL_PROVIDER must be zoho_mail_api; SMTP fallback is not supported")
@@ -181,6 +210,8 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
 
     @app.before_request
     def csrf_origin_guard():
+        if request.cookies.get(app.config["SESSION_COOKIE_NAME"]) and not session.get("user_id"):
+            app.logger.info("session_expired path=%s", request.path)
         if request.method not in {"POST", "PATCH", "PUT", "DELETE"} or not session.get("user_id"):
             return None
         origin = request.headers.get("Origin")
@@ -191,6 +222,14 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
 
     @app.after_request
     def security_headers(response):
+        if session.get("user_id") and session.permanent:
+            session_cookie_prefix = f"{app.config['SESSION_COOKIE_NAME']}="
+            cookie_set = any(value.startswith(session_cookie_prefix) for value in response.headers.getlist("Set-Cookie"))
+            if cookie_set and not getattr(g, "auth_session_event", None):
+                app.logger.info(
+                    "session_refresh user_id=%s lifetime_days=%s",
+                    session.get("user_id"), app.config.get("AUTH_SESSION_LIFETIME_DAYS", 30),
+                )
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         quotation_pdf_preview = (
             request.method == "GET"

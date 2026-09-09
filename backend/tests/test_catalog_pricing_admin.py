@@ -15,7 +15,9 @@ def test_separated_catalog_contracts_are_available(authenticated):
 
     assert authenticated.get("/api/v1/catalog/mpacks/types").status_code == 200
     assert authenticated.get("/api/v1/catalog/mpacks/options").status_code == 200
-    assert authenticated.get("/api/v1/catalog/mpacks/products").json["data"]["total"] == 4
+    mpack_products = authenticated.get("/api/v1/catalog/mpacks/products").json["data"]
+    assert mpack_products["total"] == 1
+    assert [row["_id"] for row in mpack_products["items"]] == ["mtech-mpack"]
     assert authenticated.get("/api/v1/catalog/chemicals/categories").status_code == 200
     assert authenticated.get("/api/v1/catalog/chemicals/options").status_code == 200
     assert authenticated.get("/api/v1/catalog/chemicals/products").json["data"]["total"] == 22

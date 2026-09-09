@@ -5,7 +5,7 @@ import re
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import customer_record, current_user, enforce_customer, permission_required, permitted_customer_query
+from app.middleware.access import can_view_all_customers, customer_record, current_user, enforce_customer, permission_required, permitted_customer_query
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
@@ -37,6 +37,29 @@ def _view(row: dict) -> dict:
 
 def _permitted_query() -> dict:
     return permitted_customer_query()
+
+
+def _access_view(row: dict) -> dict | None:
+    user = current_user() or {}
+    if not can_view_all_customers(user) or "users.view" not in user.get("permissions", []):
+        return None
+    store = current_app.extensions["store"]
+    user_ids = list(dict.fromkeys(str(value) for value in (row.get("assigned_user_ids") or []) if value))
+    creator_id = row.get("created_by_user_id") or row.get("owner_user_id")
+    if not creator_id and isinstance(row.get("created_by"), str):
+        creator_id = row.get("created_by")
+    if isinstance(row.get("created_by"), dict):
+        creator_id = creator_id or row["created_by"].get("_id") or row["created_by"].get("user_id")
+    creator = store.find_one("users", {"_id": creator_id}) if creator_id else None
+    assigned = []
+    for user_id in user_ids:
+        member = store.find_one("users", {"_id": user_id})
+        if member:
+            assigned.append({"name": member.get("name") or member.get("email") or "User", "email": member.get("email")})
+    return {
+        "created_by": {"name": creator.get("name") or creator.get("email") or "User", "email": creator.get("email")} if creator else None,
+        "assigned_users": assigned,
+    }
 
 
 @bp.get("")
@@ -94,7 +117,7 @@ def create_customer():
     payload.setdefault("assigned_salesperson", (current_user() or {}).get("_id"))
     creator_id = (current_user() or {}).get("_id")
     payload["created_by_user_id"] = creator_id
-    payload["assigned_user_ids"] = [creator_id] if creator_id else []
+    payload["assigned_user_ids"] = list(dict.fromkeys([creator_id])) if creator_id else []
     row = store.insert_one("customers", payload)
     if row.get("customer_id") != row.get("_id"):
         row = current_app.extensions["store"].update_one("customers", {"_id": row["_id"]}, {"customer_id": row["_id"]}) or row
@@ -111,10 +134,15 @@ def get_customer(customer_id: str):
     if not enforce_customer(customer_id):
         return failure("Customer access denied", status=403)
     store = current_app.extensions["store"]
+    relationship_query = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
     related = {}
-    for collection in ("quotations", "orders", "leads"):
-        related[collection], _ = store.list(collection, {"customer_id": customer_id}, limit=10)
-    return success({**_view(row), "related": related})
+    for collection in ("quotations", "orders", "leads", "opportunities"):
+        related[collection], _ = store.list(collection, relationship_query, limit=10)
+    payload = {**_view(row), "related": related}
+    access = _access_view(row)
+    if access is not None:
+        payload["access"] = access
+    return success(payload)
 
 
 @bp.patch("/<customer_id>")

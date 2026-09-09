@@ -8,7 +8,7 @@ from flask import current_app
 
 from app.pricing.engine import (
     calculate_line, calculate_quote_totals, resolve_product_adjustments,
-    with_display_currency,
+    validate_blanket_machine_selection, with_display_currency,
 )
 from app.repositories.store import Store, utcnow
 from app.customers.codes import available_customer_code
@@ -39,10 +39,20 @@ class QuotationService:
         customer_id = customer_company.get("customer_id") or customer_company["_id"]
 
         settings = self.store.find_one("app_settings", {"_id": "system"}) or {}
-        payment_terms = str(payload.get("payment_terms") or "Advance")
-        allowed_terms = settings.get("payment_terms", ["Advance", "POD", "15 Days", "30 Days"])
+        payment_terms = str(payload.get("payment_terms") or "Advance").strip()
+        legacy_terms = {"30 Days": "30 Days from receipt", "30 days": "30 Days from receipt", "60 days": "60 Days"}
+        payment_terms = legacy_terms.get(payment_terms, payment_terms)
+        allowed_terms = {"Advance", "POD", "30 Days from receipt", "60 Days", "Custom"}
         if payment_terms not in allowed_terms:
-            raise ValueError("Payment terms must be Advance, POD, 15 Days or 30 Days")
+            raise ValueError("Payment terms must be Advance, POD, 30 Days from receipt, 60 Days or Custom")
+        if payment_terms == "Custom":
+            try:
+                custom_days = int(payload.get("custom_payment_days"))
+            except (TypeError, ValueError):
+                raise ValueError("Custom payment terms require a positive whole number of days") from None
+            if custom_days <= 0:
+                raise ValueError("Custom payment terms require a positive whole number of days")
+            payment_terms = f"Custom: {custom_days} Days"
         validity = int(payload.get("proforma_validity_days", payload.get("validity_days", settings.get("quotation_validity_days", 30))))
         if validity < 1 or validity > 365:
             raise ValueError("Proforma Validity must be between 1 and 365 days")
@@ -103,6 +113,9 @@ class QuotationService:
             else:
                 # Compatibility path for historical carts without explicit EUR
                 # snapshots. New and edited carts never take this branch.
+                if product.get("category_id") == "blankets":
+                    machine_rows, _ = self.store.list("machines", {"active": {"$ne": False}}, limit=2000, sort="name", direction=1)
+                    validate_blanket_machine_selection(product, configuration, machine_rows)
                 line = calculate_line(
                     product, configuration, quantity=int(cart_item.get("quantity", 1)),
                     discount_percent=cart_item.get("discount_percent", 0), currency=currency, exchange_rate=rate,
@@ -113,6 +126,11 @@ class QuotationService:
                 )
                 pricing_source = "legacy_cart_recalculated_eur"
             line["discount_source"] = "saved_cart_item"
+            line["commercial_unit"] = product.get("commercial_unit") or (
+                "box" if product.get("category_id") == "mpacks" else
+                "pc" if product.get("category_id") == "blankets" else
+                str(product.get("pricing", {}).get("unit", "unit"))
+            )
             current_app.logger.info(
                 "quotation_discount quotation=%s cart_item_id=%s customer_id=%s product_id=%s master_currency=EUR master_final_total_eur=%s discount_percent=%s discount_source=saved_cart_item pricing_source=%s",
                 "create" if persist else "preview", cart_item.get("_id"), customer_id, product["_id"],

@@ -10,27 +10,31 @@ svg { width: 18px; height: 18px; }
 h1, h2, h3, h4, p { margin-top: 0; }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--brand-yellow) 75%, white); outline-offset: 2px; }
 .skip-link {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  left: 0;
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+  width: 1px;
+  z-index: 10000;
+}
+.skip-link:focus-visible {
   background: var(--primary-black);
   border: 2px solid var(--brand-yellow);
   border-radius: 6px;
+  clip: auto;
+  clip-path: none;
   color: #fff;
+  height: auto;
   left: 16px;
   max-width: calc(100vw - 32px);
-  opacity: 0;
+  overflow: visible;
   padding: 8px 12px;
-  pointer-events: none;
-  position: fixed;
   top: 16px;
-  transform: translateY(calc(-100% - 32px));
-  transition: opacity .12s ease, transform .12s ease;
-  white-space: nowrap;
-  z-index: 10000;
-}
-.skip-link:focus,
-.skip-link:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  width: auto;
 }
 @media print { .skip-link { display: none !important; } }
 .hidden { display: none !important; }
@@ -100,6 +104,11 @@ input, select, textarea { background: #fff; border: 1px solid var(--border-stron
 textarea { resize: vertical; }
 input:focus, select:focus, textarea:focus { border-color: #9d9f99; box-shadow: 0 0 0 3px rgba(20,20,20,.05); outline: 0; }
 input:disabled { background: #f1f1ef; color: #888; }
+.password-field { display: block; position: relative; }
+.password-field input { padding-right: 42px; }
+.password-toggle { align-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--text-muted); display: inline-flex; height: 32px; justify-content: center; padding: 0; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; }
+.password-toggle:hover { background: #f0f1ef; color: var(--text); }
+.password-toggle svg { height: 17px; width: 17px; }
 .form-grid { display: grid; gap: 15px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stack-form { display: grid; gap: 16px; }
 .form-hint { color: var(--text-muted); font-size: .7rem; text-align: center; }

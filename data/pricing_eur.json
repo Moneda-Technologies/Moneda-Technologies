@@ -10,7 +10,14 @@
         "variant_prices_eur": {},
         "status": "configured"
       },
-      "image_print_master_bl_gr": {
+      "image_print_master_bl": {
+        "pricing_type": "per_sqm",
+        "unit": "sqm",
+        "price_eur": 38.0,
+        "variant_prices_eur": {},
+        "status": "configured"
+      },
+      "image_print_master_gr": {
         "pricing_type": "per_sqm",
         "unit": "sqm",
         "price_eur": 38.0,
@@ -105,32 +112,11 @@
     },
     "mpacks": {
       "mtech-mpack": {
-        "pricing_type": "formula",
-        "unit": "sqm",
+        "pricing_type": "per_pack",
+        "unit": "box",
         "price_eur": null,
         "dimension_prices_eur": {},
-        "status": "pending"
-      },
-      "mark3zet": {
-        "pricing_type": "formula",
-        "unit": "sqm",
-        "price_eur": null,
-        "dimension_prices_eur": {},
-        "status": "pending"
-      },
-      "polipack-aa": {
-        "pricing_type": "formula",
-        "unit": "sqm",
-        "price_eur": null,
-        "dimension_prices_eur": {},
-        "status": "pending"
-      },
-      "polipack-wa": {
-        "pricing_type": "formula",
-        "unit": "sqm",
-        "price_eur": null,
-        "dimension_prices_eur": {},
-        "status": "pending"
+        "status": "configured"
       }
     },
     "chemicals": {

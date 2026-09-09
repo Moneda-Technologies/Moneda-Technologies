@@ -7,7 +7,7 @@ import re
 from flask import Blueprint, Response, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import enforce_customer, permission_required
+from app.middleware.access import can_view_all_customers, current_user, enforce_customer, permission_required, permitted_customer_query, selected_customer_id
 
 
 bp = Blueprint("reports", __name__, url_prefix="/api")
@@ -16,11 +16,22 @@ bp = Blueprint("reports", __name__, url_prefix="/api")
 @bp.get("/dashboard")
 @permission_required("dashboard.view")
 def dashboard():
-    customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
-    if not enforce_customer(customer_id):
-        return failure("Customer access denied", status=403)
+    customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id") or selected_customer_id()
     store = current_app.extensions["store"]
-    scope = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    if customer_id:
+        if not enforce_customer(customer_id):
+            return failure("Customer access denied", status=403)
+        scope = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+        customer_scope = {"_id": customer_id}
+    else:
+        user = current_user() or {}
+        if can_view_all_customers(user):
+            customer_scope = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
+        else:
+            customer_scope = permitted_customer_query(user)
+        customer_rows, _ = store.list("customers", customer_scope, limit=5000)
+        ids = [row["_id"] for row in customer_rows if row.get("_id") and not row.get("is_issuer")]
+        scope = {"$or": [{"customer_id": {"$in": ids}}, {"customer_company_id": {"$in": ids}}, {"company_id": {"$in": ids}}]} if ids else {"_id": "__no_customer_access__"}
     quotes, _ = store.list("quotations", scope, limit=10000)
     orders, _ = store.list("orders", scope, limit=10000)
     leads, _ = store.list("leads", scope, limit=10000)
@@ -36,7 +47,7 @@ def dashboard():
                     "conversion_rate": round(len(accepted) / len(quotes) * 100, 1) if quotes else 0,
                     "leads": len(leads), "follow_ups_due": len(reminders)},
         "quotation_status": status_counts,
-        "recent_quotations": quotes[:6], "recent_customers": store.list("customers", {"_id": customer_id}, limit=6)[0],
+        "recent_quotations": quotes[:6], "recent_customers": [row for row in store.list("customers", customer_scope, limit=12, sort="created_at", direction=-1)[0] if not row.get("is_issuer")][:6],
     })
 
 

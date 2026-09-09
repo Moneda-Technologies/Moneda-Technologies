@@ -42,7 +42,13 @@ export interface User {
   company_ids: string[];
   customer_ids?: string[];
   customer_company_ids?: string[];
+  assigned_customer_ids?: string[];
+  customer_access_count?: number | null;
+  customer_access_global?: boolean;
   permissions: string[];
+  active?: boolean;
+  email_verified?: boolean;
+  created_at?: string;
   demo?: boolean;
 }
 
@@ -86,6 +92,7 @@ export interface Product {
   name: string;
   category_id: string;
   description: string;
+  commercial_unit?: "pc" | "box" | "litre" | string;
   pricing: { pricing_type: string; price: number | null; variant_prices?: Record<string, number | null>; master_currency: "EUR"; unit: string };
   tax: { mode: "exclusive" | "inclusive" | "no_tax" | null; rate: number | null; override_enabled: boolean };
   discount_rules: { enabled: boolean; step: number; default_max_percent: number; privileged_max_percent: number; restricted?: boolean };
@@ -167,6 +174,10 @@ export interface Customer {
   custom_payment_days?: number;
   payment_terms_display?: string;
   tax_profile?: { gst_applicable?: boolean; tax_number?: string };
+  access?: {
+    created_by?: { name: string; email?: string } | null;
+    assigned_users?: Array<{ name: string; email?: string }>;
+  };
   status: string;
   active?: boolean;
 }
@@ -177,6 +188,7 @@ export interface PriceLine {
   product_name: string;
   description?: string;
   configuration?: Record<string, unknown>;
+  commercial_unit?: "pc" | "box" | "litre" | string;
   pricing_unit: string;
   quantity: number;
   currency: Currency;
@@ -199,6 +211,10 @@ export interface PriceLine {
   base_unit_price_master: number;
   adjustments: Array<{ type: string; label: string; amount_master: number; quantity?: number }>;
   area_sqm?: number;
+  price_per_sheet_eur?: number;
+  price_per_box_eur?: number;
+  sheets_per_box?: number;
+  price_list?: { id?: string; valid_from?: string; valid_until?: string };
   unit_price: number;
   subtotal: number;
   discount_percent: number;

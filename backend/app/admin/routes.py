@@ -10,9 +10,10 @@ from typing import Any
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import current_user, customer_record, permission_required
+from app.middleware.access import can_view_all_customers, customer_access_ids_for_user, current_user, customer_record, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.catalog.service import is_legacy_product
 
 
 bp = Blueprint("admin", __name__, url_prefix="/api")
@@ -233,6 +234,11 @@ def _resource_payload(entity_type: str, row: dict[str, Any]) -> dict[str, Any]:
 def list_pricing_products():
     store = current_app.extensions["store"]
     products, _ = store.list("products", limit=100_000, sort="name", direction=1)
+    # Keep historical rows in Mongo for quotation snapshots, but never expose
+    # obsolete combined/retired seed products as catalogue resources.
+    products = [row for row in products if not is_legacy_product(row) and not (
+        row.get("category_id") == "mpacks" and row.get("_id") != "mtech-mpack"
+    )]
     bars, _ = store.list("blanket_bars", limit=10_000, sort="article_no", direction=1)
     rows = [_resource_payload("product", row) for row in products] + [_resource_payload("bar", row) for row in bars]
     family = str(request.args.get("family", "all")).strip().lower()
@@ -356,9 +362,28 @@ def update_product(product_id: str):
 @bp.get("/admin/users")
 @permission_required("users.view")
 def list_users():
-    rows, total = current_app.extensions["store"].list("users", limit=100, sort="name", direction=1)
+    store = current_app.extensions["store"]
+    rows, total = store.list("users", limit=100, sort="name", direction=1)
+    roles = {row["_id"]: row for row in store.list("roles", limit=100)[0]}
+    customer_rows, _ = store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=100_000)
+    assigned_by_user: dict[str, list[str]] = {}
+    for customer in customer_rows:
+        if customer.get("is_issuer") or not customer.get("_id"):
+            continue
+        customer_id = str(customer["_id"])
+        user_ids = {str(value) for value in (customer.get("assigned_user_ids") or []) if value}
+        if customer.get("created_by_user_id"):
+            user_ids.add(str(customer["created_by_user_id"]))
+        for user_id in user_ids:
+            assigned_by_user.setdefault(user_id, []).append(customer_id)
     for row in rows:
         row.pop("password_hash", None)
+        role = roles.get(row.get("role_id"), {})
+        global_access = can_view_all_customers({**row, "permissions": role.get("permissions", [])})
+        assigned_ids = list(dict.fromkeys(assigned_by_user.get(str(row.get("_id")), [])))
+        row["customer_access_global"] = global_access
+        row["assigned_customer_ids"] = [] if global_access else assigned_ids
+        row["customer_access_count"] = None if global_access else len(assigned_ids)
     return success({"items": rows, "total": total})
 
 
@@ -376,9 +401,26 @@ def create_user():
     role_id = payload.get("role_id", "user")
     if not store.find_one("roles", {"_id": role_id}):
         return failure("Role not found", status=422)
-    customer_ids = [customer_id for customer_id in (payload.get("customer_ids") or payload.get("customer_company_ids") or payload.get("company_ids", [])) if customer_record(customer_id)]
+    requested_ids = payload.get("customer_ids") or payload.get("customer_company_ids") or payload.get("company_ids", [])
+    if not isinstance(requested_ids, list):
+        return failure("Customer assignments must be a list", status=422)
+    customer_ids = []
+    for value in requested_ids:
+        customer_id = str(value).strip()
+        customer = customer_record(customer_id)
+        if not customer or customer.get("is_issuer"):
+            return failure("Customer assignment is invalid", status=422, error="invalid_customer_assignment")
+        if customer_id not in customer_ids:
+            customer_ids.append(customer_id)
     row = store.insert_one("users", {"email": email, "name": name, "phone": payload.get("phone", ""),
         "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True})
+    for customer_id in customer_ids:
+        customer = customer_record(customer_id)
+        assigned = list(dict.fromkeys(str(value) for value in (customer or {}).get("assigned_user_ids", []) if value))
+        if row["_id"] not in assigned:
+            assigned.append(row["_id"])
+            store.update_one("customers", {"_id": customer_id}, {"assigned_user_ids": assigned})
+            audit("customer_assigned_to_user", "customer", customer_id, {"actor_user_id": (current_user() or {}).get("_id"), "target_user_id": row["_id"]})
     audit("user.create", "user", str(row["_id"]))
     return success(row, "User invited. They can sign in with email OTP.", 201)
 
@@ -392,15 +434,51 @@ def update_user(user_id: str):
         return failure("User not found", status=404)
     allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
-    if "customer_ids" not in changes:
-        changes["customer_ids"] = changes.get("customer_company_ids", changes.get("company_ids", existing.get("customer_ids", [])))
-    changes["customer_ids"] = [customer_id for customer_id in changes.get("customer_ids", []) if customer_record(customer_id)]
-    # Legacy aliases remain synchronized as compatibility bridges.
-    changes["customer_company_ids"] = changes["customer_ids"]
-    changes["company_ids"] = changes["customer_ids"]
+    actor = current_user() or {}
+    if user_id == actor.get("_id") and "role_id" in changes and changes["role_id"] != existing.get("role_id"):
+        return failure("You cannot change your own role", status=403)
+    assignment_field = next((field for field in ("customer_ids", "customer_company_ids", "company_ids") if field in changes), None)
+    if assignment_field:
+        if not can_view_all_customers(actor):
+            return failure("You do not have permission to manage customer assignments", status=403)
+        requested_ids = changes.get(assignment_field)
+        if not isinstance(requested_ids, list):
+            return failure("Customer assignments must be a list", status=422)
+        desired_ids: list[str] = []
+        for value in requested_ids:
+            customer_id = str(value).strip()
+            customer = customer_record(customer_id)
+            if not customer or customer.get("is_issuer"):
+                return failure("Customer assignment is invalid", status=422, error="invalid_customer_assignment")
+            if customer_id not in desired_ids:
+                desired_ids.append(customer_id)
+        current_ids = set(customer_access_ids_for_user(user_id, include_created=False))
+        for customer_id in current_ids - set(desired_ids):
+            customer = customer_record(customer_id) or {}
+            if str(customer.get("created_by_user_id") or "") == str(user_id):
+                return failure("The customer creator must remain assigned", status=409, error="customer_owner_assignment_required")
+        for customer_id in set(desired_ids) | current_ids:
+            customer = customer_record(customer_id)
+            if not customer:
+                continue
+            assigned = list(dict.fromkeys(str(value) for value in (customer.get("assigned_user_ids") or []) if value))
+            if customer_id in desired_ids and user_id not in assigned:
+                assigned.append(user_id)
+                store.update_one("customers", {"_id": customer_id}, {"assigned_user_ids": assigned})
+                audit("customer_assigned_to_user", "customer", customer_id, {"actor_user_id": actor.get("_id"), "target_user_id": user_id})
+            elif customer_id not in desired_ids and user_id in assigned:
+                assigned = [value for value in assigned if value != user_id]
+                store.update_one("customers", {"_id": customer_id}, {"assigned_user_ids": assigned})
+                audit("customer_unassigned_from_user", "customer", customer_id, {"actor_user_id": actor.get("_id"), "target_user_id": user_id})
+        changes["customer_ids"] = desired_ids
+        # Legacy aliases remain synchronized as compatibility bridges.
+        changes["customer_company_ids"] = desired_ids
+        changes["company_ids"] = desired_ids
     if changes.get("role_id") and not store.find_one("roles", {"_id": changes["role_id"]}):
         return failure("Role not found", status=422)
     row = store.update_one("users", {"_id": user_id}, changes)
+    if changes.get("active") is False:
+        current_app.logger.info("session_revoked user_id=%s reason=admin_deactivated", user_id)
     audit("user.update", "user", user_id, {"fields": sorted(changes)})
     return success(row, "User updated")
 

@@ -1,19 +1,39 @@
 from __future__ import annotations
 
+from email.utils import parsedate_to_datetime
+
 import pytest
+from werkzeug.security import generate_password_hash
 
 from app.communication.email import EmailDeliveryError
 from app.customers.codes import customer_code
+from app.middleware.access import repair_customer_assignments
 from app.repositories.store import build_store, utcnow
 
 
 COMPANY = "company-moneda-demo"
 
 
+def add_test_user(app, user_id: str, role_id: str = "user"):
+    return app.extensions["store"].insert_one("users", {
+        "_id": user_id, "name": user_id, "email": f"{user_id}@monedatechnologies.com",
+        "username": user_id, "username_normalized": user_id, "password_hash": generate_password_hash("Secure123"),
+        "role_id": role_id, "active": True, "email_verified": True,
+        "customer_ids": [], "customer_company_ids": [], "company_ids": [],
+    })
+
+
 def configure_product(app, product_id="mtech-mpack", base_price=10):
+    product = app.extensions["store"].find_one("products", {"_id": product_id}) or {}
+    configuration = dict(product.get("configuration", {}))
+    # Legacy pricing tests intentionally replace the official machine matrix
+    # with a synthetic formula product.
+    configuration.pop("machine_sizes", None)
+    configuration.pop("machine_price_list", None)
     app.extensions["store"].update_one("products", {"_id": product_id}, {
         "pricing": {"pricing_type": "formula", "price": base_price, "master_currency": "EUR", "unit": "sqm"},
         "pricing_status": "configured",
+        "configuration": configuration,
     })
 
 
@@ -98,7 +118,7 @@ def test_signup_zoho_not_connected_returns_and_logs_trace_metadata(app, client, 
     caplog.set_level("INFO")
     app.extensions["otp_service"].email_provider = DisconnectedZohoProvider()
     response = client.post("/api/v1/auth/signup/start", json={
-        "name": "OAuth Diagnostic", "username": "oauth.diagnostic", "email": "oauth-diagnostic@example.com",
+        "name": "OAuth Diagnostic", "username": "oauth.diagnostic", "email": "oauth-diagnostic@monedatechnologies.com",
     })
 
     assert response.status_code == 503
@@ -111,6 +131,169 @@ def test_signup_zoho_not_connected_returns_and_logs_trace_metadata(app, client, 
     assert response.json["request_id"] in logs
     assert "exception_class=RuntimeError" in logs
     assert "error_code=OAUTH_NOT_CONNECTED" in logs
+
+
+@pytest.mark.parametrize("email", [
+    "person@gmail.com", "person@yahoo.com", "person@sub.chemo.in",
+    "person@monedatechnologies.com.fake.com", "person@fake-moneda.com",
+])
+def test_signup_rejects_non_moneda_email_domains(client, email):
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "Disallowed Domain", "username": "disallowed.domain", "email": email,
+    })
+    assert response.status_code == 422
+    assert response.json["error"] == "signup_email_domain_not_allowed"
+
+
+@pytest.mark.parametrize("email", ["USER@MONEDATECHNOLOGIES.COM", "User@MonedaTechnologies.com", "user@CHEMO.IN"])
+def test_signup_accepts_allowed_email_domains(app, client, email):
+    class RecordingOtp:
+        def request(self, *_args, **_kwargs):
+            return True
+
+    app.extensions["otp_service"] = RecordingOtp()
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "Allowed Domain", "username": f"allowed.{email.split('@')[0].lower()}", "email": email,
+    })
+    assert response.status_code == 200
+
+
+def test_signup_rejects_taken_username_before_otp(client, app):
+    before = app.extensions["store"].count("otp_challenges")
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "Duplicate Username", "username": "Admin", "email": "new.admin@monedatechnologies.com",
+    })
+    assert response.status_code == 409
+    assert response.json["error"] == "username_in_use"
+    assert "already taken" in response.json["message"].lower()
+    assert app.extensions["store"].count("otp_challenges") == before
+
+
+def test_signup_completion_establishes_persistent_authenticated_session(app, client, monkeypatch):
+    monkeypatch.setattr("app.auth.service.secrets.randbelow", lambda _limit: 123456)
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "New Moneda User", "username": "new.moneda.user", "email": "new.user@monedatechnologies.com",
+    })
+    assert response.status_code == 200
+    pending_id = response.json["data"]["pending_signup_id"]
+    assert client.post("/api/v1/auth/signup/verify-email", json={"pending_signup_id": pending_id, "otp": "123456"}).status_code == 200
+
+    complete = client.post("/api/v1/auth/signup/complete", json={
+        "pending_signup_id": pending_id, "password": "SecurePassword123!", "confirm_password": "SecurePassword123!",
+    })
+    assert complete.status_code == 201
+    assert complete.json["data"]["authenticated"] is True
+    assert complete.json["data"]["next_step"] == "customer-selection"
+    assert client.get("/api/v1/me").status_code == 200
+
+    cookie = "\n".join(complete.headers.getlist("Set-Cookie"))
+    assert "HttpOnly" in cookie and "SameSite=Lax" in cookie and "Expires=" in cookie
+    expires = parsedate_to_datetime(cookie.split("Expires=", 1)[1].split(";", 1)[0])
+    assert 29 <= (expires - utcnow()).total_seconds() / 86400 <= 31
+
+    retry = client.post("/api/v1/auth/signup/complete", json={
+        "pending_signup_id": pending_id, "password": "SecurePassword123!", "confirm_password": "SecurePassword123!",
+    })
+    assert retry.status_code == 410
+
+
+def test_signup_rejects_password_without_required_character_classes(app, client, monkeypatch):
+    monkeypatch.setattr("app.auth.service.secrets.randbelow", lambda _limit: 123456)
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "Weak Password", "username": "weak.password.user", "email": "weak.password@monedatechnologies.com",
+    })
+    pending_id = response.json["data"]["pending_signup_id"]
+    assert client.post("/api/v1/auth/signup/verify-email", json={"pending_signup_id": pending_id, "otp": "123456"}).status_code == 200
+
+    complete = client.post("/api/v1/auth/signup/complete", json={
+        "pending_signup_id": pending_id, "password": "abcdefgh", "confirm_password": "abcdefgh",
+    })
+    assert complete.status_code == 422
+    assert complete.json["error"] == "password_policy"
+    assert complete.json["error_code"] == "PASSWORD_POLICY"
+    assert complete.json["stage"] == "password_validation"
+    assert "uppercase" in complete.json["message"].lower()
+    assert client.get("/api/v1/me").status_code == 401
+
+
+@pytest.mark.parametrize("password_payload", [
+    {"password": "Secure123", "confirm_password": "Different123"},
+    {"confirm_password": "Secure123"},
+    {"password": "Secure123"},
+])
+def test_signup_completion_rejects_mismatch_or_missing_password_fields(app, client, monkeypatch, password_payload):
+    monkeypatch.setattr("app.auth.service.secrets.randbelow", lambda _limit: 123456)
+    response = client.post("/api/v1/auth/signup/start", json={
+        "name": "Completion Validation", "username": f"completion.{len(password_payload)}", "email": "completion.validation@monedatechnologies.com",
+    })
+    pending_id = response.json["data"]["pending_signup_id"]
+    assert client.post("/api/v1/auth/signup/verify-email", json={"pending_signup_id": pending_id, "otp": "123456"}).status_code == 200
+    payload = {"pending_signup_id": pending_id, **password_payload}
+    complete = client.post("/api/v1/auth/signup/complete", json=payload)
+    assert complete.status_code == 422
+    assert client.get("/api/v1/me").status_code == 401
+
+
+def test_customer_creation_assigns_creator_and_me_uses_canonical_access(app, client):
+    add_test_user(app, "customer-creator")
+    with client.session_transaction() as session:
+        session["user_id"] = "customer-creator"
+        session["role_id"] = "user"
+        session.permanent = True
+    response = client.post("/api/v1/customers", json={
+        "name": "Assigned Customer", "contact_name": "Contact", "email": "contact@example.com",
+        "phone": "+91 9876543210", "address": "Road", "continent": "Asia", "country_code": "IN",
+        "preferred_currency": "INR", "payment_terms": "Advance",
+    })
+    assert response.status_code == 201
+    customer_id = response.json["data"]["_id"]
+    assert response.json["data"]["assigned_user_ids"] == ["customer-creator"]
+    me = client.get("/api/v1/me")
+    assert me.status_code == 200
+    assert [row["_id"] for row in me.json["data"]["customers"]] == [customer_id]
+    assert me.json["data"]["user"]["customer_access_count"] == 1
+
+
+def test_admin_customer_assignment_is_server_enforced_and_idempotent(app, client):
+    add_test_user(app, "assigned-user")
+    store = app.extensions["store"]
+    store.insert_one("customers", {
+        "_id": "assignment-customer", "name": "Assignment Customer", "company_name": "Assignment Customer",
+        "contact_name": "Contact", "email": "assignment@example.com", "phone": "+91 9876543210",
+        "address": "Road", "continent": "Asia", "country_code": "IN", "country_name": "India",
+        "preferred_currency": "INR", "default_currency": "INR", "status": "active", "active": True,
+        "assigned_user_ids": [],
+    })
+    assert client.post("/api/v1/auth/demo", json={}).status_code == 200
+    first = client.patch("/api/v1/admin/users/assigned-user", json={"customer_ids": ["assignment-customer", "assignment-customer"]})
+    assert first.status_code == 200
+    assert store.find_one("customers", {"_id": "assignment-customer"})["assigned_user_ids"] == ["assigned-user"]
+    second = client.patch("/api/v1/admin/users/assigned-user", json={"customer_ids": []})
+    assert second.status_code == 200
+    assert store.find_one("customers", {"_id": "assignment-customer"})["assigned_user_ids"] == []
+    with client.session_transaction() as session:
+        session["user_id"] = "assigned-user"
+        session["role_id"] = "user"
+    denied = client.patch("/api/v1/admin/users/user-demo-admin", json={"customer_ids": ["assignment-customer"]})
+    assert denied.status_code == 403
+
+
+def test_customer_access_migration_promotes_explicit_legacy_user_relationship(app, client):
+    add_test_user(app, "legacy-assigned-user")
+    store = app.extensions["store"]
+    store.insert_one("customers", {
+        "_id": "legacy-assigned-customer", "name": "Legacy Assigned Customer", "company_name": "Legacy Assigned Customer",
+        "contact_name": "Contact", "email": "legacy@example.com", "phone": "+91 9876543210", "address": "Road",
+        "country_code": "IN", "preferred_currency": "INR", "default_currency": "INR", "status": "active", "active": True,
+        "assigned_user_ids": [],
+    })
+    store.update_one("users", {"_id": "legacy-assigned-user"}, {"customer_ids": ["legacy-assigned-customer"]})
+    assert repair_customer_assignments(store) == 1
+    with client.session_transaction() as session:
+        session["user_id"] = "legacy-assigned-user"
+    response = client.get("/api/v1/customers")
+    assert response.status_code == 200
+    assert [row["_id"] for row in response.json["data"]["items"]] == ["legacy-assigned-customer"]
 
 
 def test_public_health_and_config_are_safe(client):
@@ -171,7 +354,7 @@ def test_demo_session_and_seeded_catalog(authenticated):
     assert me.status_code == 200
     assert me.json["data"]["user"]["role_id"] == "superadmin"
     products = authenticated.get("/api/v1/products?limit=100")
-    assert products.json["data"]["pagination"]["total"] == 39
+    assert products.json["data"]["pagination"]["total"] == 37
     categories = authenticated.get("/api/v1/categories")
     assert len(categories.json["data"]) == 3
     assert {item["_id"] for item in categories.json["data"]} == {"blankets", "mpacks", "chemicals"}
@@ -182,6 +365,77 @@ def test_demo_session_and_seeded_catalog(authenticated):
     g3 = authenticated.get("/api/v1/catalog/blankets/products?category=cold_hot_set").json["data"]["items"]
     assert [item["_id"] for item in g3] == ["mtech_web_x_press_g3"]
     assert g3[0]["configuration"]["thicknesses_mm"] == [1.7, 1.96]
+
+
+def test_mpack_machine_price_list_is_structured_and_server_authoritative(app, authenticated):
+    product = app.extensions["store"].find_one("products", {"_id": "mtech-mpack"})
+    assert product["pricing_status"] == "configured"
+    assert product["pricing"] == {
+        "master_currency": "EUR", "pricing_type": "per_pack", "unit": "box",
+        "price": None, "dimension_prices": {},
+    }
+    assert product["configuration"]["machine_price_list"]["valid_from"] == "2026-07-01"
+    assert product["configuration"]["machine_price_list"]["valid_until"] == "2026-12-31"
+    assert len(product["configuration"]["machine_sizes"]) == 63
+    underpacking = authenticated.get("/api/v1/catalog/mpacks/products").json["data"]["items"]
+    assert [row["_id"] for row in underpacking] == ["mtech-mpack"]
+
+    configuration = {
+        "manufacturer": "Heidelberg", "machine_model": "SPEEDMASTER 74 - CD",
+        "width_mm": 760, "length_mm": 620, "thickness_mm": 0.1,
+        # Deliberately malicious/stale browser values must be overwritten.
+        "price_per_box_eur": 0.01, "total_eur": 0.01,
+    }
+    response = authenticated.post("/api/v1/products/mtech-mpack/price-preview", json={
+        "company_id": COMPANY, "quantity": 2, "discount_percent": 0,
+        "display_currency": "EUR", "configuration": configuration,
+    })
+    assert response.status_code == 200
+    line = response.json["data"]["line"]
+    assert line["pricing_unit"] == "box"
+    assert line["price_per_sheet_eur"] == 0.221
+    assert line["price_per_box_eur"] == 22.06
+    assert line["sheets_per_box"] == 100
+    assert line["master_subtotal"] == 44.12
+    assert line["master_final_total"] == 44.12
+    assert line["configuration"]["price_per_box_eur"] == 22.06
+    assert line["configuration"]["total_eur"] == 44.12
+
+    added = authenticated.post("/api/v1/cart/items", json={
+        "company_id": COMPANY, "product_id": "mtech-mpack", "quantity": 2,
+        "discount_percent": 0, "display_currency": "EUR", "configuration": configuration,
+    })
+    assert added.status_code == 201
+    assert added.json["data"]["configuration"]["price_per_box_eur"] == 22.06
+    assert added.json["data"]["configuration"]["total_eur"] == 44.12
+
+
+def test_mpack_rejects_machine_size_not_in_official_matrix(authenticated):
+    response = authenticated.post("/api/v1/products/mtech-mpack/price-preview", json={
+        "company_id": COMPANY, "quantity": 1, "display_currency": "EUR",
+        "configuration": {
+            "manufacturer": "Heidelberg", "machine_model": "SPEEDMASTER 74 - CD",
+            "width_mm": 999, "length_mm": 620, "thickness_mm": 0.1,
+        },
+    })
+    assert response.status_code == 422
+    assert response.json["message"] == "Size is not available for the selected machine model"
+
+
+def test_blanket_machine_catalog_stores_structured_manufacturer_and_model(authenticated):
+    created = authenticated.post("/api/v1/machines", json={
+        "manufacturer": "Heidelberg", "machine_model": "Speedmaster 74",
+    })
+    assert created.status_code == 201
+    assert created.json["data"]["manufacturer"] == "Heidelberg"
+    assert created.json["data"]["machine_model"] == "Speedmaster 74"
+    duplicate = authenticated.post("/api/v1/machines", json={
+        "manufacturer": "Heidelberg", "machine_model": "Speedmaster 74",
+    })
+    assert duplicate.status_code == 200
+    assert duplicate.json["data"]["_id"] == created.json["data"]["_id"]
+    machines = authenticated.get("/api/v1/machines")
+    assert any(row["machine_model"] == "Speedmaster 74" for row in machines.json["data"]["items"])
 
 
 def test_admin_price_change_records_history(app, authenticated):
@@ -429,8 +683,8 @@ def test_blanket_bar_format_uses_two_independent_embedded_bars(authenticated):
     response = authenticated.post("/api/v1/products/mtech_active_sf/price-preview", json={
         "company_id": COMPANY, "currency": "EUR", "quantity": 1,
         "configuration": {
-            "thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm",
-            "format_type": "bar_format", "bar_1_id": "aluminium", "bar_2_id": "steel",
+                "thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm",
+                    "format_type": "bar_format", "machine": "Heidelberg - GTO 46", "bar_1_id": "aluminium", "bar_2_id": "steel",
         },
     })
     assert response.status_code == 200
@@ -603,8 +857,8 @@ def test_quotation_snapshot_contains_complete_cut_and_bar_lines(authenticated):
     bar = authenticated.post("/api/v1/cart/items", json={
         "customer_id": COMPANY, "product_id": "mtech_active_prime", "currency": "EUR", "quantity": 1,
         "configuration": {
-            "thickness_mm": 1.96, "length": 1054, "width": 890,
-            "dimension_unit": "mm", "format_type": "bar_format",
+                "thickness_mm": 1.96, "length": 1054, "width": 890,
+                    "dimension_unit": "mm", "format_type": "bar_format", "machine": "Heidelberg - GTO 46",
             "bar_1_id": "aluminium", "use_second_bar": False,
         },
     })

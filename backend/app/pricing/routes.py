@@ -6,11 +6,12 @@ from app.api.responses import failure, success
 from app.middleware.access import current_user, customer_id_from, customer_record, enforce_active_customer, permission_required
 from app.pricing.engine import (
     PricingUnavailable, calculate_line, calculate_quote_totals,
-    configuration_fingerprint, resolve_product_adjustments, with_display_currency,
+    configuration_fingerprint, resolve_product_adjustments, with_display_currency, validate_blanket_machine_selection,
 )
 from app.exchange_rates.service import ExchangeRateUnavailable
 from app.services.audit import audit
 from app.customers.metadata import resolve_customer_currency
+from app.catalog.service import get_active_catalog_product
 
 
 bp = Blueprint("pricing", __name__, url_prefix="/api")
@@ -143,14 +144,19 @@ def _calculate(payload: dict):
     if not enforce_active_customer(customer_id):
         raise PermissionError("Customer access denied")
     customer_company = customer_record(customer_id)
-    product = store.find_one("products", {"_id": payload.get("product_id"), "active": True})
-    if not customer_company or not product:
-        raise LookupError("Product or customer company not found")
+    product = get_active_catalog_product(store, payload.get("product_id"))
+    if not product:
+        raise ValueError("PRODUCT_NOT_FOUND")
+    if not customer_company:
+        raise LookupError("Customer company not found")
     currency = resolve_customer_currency(customer_company, payload.get("display_currency") or payload.get("currency"), store, current_user())
     rate, rate_meta = current_app.extensions["exchange_rate_service"].rate_for(currency)
     user = current_user() or {}
     configuration = payload.get("configuration", {})
     settings = store.find_one("app_settings", {"_id": "system"}) or {}
+    if product.get("category_id") == "blankets":
+        machine_rows, _ = store.list("machines", {"active": {"$ne": False}}, limit=2000, sort="name", direction=1)
+        validate_blanket_machine_selection(product, configuration, machine_rows)
     line = calculate_line(
         product, configuration, quantity=int(payload.get("quantity", 1)),
         discount_percent=payload.get("discount_percent", 0), currency=currency, exchange_rate=rate,

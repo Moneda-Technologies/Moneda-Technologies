@@ -1,25 +1,10 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "types": [
     {
       "id": "mtech-mpack",
       "name": "Mtech Mpack",
       "self_adhesive": null
-    },
-    {
-      "id": "mark3zet",
-      "name": "Mark3zet",
-      "self_adhesive": null
-    },
-    {
-      "id": "polipack-aa",
-      "name": "Polipack AA",
-      "self_adhesive": true
-    },
-    {
-      "id": "polipack-wa",
-      "name": "Polipack WA",
-      "self_adhesive": false
     }
   ]
 }

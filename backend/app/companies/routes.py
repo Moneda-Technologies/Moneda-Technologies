@@ -112,7 +112,7 @@ def create_customer_compat():
     from app.middleware.access import current_user
     creator_id = (current_user() or {}).get("_id")
     customer["created_by_user_id"] = creator_id
-    customer["assigned_user_ids"] = [creator_id] if creator_id else []
+    customer["assigned_user_ids"] = list(dict.fromkeys([creator_id])) if creator_id else []
     store = current_app.extensions["store"]
     customer["customer_code"] = available_customer_code(store, name)
     row = store.insert_one("customers", customer)

@@ -27,13 +27,12 @@
     .party p { color: #676762; margin: .7mm 0; white-space: pre-line; }
     .party.company p { color: #bdbdbd; }
     .meta-band { align-items: stretch; border-bottom: 1px solid #dadad6; border-top: 1px solid #dadad6; display: flex; margin-bottom: 5mm; padding: 3mm 0; }
-    .meta-item { border-right: 1px solid #dededa; padding: 0 3mm; width: 25%; }
+    .meta-item { border-right: 1px solid #dededa; padding: 0 3mm; width: 33.333333%; }
     .meta-item:first-child { padding-left: 0; }
     .meta-item:last-child { border: 0; padding-right: 0; }
     .meta-item span, .meta-item strong { display: block; }
     .meta-item span { color: #82827d; font-size: 6.5px; letter-spacing: .5px; text-transform: uppercase; }
     .meta-item strong { font-size: 8.3px; margin-top: 1.2mm; }
-    .exchange-note { background: #fff9de; border-left: 2px solid #f2c800; color: #5f531a; margin: -1mm 0 4mm; padding: 2mm 3mm; }
     .section-heading { align-items: center; display: flex; justify-content: space-between; margin: 0 0 2mm; }
     .section-heading h3 { font-size: 9px; letter-spacing: .8px; margin: 0; text-transform: uppercase; }
     .section-heading span { color: #878782; font-size: 7px; }
@@ -81,7 +80,6 @@
   </style>
 </head>
 <body>
-  {% set has_tax = quotation.currency == 'INR' and (quotation.totals.tax_amount or quotation.totals.transport_tax_amount) %}
   <header class="header">
     <img class="brand" src="{{ logo_uri }}" alt="Moneda Technologies">
     <div class="document-title"><h1>QUOTATION</h1><div class="document-number">{{ quotation.quotation_number }}</div><div class="document-date">{{ display_date(quotation.created_at) }}</div></div>
@@ -90,7 +88,6 @@
 
   <section class="meta-band">
     <div class="meta-item"><span>Proforma validity</span><strong>{{ quotation.proforma_validity_days or quotation.validity_days or 30 }} Days</strong></div>
-    <div class="meta-item"><span>Currency</span><strong>{{ quotation.currency }}</strong></div>
     <div class="meta-item"><span>Payment terms</span><strong>{{ quotation.payment_terms or 'Advance' }}</strong></div>
     <div class="meta-item"><span>Transport</span><strong>{{ quotation.transport.label or 'By Consignee' }}</strong></div>
   </section>
@@ -129,9 +126,13 @@
           {% if line.description %}<div class="description">{{ line.description }}</div>{% endif %}
           <div class="configuration">{{ line_configuration(line) }}</div>
         </td>
-        <td class="center">{{ '%g'|format(line.quantity) }}</td>
-        <td class="right">{{ quotation.currency }} {{ '%.2f'|format(line.unit_price) }}{% if line.discount_percent %}<div class="line-discount">{{ '%g'|format(line.discount_percent) }}% discount</div>{% endif %}</td>
-        <td class="right"><strong>{{ quotation.currency }} {{ '%.2f'|format(line.line_total) }}</strong></td>
+        {% set is_mpack = line.commercial_unit == 'box' or line.product_id == 'mtech-mpack' or line.price_per_box_eur is defined %}
+        {% set raw_unit = line.commercial_unit or 'pc' %}
+        {% set unit_price_unit = 'Box' if is_mpack else ('Pc' if raw_unit == 'pc' else raw_unit) %}
+        {% set unit_label = (('Box' if line.quantity == 1 else 'Boxes') if is_mpack else (('Pc' if line.quantity == 1 else 'Pcs') if raw_unit == 'pc' else raw_unit)) %}
+        <td class="center"><strong>{{ '%g'|format(line.quantity) }} {{ unit_label }}</strong>{% if is_mpack and line.sheets_per_box %}<small>({{ '{:,}'.format(line.sheets_per_box|int) }} {{ 'sheets' if line.quantity == 1 else 'sheets/box' }})</small>{% endif %}</td>
+        <td class="right">EUR {{ '%.2f'|format(line.unit_price) }} / {{ unit_price_unit }}{% if line.discount_percent %}<div class="line-discount">{{ '%g'|format(line.discount_percent) }}% discount</div>{% endif %}</td>
+        <td class="right"><strong>EUR {{ '%.2f'|format(line.line_total) }}</strong></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -139,13 +140,10 @@
 
   <div class="totals-wrap">
     <table class="totals">
-      <tr><td>Subtotal</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.subtotal) }}</td></tr>
-      {% if quotation.totals.discount_amount %}<tr><td>Discount</td><td>- {{ quotation.currency }} {{ '%.2f'|format(quotation.totals.discount_amount) }}</td></tr>{% endif %}
-      {% if has_tax %}<tr><td>Taxable amount</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.taxable_amount) }}</td></tr>
-      {% set taxable_lines = quotation.lines|selectattr('tax_amount')|list %}
-      <tr><td>GST{% if taxable_lines %} {{ '%g'|format(taxable_lines[0].tax_rate) }}%{% endif %}</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.tax_amount) }}</td></tr>{% endif %}
-      {% if quotation.totals.transport_cost %}<tr><td>Transport / freight</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.transport_cost) }}</td></tr>{% endif %}
-      <tr class="grand"><td>Grand total</td><td>{{ quotation.currency }} {{ '%.2f'|format(quotation.totals.grand_total) }}</td></tr>
+      <tr><td>Subtotal</td><td>EUR {{ '%.2f'|format(quotation.totals.subtotal) }}</td></tr>
+      {% if quotation.totals.discount_amount %}<tr><td>Discount</td><td>- EUR {{ '%.2f'|format(quotation.totals.discount_amount) }}</td></tr>{% endif %}
+      {% if quotation.totals.transport_cost %}<tr><td>Transport / freight</td><td>EUR {{ '%.2f'|format(quotation.totals.transport_cost) }}</td></tr>{% endif %}
+      <tr class="grand"><td>Grand total</td><td>EUR {{ '%.2f'|format(quotation.totals.grand_total) }}</td></tr>
     </table>
   </div>
 

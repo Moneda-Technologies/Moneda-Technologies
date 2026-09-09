@@ -11,7 +11,7 @@ import { appStore } from "./state/store";
 import type { Company, Customer } from "./types/domain";
 import { clearCustomerContextState, CUSTOMER_SELECTION_PATH } from "./guards/customer-context";
 
-interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode: boolean; master_currency: "EUR" }
+interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode: boolean; master_currency: "EUR"; signup_email_domains?: string[] }
 
 const app = document.querySelector<HTMLElement>("#app")!;
 const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
@@ -51,11 +51,12 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     : authEntry
       ? (customer ? "/calculator" : "/customer-selection")
       : location.pathname;
-  await navigate(!customer && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
+  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]);
+  await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 
 function renderPublicAuthentication(config: PublicConfig): void {
-  if (location.pathname === "/signup") app.replaceChildren(signupPage());
+  if (location.pathname === "/signup") app.replaceChildren(signupPage(config.signup_email_domains, () => enterWorkspace(true)));
   else if (["/forgot-password", "/reset-password"].includes(location.pathname)) app.replaceChildren(passwordResetPage());
   else {
     if (["/", "/home"].includes(location.pathname)) history.replaceState({}, "", "/login");
@@ -64,7 +65,7 @@ function renderPublicAuthentication(config: PublicConfig): void {
 }
 
 async function bootstrap(): Promise<void> {
-  let config: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: import.meta.env.VITE_BRAND_LOGO_PATH ?? "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR" };
+  let config: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: import.meta.env.VITE_BRAND_LOGO_PATH ?? "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR", signup_email_domains: ["monedatechnologies.com", "chemo.in"] };
   try { config = await api<PublicConfig>("/config"); }
   catch (error) {
     const message = error instanceof ApiError ? `${error.message} (${error.status})` : "The API did not return a valid response.";
@@ -98,7 +99,7 @@ document.addEventListener("click", (event) => {
   if (!target || event.defaultPrevented || target.dataset.customerGuard === "true") return;
   event.preventDefault(); void navigate(target.getAttribute("href") ?? "/dashboard");
 });
-window.addEventListener("popstate", () => void navigate(location.pathname, false));
+window.addEventListener("popstate", () => void navigate(`${location.pathname}${location.search}`, false));
 window.addEventListener("moneda:navigate", (event) => void navigate((event as CustomEvent<string>).detail));
 window.addEventListener("moneda:company-selected", () => app.replaceChildren(renderShell()));
 window.addEventListener("moneda:customer-context-cleared", () => app.replaceChildren(renderShell()));

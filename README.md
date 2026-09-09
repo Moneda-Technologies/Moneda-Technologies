@@ -144,7 +144,7 @@ The current provider is the ECB reference-rate feed exposed through Frankfurter.
 
 The official logo remains at the configured `brand_logo_path` and is not altered by the application. Change that setting later to replace the file without changing template code.
 
-Quotations use the Moneda HTML/CSS template and WeasyPrint in production/Docker. A ReportLab/SVG fallback keeps local Windows PDF generation functional when the native Pango runtime is unavailable. Both paths include parties, article numbers, product configuration, currency/rate metadata, line discounts, product tax, transport, commercial conditions, totals, page numbers, and authorization space.
+Quotations use one ReportLab/SVG renderer for preview, download, print, and email attachments. The customer-facing document contains issuer/customer parties, product configuration, EUR commercial pricing, line discounts, selected transport, payment terms, totals, notes, page numbers, and authorization space.
 
 Production email uses only the Zoho Mail REST API through server-side OAuth 2.0; there is no SMTP fallback. Admins connect, test, reconnect, or disconnect the mailbox under **Settings -> Communication -> Zoho Mail**. Refresh tokens are encrypted in MongoDB and access tokens remain in server memory for their short lifetime. See [docs/zoho-mail-oauth.md](docs/zoho-mail-oauth.md) for India data-center setup, localhost authorization, and the environment-only production migration. Demo/test mode records messages without claiming external delivery. WhatsApp records a clear mock result in demo mode; it never claims a real message was delivered.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -68,9 +69,9 @@ def _valid_price(value: Any) -> bool:
 def _catalog_seed(data_directory: Path) -> dict[str, Any]:
     """Resolve the explicitly named, separated JSON sources into runtime rows."""
     names = (
-        "product_types.json", "blanket_categories.json", "blanket_options.json",
+        "product_types.json", "blanket_categories.json", "blanket_options.json", "machines.json",
         "blanket_bars.json", "blankets.json", "mpack_types.json", "mpack_options.json",
-        "mpacks.json", "chemical_categories.json", "chemical_options.json",
+        "mpacks.json", "mpack_price_list_2026_h2.json", "chemical_categories.json", "chemical_options.json",
         "chemicals.json", "pricing_eur.json", "tax_rules.json",
     )
     documents = {name: _load(data_directory / name) for name in names}
@@ -85,6 +86,13 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         raise ValueError("Blanket category IDs must be present and unique")
 
     blanket_options = documents["blanket_options.json"]
+    machine_rows = documents["machines.json"].get("machines", [])
+    machine_ids = [row.get("id") for row in machine_rows]
+    if any(not value for value in machine_ids) or len(machine_ids) != len(set(machine_ids)):
+        raise ValueError("Machine IDs must be present and unique")
+    # Blanket configuration consumes the dedicated machine catalogue; keeping
+    # it in one source prevents UI and API lists from drifting apart.
+    blanket_options = {**blanket_options, "machines": machine_rows}
     blanket_bars_source = documents["blanket_bars.json"].get("bars", [])
     bar_ids = [row.get("id") for row in blanket_bars_source]
     if not bar_ids or len(bar_ids) != len(set(bar_ids)):
@@ -140,6 +148,40 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
     if any(row.get("type_id") not in mpack_type_map for row in mpack_products):
         raise ValueError("Underpacking product references an unknown type")
 
+    mpack_price_list = documents["mpack_price_list_2026_h2.json"]
+    price_list_meta = mpack_price_list.get("price_list", {})
+    if price_list_meta.get("currency") != "EUR" or price_list_meta.get("quantity_unit") != "box":
+        raise ValueError("MPack machine prices must use EUR per box")
+    if (price_list_meta.get("valid_from"), price_list_meta.get("valid_until")) != ("2026-07-01", "2026-12-31"):
+        raise ValueError("MPack price-list validity must be 01 Jul through 31 Dec 2026")
+    mpack_machine_sizes = mpack_price_list.get("machine_sizes", [])
+    if not mpack_machine_sizes:
+        raise ValueError("MPack price list requires machine-size rows")
+    machine_size_keys: set[tuple[str, str, int, int]] = set()
+    expected_thicknesses = {
+        Decimal(str(row["thickness_mm"])) for row in mpack_price_list.get("thicknesses", [])
+    }
+    for row in mpack_machine_sizes:
+        key = (
+            str(row.get("manufacturer", "")).strip(), str(row.get("machine_model", "")).strip(),
+            int(row.get("width_mm", 0)), int(row.get("length_mm", 0)),
+        )
+        if not all(key) or key in machine_size_keys:
+            raise ValueError("MPack machine-size rows must have unique complete keys")
+        machine_size_keys.add(key)
+        prices = row.get("prices", [])
+        if {Decimal(str(price.get("thickness_mm"))) for price in prices} != expected_thicknesses:
+            raise ValueError(f"MPack row {key} does not define every supported thickness")
+        if any(
+            price.get("price_per_sheet_eur") is None
+            or not _valid_price(price.get("price_per_sheet_eur"))
+            or price.get("price_per_box_eur") is None
+            or not _valid_price(price.get("price_per_box_eur"))
+            or int(price.get("sheets_per_box", 0)) <= 0
+            for price in prices
+        ):
+            raise ValueError(f"MPack row {key} has invalid pricing")
+
     chemical_categories_source = documents["chemical_categories.json"].get("categories", [])
     chemical_category_map = {row["id"]: row for row in chemical_categories_source}
     if len(chemical_category_map) != len(chemical_categories_source):
@@ -175,7 +217,8 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         price = pricing_groups["blankets"][item["id"]]
         products.append({
             "_id": item["id"], "article_no": item.get("article_no"), "sku": item.get("sku", item["id"].upper()),
-            "name": item["name"], "category_id": "blankets", "description": item.get("application", ""),
+            "name": item["name"], "category_id": "blankets", "description": item.get("description") or item.get("application", ""),
+            "commercial_unit": "pc",
             "pricing": {"master_currency": "EUR", "pricing_type": price["pricing_type"], "unit": price["unit"],
                         "price": price.get("price_eur"), "variant_prices": price.get("variant_prices_eur", {})},
             "tax": {"mode": None, "rate": None, "override_enabled": False}, "discount_rules": _discount_rules(),
@@ -198,9 +241,11 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
     for item in mpack_products:
         type_row = mpack_type_map[item["type_id"]]
         price = pricing_groups["mpacks"][item["id"]]
+        uses_machine_price_list = item["id"] == "mtech-mpack"
         products.append({
             "_id": item["id"], "article_no": item.get("article_no"), "sku": item.get("sku", item["id"].upper()),
             "name": type_row["name"], "category_id": "mpacks", "description": item.get("description", ""),
+            "commercial_unit": "box",
             "pricing": {"master_currency": "EUR", "pricing_type": price["pricing_type"], "unit": price["unit"],
                         "price": price.get("price_eur"), "dimension_prices": price.get("dimension_prices_eur", {})},
             "tax": {"mode": None, "rate": None, "override_enabled": False}, "discount_rules": _discount_rules(),
@@ -209,8 +254,12 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
                 "underpacking_type": type_row["name"], "machine_options": mpack_options.get("machines", []),
                 "thicknesses": [{"label": f"{row['micron']} micron", "value": row["micron"]} for row in thickness_catalog],
                 "size_presets": thickness_catalog, "dimension_units": mpack_options.get("dimension_units", []),
+                "machine_price_list": price_list_meta if uses_machine_price_list else None,
+                "machine_sizes": mpack_machine_sizes if uses_machine_price_list else [],
                 "complete_containers": mpack_options.get("rules", {}).get("complete_containers", False),
-                "fingerprint_fields": ["machine", "thickness_micron", "length", "width", "dimension_unit", "underpacking_type"],
+                "fingerprint_fields": [
+                    "manufacturer", "machine_model", "width_mm", "length_mm", "thickness_mm", "underpacking_type",
+                ] if uses_machine_price_list else ["machine", "thickness_micron", "length", "width", "dimension_unit", "underpacking_type"],
             },
             "pricing_status": price.get("status", "pending"), "active": item.get("active", True), "source": "canonical_catalogue",
         })
@@ -222,6 +271,7 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         products.append({
             "_id": item["id"], "article_no": item.get("article_no"), "sku": item.get("sku", item["id"].upper()),
             "name": item["name"], "category_id": "chemicals", "description": item.get("description", ""),
+            "commercial_unit": "litre",
             "pricing": {"master_currency": "EUR", "pricing_type": price["pricing_type"], "unit": price["unit"],
                         "price": price.get("price_eur"), "package_prices": price.get("package_prices_eur", {})},
             "tax": {"mode": None, "rate": None, "override_enabled": False}, "discount_rules": _discount_rules(),
@@ -236,6 +286,7 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
 
     return {
         "families": families, "products": products, "blanket_bars": blanket_bars,
+        "machines": machine_rows,
         "blanket_categories": blanket_categories,
         "mpack_types": [{"_id": row["id"], **row, "active": True} for row in mpack_types_source],
         "chemical_categories": [{"_id": row["id"], **row, "active": True} for row in chemical_categories_source],
@@ -332,7 +383,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
         existing = store.find_one("products", {"_id": item["_id"]})
         if existing:
             # MongoDB is authoritative after an administrator changes pricing.
-            if store.count("price_history", {"product_id": item["_id"]}):
+            if store.count("price_history", {"product_id": item["_id"]}) and not item.get("configuration", {}).get("machine_sizes"):
                 item["pricing"] = existing.get("pricing", item["pricing"])
                 item["tax"] = existing.get("tax", item["tax"])
                 item["pricing_status"] = existing.get("pricing_status", item["pricing_status"])
@@ -372,6 +423,20 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             store.update_one("blanket_categories", {"_id": item["_id"]}, item)
         else:
             store.insert_one("blanket_categories", item)
+
+    # Machine names are canonical data, shared by blanket configuration and
+    # the /machines API. User-recorded machines are intentionally preserved.
+    for item in catalog["machines"]:
+        machine = {
+            "_id": item["id"], "name": item["name"],
+            "manufacturer": item.get("manufacturer"),
+            "machine_model": item.get("machine_model"),
+            "active": True, "source": "canonical_catalogue",
+        }
+        if store.find_one("machines", {"_id": machine["_id"]}):
+            store.update_one("machines", {"_id": machine["_id"]}, machine)
+        else:
+            store.insert_one("machines", machine)
 
     # Older demo seeds contained fabricated FX values. They are not valid
     # exchange-rate history and must never be used as a fallback.
@@ -413,7 +478,6 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 "payment": "Prepayment against Pro-Forma.",
                 "despatch": "Between 1 Week - 8 Weeks.",
                 "duties_taxes_bank_charges": "To be borne by the consignee.",
-                "incoterms": "ICC INCOTERMS 2020: Ex Works unless specified.",
             },
             "discount_rules": {
                 "bulk_rolls": {"enabled": False, "minimum_quantity": 10, "discount_percent": 0, "applies_to_categories": ["blankets"]},
@@ -421,7 +485,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "surcharge_rules": {
                 "cut_format": {"enabled": False, "percent": 5, "applies_to_categories": ["blankets"]},
             },
-            "payment_terms": ["Advance", "POD", "15 Days", "30 Days"],
+                "payment_terms": ["Advance", "POD", "30 Days from receipt", "60 Days", "Custom"],
             "transport_options": ["by_consignee", "by_moneda_team"],
             "post_order_follow_up_days": [15, 25],
         })
@@ -451,7 +515,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "surcharge_rules": surcharge_rules,
             "discount_rules": discount_rules,
             "quotation_pricing_policy": "eur_only_no_tax_v1",
-            "payment_terms": ["Advance", "POD", "15 Days", "30 Days"],
+            "payment_terms": ["Advance", "POD", "30 Days from receipt", "60 Days", "Custom"],
             "transport_options": ["by_consignee", "by_moneda_team"],
         })
 
@@ -516,3 +580,126 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     "customer_code": (store.find_one("customers", {"_id": customer_id}) or {}).get("customer_code") or customer_code(name),
                     "is_issuer": customer_id == company_id,
                 })
+
+
+def sync_underpacking_catalog(store: Store, data_directory: Path) -> dict[str, int]:
+    """Reconcile live Underpacking rows without reseeding the whole app.
+
+    Production MongoDB is normally not fully auto-seeded on every restart.
+    Underpacking is nevertheless a canonical, source-owned catalog: stale
+    Polipack/Mark3ZET rows must not remain selectable and MPack must carry the
+    structured machine price list. This focused, idempotent reconciliation
+    keeps historical cart/quotation documents intact while updating only the
+    Underpacking collections.
+    """
+    catalog = _catalog_seed(data_directory)
+    canonical_products = [row for row in catalog["products"] if row.get("category_id") == "mpacks"]
+    canonical_ids = {row["_id"] for row in canonical_products}
+    deactivated = 0
+
+    for existing in store.list("products", {"category_id": "mpacks"}, limit=100_000)[0]:
+        if existing.get("_id") not in canonical_ids and (
+            existing.get("active", True) or existing.get("calculator_enabled", True)
+        ):
+            store.update_one("products", {"_id": existing["_id"]}, {
+                "active": False, "available": False, "catalog_visible": False,
+                "calculator_enabled": False,
+            })
+            deactivated += 1
+
+    upserted = 0
+    for item in canonical_products:
+        # The structured MPack matrix is canonical and server-owned. Replacing
+        # this product document clears stale generic/pending configuration.
+        if store.find_one("products", {"_id": item["_id"]}):
+            store.update_one("products", {"_id": item["_id"]}, item)
+        else:
+            store.insert_one("products", item)
+        upserted += 1
+
+    canonical_types = catalog["mpack_types"]
+    canonical_type_ids = {row["_id"] for row in canonical_types}
+    for existing in store.list("mpack_types", limit=10_000)[0]:
+        if existing.get("_id") not in canonical_type_ids:
+            store.delete_one("mpack_types", {"_id": existing["_id"]})
+    for item in canonical_types:
+        if store.find_one("mpack_types", {"_id": item["_id"]}):
+            store.update_one("mpack_types", {"_id": item["_id"]}, item)
+        else:
+            store.insert_one("mpack_types", item)
+
+    options = next((row for row in catalog["catalog_options"] if row.get("_id") == "mpacks"), None)
+    if options:
+        if store.find_one("catalog_options", {"_id": "mpacks"}):
+            store.update_one("catalog_options", {"_id": "mpacks"}, options)
+        else:
+            store.insert_one("catalog_options", options)
+
+    return {"deactivated": deactivated, "canonical_products": upserted}
+
+
+def sync_blanket_catalog(store: Store, data_directory: Path) -> dict[str, int]:
+    """Reconcile blanket products so Mongo and the JSON catalogue share IDs."""
+    catalog = _catalog_seed(data_directory)
+    canonical = [row for row in catalog["products"] if row.get("category_id") == "blankets"]
+    ids = {row["_id"] for row in canonical}
+    deactivated = 0
+    for existing in store.list("products", {"category_id": "blankets"}, limit=100_000)[0]:
+        if existing.get("_id") not in ids and existing.get("active", True):
+            store.update_one("products", {"_id": existing["_id"]}, {"active": False, "available": False, "catalog_visible": False})
+            deactivated += 1
+    upserted = 0
+    for item in canonical:
+        if store.find_one("products", {"_id": item["_id"]}):
+            store.update_one("products", {"_id": item["_id"]}, item)
+        else:
+            store.insert_one("products", item)
+        upserted += 1
+    return {"deactivated": deactivated, "canonical_products": upserted}
+
+
+def sync_machine_catalog(store: Store, data_directory: Path) -> int:
+    """Load the dedicated machine JSON into MongoDB on every startup."""
+    document = _load(data_directory / "machines.json")
+    rows = document.get("machines", [])
+    canonical_ids = {row.get("id") for row in rows}
+    if any(not value for value in canonical_ids) or len(canonical_ids) != len(rows):
+        raise ValueError("Machine IDs must be present and unique")
+    updated = 0
+    for row in rows:
+        machine = {
+            "_id": row["id"], "name": row["name"],
+            "manufacturer": row.get("manufacturer"),
+            "machine_model": row.get("machine_model"),
+            "active": True, "source": "canonical_catalogue",
+        }
+        if store.find_one("machines", {"_id": machine["_id"]}):
+            store.update_one("machines", {"_id": machine["_id"]}, machine)
+        else:
+            store.insert_one("machines", machine)
+        updated += 1
+    # Existing production blanket documents may predate machines.json. Keep
+    # their configuration in sync so product detail, selectors and pricing all
+    # consume the same canonical machine IDs without requiring a full reseed.
+    machine_options = [
+        {"id": row["_id"], "name": row["name"], "manufacturer": row.get("manufacturer"), "machine_model": row.get("machine_model")}
+        for row in store.list("machines", {"active": {"$ne": False}}, limit=2000, sort="name", direction=1)[0]
+    ]
+    for product in store.list("products", {"category_id": "blankets"}, limit=100_000)[0]:
+        configuration = dict(product.get("configuration") or {})
+        if configuration.get("machine_options") != machine_options:
+            configuration["machine_options"] = machine_options
+            store.update_one("products", {"_id": product["_id"]}, {"configuration": configuration})
+    return updated
+
+
+def sync_commercial_units(store: Store) -> int:
+    """Backfill the canonical commercial unit on existing product documents."""
+    units = {"blankets": "pc", "mpacks": "box", "chemicals": "litre"}
+    updated = 0
+    for category_id, commercial_unit in units.items():
+        for product in store.list("products", {"category_id": category_id}, limit=100_000)[0]:
+            if product.get("commercial_unit") != commercial_unit:
+                store.update_one("products", {"_id": product["_id"]}, {"commercial_unit": commercial_unit})
+                updated += 1
+    return updated

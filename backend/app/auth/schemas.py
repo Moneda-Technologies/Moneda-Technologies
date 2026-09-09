@@ -46,5 +46,5 @@ class SignupVerifyEmail(BaseModel):
 
 class SignupComplete(BaseModel):
     pending_signup_id: str = Field(min_length=1, max_length=120)
-    password: str = Field(min_length=10, max_length=200)
-    confirm_password: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    confirm_password: str = Field(min_length=8, max_length=200)

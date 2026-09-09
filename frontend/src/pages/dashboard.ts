@@ -10,9 +10,8 @@ export async function dashboardPage(): Promise<HTMLElement> {
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(6);
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
-  if (!customerCompany) { body.innerHTML = emptyState("building-2", "No customer selected", "Select a customer before viewing its workspace."); return page; }
   try {
-    const [data, rates] = await Promise.all([dashboardApi.get(customerCompany._id), rateApi.get()]);
+    const [data, rates] = await Promise.all([dashboardApi.get(customerCompany?._id), rateApi.get()]);
     const metrics = [
       ["Revenue", formatMoney(data.metrics.revenue, appStore.state.currency), "trending-up", "Across active orders"],
       ["Open quotations", String(data.metrics.open_quotations), "file-clock", `${data.metrics.quotations} total quotations`],

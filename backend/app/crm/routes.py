@@ -5,7 +5,10 @@ from datetime import datetime, timedelta
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import current_user, customer_id_from, enforce_customer, permission_required
+from app.middleware.access import (
+    can_view_all_customers, current_user, customer_id_from, customer_record,
+    enforce_customer, permitted_customer_query, permission_required, selected_customer_id,
+)
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -33,20 +36,134 @@ def _next_due(value: object, frequency: str, custom_interval_days: object = 1) -
     return (parsed + timedelta(days=days)).date().isoformat() if days else None
 
 
-def _list_resource(collection: str, customer_id: str, status: str | None = None):
-    if not enforce_customer(customer_id):
+def _record_customer_id(row: dict) -> str | None:
+    value = row.get("customer_id") or row.get("customer_company_id") or row.get("company_id")
+    return str(value) if value else None
+
+
+def _crm_scope(customer_id: str | None = None) -> dict:
+    """Build an authorization scope without requiring a global customer context."""
+    user = current_user() or {}
+    if customer_id:
+        if not enforce_customer(customer_id):
+            return {"_id": "__access_denied__"}
+        return {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    if can_view_all_customers(user):
+        return {}
+    store = current_app.extensions["store"]
+    customer_rows, _ = store.list("customers", permitted_customer_query(user), limit=5000)
+    customer_ids = [str(row.get("_id")) for row in customer_rows if row.get("_id") and not row.get("is_issuer")]
+    owner_id = user.get("_id")
+    clauses = [{field: owner_id} for field in ("owner_user_id", "assigned_to", "salesperson_id") if owner_id]
+    if customer_ids:
+        clauses.extend({field: {"$in": customer_ids}} for field in ("customer_id", "customer_company_id", "company_id"))
+    return {"$or": clauses or [{"_id": "__no_access__"}]}
+
+
+def _initials(name: str | None) -> str:
+    compact = "".join(part for part in str(name or "").strip() if part.isalnum())
+    return compact[:2].upper() or "—"
+
+
+def _enriched_leads(rows: list[dict]) -> list[dict]:
+    store = current_app.extensions["store"]
+    customers, _ = store.list("customers", {}, limit=5000)
+    companies, _ = store.list("companies", {}, limit=5000)
+    customer_map = {str(row.get("_id")): row for row in [*companies, *customers] if row.get("_id")}
+    users, _ = store.list("users", {}, limit=1000)
+    user_map = {str(row.get("_id")): row for row in users if row.get("_id")}
+    result = []
+    for source in rows:
+        row = {**source}
+        customer_id = _record_customer_id(row)
+        # Historical leads created from a quotation/order may have a missing
+        # customer_id but still carry an authoritative relationship. Repair
+        # only those explicit references; never infer by company-name similarity.
+        if not customer_id and row.get("quotation_id"):
+            quotation = store.find_one("quotations", {"_id": row.get("quotation_id")})
+            customer_id = _record_customer_id(quotation or {})
+        if not customer_id and row.get("order_id"):
+            order = store.find_one("orders", {"_id": row.get("order_id")})
+            customer_id = _record_customer_id(order or {})
+        if customer_id and not _record_customer_id(source):
+            repaired = store.update_one("leads", {"_id": source.get("_id")}, {"customer_id": customer_id})
+            if repaired:
+                current_app.logger.info("crm relationship repaired lead_id=%s customer_id=%s source=authoritative_reference", source.get("_id"), customer_id)
+        customer = customer_map.get(customer_id or "")
+        if customer and customer.get("is_issuer"):
+            customer_id, customer = None, None
+        owner_id = row.get("owner_user_id") or row.get("assigned_to") or row.get("salesperson_id")
+        owner = user_map.get(str(owner_id)) if owner_id else None
+        owner_name = (owner or {}).get("name") or row.get("salesperson_name") or row.get("owner_name")
+        row["customer_id"] = customer_id
+        row["customer_name"] = (customer or {}).get("name") or (customer or {}).get("company_name")
+        row["customer_country"] = (customer or {}).get("country_name") or (customer or {}).get("country")
+        row["customer_region"] = (customer or {}).get("continent") or ((customer or {}).get("region") or {}).get("continent")
+        row["owner_user_id"] = str(owner_id) if owner_id else None
+        row["owner_name"] = owner_name
+        row["owner_email"] = (owner or {}).get("email")
+        row["owner_initials"] = _initials(owner_name)
+        row["value_eur"] = float(row.get("value_eur", row.get("estimated_value", row.get("value", 0))) or 0)
+        row["currency"] = "EUR"
+        result.append(row)
+    return result
+
+
+def _list_resource(collection: str, customer_id: str | None, status: str | None = None):
+    scope = _crm_scope(customer_id)
+    if scope.get("_id") == "__access_denied__":
         return None
-    query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    store = current_app.extensions["store"]
+    rows, _ = store.list(collection, scope, limit=5000, sort="created_at", direction=-1)
     if status:
-        query["status"] = status
-    rows, total = current_app.extensions["store"].list(collection, query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
-    return {"items": rows, "total": total}
+        rows = [row for row in rows if str(row.get("status") or row.get("stage") or "") == status]
+    if collection == "leads":
+        rows = _enriched_leads(rows)
+    page = max(int(request.args.get("page", 1)), 1)
+    limit = min(max(int(request.args.get("limit", 25)), 1), 100)
+    total = len(rows)
+    return {"items": rows[(page - 1) * limit:page * limit], "total": total, "pagination": {"page": page, "limit": limit, "total": total}}
 
 
 @bp.get("/leads")
 @permission_required("crm.view")
 def list_leads():
-    result = _list_resource("leads", request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id", ""), request.args.get("status"))
+    requested = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
+    customer_id = None if str(requested or "").lower() in {"", "all", "all_customers"} else str(requested)
+    customer_id = customer_id if requested else selected_customer_id()
+    scope = _crm_scope(customer_id)
+    result = None if scope.get("_id") == "__access_denied__" else {}
+    if result is not None:
+        rows, _ = current_app.extensions["store"].list("leads", scope, limit=5000, sort="created_at", direction=-1)
+        rows = _enriched_leads(rows)
+        requested_stage = request.args.get("status") or request.args.get("stage")
+        if requested_stage:
+            rows = [row for row in rows if str(row.get("status") or row.get("stage") or "") == requested_stage]
+        def _number(value: str | None) -> float | None:
+            try: return float(value) if value not in (None, "") else None
+            except (TypeError, ValueError): return None
+        owner = request.args.get("owner_id") or request.args.get("owner_user_id")
+        country = request.args.get("country", "").strip().casefold()
+        region = request.args.get("region", "").strip().casefold()
+        source = request.args.get("source", "").strip().casefold()
+        min_value, max_value = _number(request.args.get("min_value")), _number(request.args.get("max_value"))
+        date_from, date_to = request.args.get("date_from"), request.args.get("date_to")
+        filtered = []
+        for row in rows:
+            value = float(row.get("value_eur", 0) or 0)
+            created = str(row.get("created_at", ""))[:10]
+            if owner and str(row.get("owner_user_id")) != owner: continue
+            if country and country not in str(row.get("customer_country") or "").casefold(): continue
+            if region and region not in str(row.get("customer_region") or "").casefold(): continue
+            if source and source not in str(row.get("source") or "").casefold(): continue
+            if min_value is not None and value < min_value: continue
+            if max_value is not None and value > max_value: continue
+            if date_from and created < date_from: continue
+            if date_to and created > date_to: continue
+            filtered.append(row)
+        page = max(int(request.args.get("page", 1)), 1); limit = min(max(int(request.args.get("limit", 25)), 1), 100)
+        result["total"] = len(filtered); result["pagination"] = {"page": page, "limit": limit, "total": len(filtered)}
+        result["items"] = filtered[(page - 1) * limit:page * limit]
     return success(result) if result is not None else failure("Customer access denied", status=403)
 
 
@@ -55,15 +172,19 @@ def list_leads():
 def create_lead():
     payload = request.get_json(silent=True) or {}
     customer_id = customer_id_from(payload)
-    if not enforce_customer(customer_id):
+    if customer_id and not enforce_customer(customer_id):
         return failure("Customer access denied", status=403)
+    user = current_user() or {}
     payload["customer_id"] = customer_id
     if payload.get("status", "Lead") not in LEAD_STATUSES:
         return failure("Invalid lead status", status=422)
     payload.setdefault("status", "Lead")
-    payload.setdefault("assigned_to", (current_user() or {}).get("_id"))
-    payload.setdefault("salesperson_id", payload["assigned_to"])
-    payload.setdefault("salesperson_name", (current_user() or {}).get("name"))
+    payload["owner_user_id"] = user.get("_id")
+    payload["assigned_to"] = user.get("_id")
+    payload["salesperson_id"] = user.get("_id")
+    payload["salesperson_name"] = user.get("name")
+    payload["value_eur"] = float(payload.get("value_eur", payload.get("estimated_value", payload.get("value", 0))) or 0)
+    payload["currency"] = "EUR"
     payload.setdefault("activity", [])
     row = current_app.extensions["store"].insert_one("leads", payload)
     audit("lead.create", "lead", str(row["_id"]))
@@ -77,13 +198,18 @@ def update_lead(lead_id: str):
     existing = store.find_one("leads", {"_id": lead_id})
     if not existing:
         return failure("Lead not found", status=404)
-    if not enforce_customer(existing.get("customer_id") or existing.get("customer_company_id") or existing.get("company_id")):
+    record_customer = _record_customer_id(existing)
+    user = current_user() or {}
+    if record_customer and not enforce_customer(record_customer) and str(existing.get("owner_user_id") or existing.get("assigned_to")) != str(user.get("_id")):
         return failure("Customer access denied", status=403)
     changes = request.get_json(silent=True) or {}
     if changes.get("status") and changes["status"] not in LEAD_STATUSES:
         return failure("Invalid lead status", status=422)
-    allowed = {"quotation_id", "assigned_to", "estimated_value", "currency", "source", "status", "notes", "follow_up_date", "activity"}
+    allowed = {"quotation_id", "estimated_value", "value_eur", "source", "status", "notes", "follow_up_date", "next_action", "next_action_date", "activity"}
     filtered = {key: value for key, value in changes.items() if key in allowed}
+    if "value_eur" in filtered or "estimated_value" in filtered:
+        filtered["value_eur"] = float(filtered.get("value_eur", filtered.get("estimated_value", 0)) or 0)
+        filtered["currency"] = "EUR"
     if "status" in filtered and filtered["status"] != existing.get("status"):
         filtered["activity"] = [*existing.get("activity", []), {"type": "status_changed", "from": existing.get("status"), "to": filtered["status"], "at": utcnow(), "by": (current_user() or {}).get("_id")}]
     row = store.update_one("leads", {"_id": lead_id}, filtered)
@@ -94,7 +220,10 @@ def update_lead(lead_id: str):
 @bp.get("/reminders")
 @permission_required("reminders.view")
 def list_reminders():
-    result = _list_resource("reminders", request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id", ""), request.args.get("status"))
+    requested = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
+    customer_id = None if str(requested or "").lower() in {"", "all", "all_customers"} else str(requested)
+    customer_id = customer_id if requested else selected_customer_id()
+    result = _list_resource("reminders", customer_id, request.args.get("status"))
     return success(result) if result is not None else failure("Customer access denied", status=403)
 
 

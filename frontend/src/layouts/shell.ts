@@ -13,9 +13,9 @@ type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
 let fxSnapshot: FxSnapshot | null = null;
 let fxRequest: Promise<FxSnapshot | null> | null = null;
 
-function loadFxSnapshot(): Promise<FxSnapshot | null> {
-  if (fxSnapshot) return Promise.resolve(fxSnapshot);
-  if (!fxRequest) fxRequest = rateApi.get().then((value) => { fxSnapshot = value; return value; }).catch(() => { fxRequest = null; return null; });
+function loadFxSnapshot(force = false): Promise<FxSnapshot | null> {
+  if (fxSnapshot && !force) return Promise.resolve(fxSnapshot);
+  if (!fxRequest) fxRequest = rateApi.get(force).then((value) => { fxSnapshot = value; return value; }).catch(() => fxSnapshot).finally(() => { fxRequest = null; });
   return fxRequest;
 }
 
@@ -49,10 +49,10 @@ function renderFxPopover(popover: HTMLElement): void {
 }
 
 const navItems: NavItem[] = [
+  { label: "Dashboard", path: "/dashboard", icon: "layout-dashboard", permission: "dashboard.view", section: "Workspace" },
   { label: "Select Customer", path: "/customer-selection", icon: "building-2", permission: "companies.view", section: "Workspace" },
   { label: "Calculator", path: "/calculator", icon: "calculator", permission: "calculator.view" },
   { label: "Cart", path: "/cart", icon: "shopping-cart", permission: "cart.view" },
-  { label: "Dashboard", path: "/dashboard", icon: "layout-dashboard", permission: "dashboard.view" },
   { label: "Customers", path: "/customers", icon: "building-2", permission: "customers.view" },
   { label: "Quotations", path: "/quotations", icon: "file-text", permission: "quotations.view" },
   { label: "Orders", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
@@ -89,7 +89,7 @@ export function renderShell(): HTMLElement {
         <button class="icon-button mobile-menu" aria-label="Open navigation" title="Open navigation"><i data-lucide="menu"></i></button>
         <button class="search-trigger"><i data-lucide="search"></i><span>Search customers, quotes, products…</span><kbd>Ctrl K</kbd></button>
         <div class="top-actions">
-          ${state.customer ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer">${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
+          ${state.customers.length ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer"><option value="" ${!state.activeCustomerId ? "selected" : ""}>All Customers</option>${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
           <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Display Currency</span><select id="currency-switcher" aria-label="Select display currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
           <div class="notification-control"><button class="icon-button" id="notification-button" aria-label="Notifications" title="Notifications" aria-expanded="false"><i data-lucide="bell"></i><span class="notification-dot" data-notification-count>${state.notificationCount || ""}</span></button><div id="notification-popover" class="notification-popover" role="dialog" aria-label="Notifications" hidden></div></div>
           <div class="user-menu-control"><button class="avatar avatar-button" id="user-menu-button" aria-label="Open user menu" aria-expanded="false">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button><div id="user-menu" class="user-menu" role="menu" hidden><div class="user-menu-head"><strong>${escapeHtml(state.user?.name ?? "User")}</strong><span>${escapeHtml(state.user?.role_display_name ?? "User")}</span></div><a href="/profile" data-route="/profile" role="menuitem"><i data-lucide="user-round"></i>Profile</a><button type="button" data-open-notifications role="menuitem"><i data-lucide="bell"></i>Notifications</button><div class="user-menu-divider"></div><button type="button" data-sign-out role="menuitem"><i data-lucide="log-out"></i>Sign out</button></div></div>
@@ -128,10 +128,17 @@ export function renderShell(): HTMLElement {
   }));
   root.querySelector<HTMLSelectElement>("#company-switcher")?.addEventListener("change", async (event) => {
     const selected = state.customers.find((customer) => (customer.customer_id ?? customer._id) === (event.target as HTMLSelectElement).value) ?? null;
-    if (!selected) return;
     const select = event.target as HTMLSelectElement;
     select.disabled = true;
     try {
+      if (!selected) {
+        await customerCompanyApi.clearSelection();
+        localStorage.removeItem("moneda-active-customer-id");
+        appStore.set({ customer: null, activeCustomerId: null, customerCompany: null, company: null, currency: "EUR", cartCount: 0 });
+        root.replaceWith(renderShell());
+        window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname }));
+        return;
+      }
       if (state.customer && (state.customer.customer_id ?? state.customer._id) !== (selected.customer_id ?? selected._id)) {
         const currentCustomerId = state.customer.customer_id ?? state.customer._id;
         const currentCart = await cartApi.get(currentCustomerId, state.currency).catch(() => null);
@@ -163,10 +170,11 @@ export function renderShell(): HTMLElement {
   let closeTimer = 0;
   const setFxOpen = (open: boolean) => { window.clearTimeout(closeTimer); fxControl?.classList.toggle("is-open", open); };
   const scheduleFxClose = () => { window.clearTimeout(closeTimer); closeTimer = window.setTimeout(() => setFxOpen(false), 100); };
-  fxControl?.addEventListener("mouseenter", () => setFxOpen(true));
+  const refreshFx = () => { setFxOpen(true); void loadFxSnapshot(true).then((snapshot) => { if (snapshot) appStore.set({ fxRates: snapshot.rates }); renderFx(); }); };
+  fxControl?.addEventListener("mouseenter", refreshFx);
   fxControl?.addEventListener("mouseleave", scheduleFxClose);
-  currencySelect?.addEventListener("focus", () => setFxOpen(true));
-  currencySelect?.addEventListener("click", () => setFxOpen(true));
+  currencySelect?.addEventListener("focus", refreshFx);
+  currencySelect?.addEventListener("click", refreshFx);
   currencySelect?.addEventListener("change", (event) => {
     const nextCurrency = (event.target as HTMLSelectElement).value as "USD" | "INR" | "EUR";
     const previousCurrency = appStore.state.currency;
@@ -189,7 +197,7 @@ export function renderShell(): HTMLElement {
   document.addEventListener("click", closeFxOutside);
   const renderFx = () => { if (fxPopover) renderFxPopover(fxPopover); };
   renderFx();
-  void loadFxSnapshot().then((snapshot) => {
+  void loadFxSnapshot(true).then((snapshot) => {
     if (snapshot) appStore.set({ fxRates: snapshot.rates });
     renderFx();
   });

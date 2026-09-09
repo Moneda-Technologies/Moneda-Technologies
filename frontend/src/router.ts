@@ -45,7 +45,9 @@ const routes: Record<string, PageFactory> = {
 };
 
 export async function navigate(path: string, push = true): Promise<void> {
-  let resolved = path === "/" || path === "/login" ? "/customer-selection" : path.replace(/\/$/, "");
+  const query = path.includes("?") ? path.slice(path.indexOf("?")) : "";
+  const routePath = path.split("?", 1)[0];
+  let resolved = routePath === "/" || routePath === "/login" ? "/customer-selection" : routePath.replace(/\/$/, "");
   const selectingCustomer = resolved === CUSTOMER_SELECTION_PATH || resolved === "/company-selection";
   if (selectingCustomer && hasCustomerContext()) {
     await customerCompanyApi.clearSelection().catch(() => undefined);
@@ -56,7 +58,7 @@ export async function navigate(path: string, push = true): Promise<void> {
     toast(customerGuardMessage(resolved), "info");
     resolved = CUSTOMER_SELECTION_PATH;
   }
-  if (push && location.pathname !== resolved) history.pushState({}, "", resolved);
+  if (push && `${location.pathname}${location.search}` !== `${resolved}${query}`) history.pushState({}, "", `${resolved}${query}`);
   const main = document.querySelector<HTMLElement>("#main-content");
   if (!main) return;
   main.innerHTML = '<div class="page-loading"><span></span><p>Loading workspace…</p></div>';

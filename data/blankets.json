@@ -20,10 +20,38 @@
       "active": true
     },
     {
-      "id": "image_print_master_bl_gr",
+      "id": "image_print_master_bl",
       "article_no": "102",
       "sku": "MT-102",
-      "name": "Image Print Master BL / GR",
+      "name": "Image Print Master BL",
+      "description": "Image Print Master BL commercial printing blanket",
+      "category_ids": [
+        "mini_offset",
+        "commercial_sheetfed"
+      ],
+      "application": "Commercial Sheet Fed up to 4 Colour / 8000 Sheets per Hour",
+      "variants": [
+        {
+          "thickness_mm": 1.96,
+          "article_no": "102",
+          "standard_widths_mm": [
+            690,
+            780,
+            840,
+            1040,
+            1070,
+            1680
+          ]
+        }
+      ],
+      "active": true
+    },
+    {
+      "id": "image_print_master_gr",
+      "article_no": "102",
+      "sku": "MT-102",
+      "name": "Image Print Master GR",
+      "description": "Image Print Master GR commercial printing blanket",
       "category_ids": [
         "mini_offset",
         "commercial_sheetfed"

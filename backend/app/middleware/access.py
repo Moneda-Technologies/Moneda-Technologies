@@ -106,6 +106,82 @@ def can_view_all_customers(user: dict[str, Any] | None = None) -> bool:
     return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "customers.view_all" in user.get("permissions", [])
 
 
+def customer_access_ids_for_user(user_id: str | None, *, include_created: bool = True) -> list[str]:
+    """Return canonical customer IDs accessible to one non-global user.
+
+    ``customers.assigned_user_ids`` is the authoritative relationship. The
+    creator relationship is included so an existing owner cannot lose access
+    merely because an older record predates the assignment array.
+    """
+    if not user_id:
+        return []
+    store = current_app.extensions["store"]
+    clauses: list[dict[str, Any]] = [{"assigned_user_ids": user_id}]
+    if include_created:
+        clauses.append({"created_by_user_id": user_id})
+    rows, _ = store.list("customers", {
+        "active": {"$ne": False}, "status": {"$ne": "archived"}, "$or": clauses,
+    }, limit=100_000, sort="name", direction=1)
+    return list(dict.fromkeys(str(row["_id"]) for row in rows if row.get("_id") and not row.get("is_issuer")))
+
+
+def customer_access_summary(user: dict[str, Any] | None = None) -> dict[str, Any]:
+    user = user or current_user() or {}
+    if can_view_all_customers(user):
+        return {"global": True, "customer_ids": [], "count": None}
+    ids = customer_access_ids_for_user(str(user.get("_id")) if user.get("_id") else None)
+    return {"global": False, "customer_ids": ids, "count": len(ids)}
+
+
+def repair_customer_assignments(store) -> int:
+    """Backfill only provable stored creator/assignment relationships.
+
+    No name/email guessing is performed. Legacy user arrays are treated as
+    explicit relationship records, and creator fields are used only when they
+    contain an existing user ID. Existing assignment members are kept.
+    """
+    rows, _ = store.list("customers", limit=100_000)
+    customer_by_id = {
+        str(row.get("_id")): row for row in rows
+        if row.get("_id") and not row.get("is_issuer")
+    }
+    users, _ = store.list("users", limit=100_000)
+    explicit_by_customer: dict[str, list[str]] = {}
+    for user in users:
+        user_id = str(user.get("_id") or "").strip()
+        if not user_id:
+            continue
+        legacy_ids: list[Any] = []
+        for field in ("customer_ids", "customer_company_ids", "company_ids"):
+            values = user.get(field)
+            if isinstance(values, list):
+                legacy_ids.extend(values)
+        for value in legacy_ids:
+            customer_id = str(value).strip()
+            if customer_id in customer_by_id:
+                members = explicit_by_customer.setdefault(customer_id, [])
+                if user_id not in members:
+                    members.append(user_id)
+    changed = 0
+    for row in rows:
+        customer_id = str(row.get("_id") or "").strip()
+        if not customer_id or row.get("is_issuer"):
+            continue
+        creator = row.get("created_by_user_id") or row.get("owner_user_id") or row.get("created_by")
+        if isinstance(creator, dict):
+            creator = creator.get("_id") or creator.get("user_id")
+        assigned = [str(value) for value in (row.get("assigned_user_ids") or []) if value]
+        additions = [value for value in explicit_by_customer.get(customer_id, []) if value not in assigned]
+        if isinstance(creator, str) and store.find_one("users", {"_id": creator}) and creator not in assigned:
+            additions.append(creator)
+        if not additions:
+            continue
+        updated = list(dict.fromkeys([*assigned, *additions]))
+        if store.update_one("customers", {"_id": row.get("_id")}, {"assigned_user_ids": updated}):
+            changed += 1
+    return changed
+
+
 def can_view_all_quotations(user: dict[str, Any] | None = None) -> bool:
     """Return whether the central permission model grants global history access."""
     user = user or current_user() or {}
@@ -132,10 +208,7 @@ def permitted_customer_query(user: dict[str, Any] | None = None) -> dict[str, An
     if can_view_all_customers(user):
         return query
     user_id = user.get("_id")
-    legacy_ids = user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])
     query["$or"] = [{"assigned_user_ids": user_id}, {"created_by_user_id": user_id}]
-    if legacy_ids:
-        query["$or"].append({"_id": {"$in": legacy_ids}})
     return query
 
 
@@ -147,9 +220,9 @@ def enforce_customer(customer_id: str | None) -> bool:
         return False
     if can_view_all_customers(user):
         return True
-    if customer_id in (user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", [])):
-        return True
-    return customer_id in (customer_record(customer_id) or {}).get("assigned_user_ids", []) or (customer_record(customer_id) or {}).get("created_by_user_id") == user.get("_id")
+    customer = customer_record(customer_id) or {}
+    assigned = {str(value) for value in (customer.get("assigned_user_ids") or []) if value}
+    return str(user.get("_id") or "") in assigned or str(customer.get("created_by_user_id") or "") == str(user.get("_id") or "")
 
 
 def enforce_company(company_id: str | None) -> bool:

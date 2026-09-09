@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import os
 from pathlib import Path
 
@@ -41,22 +42,28 @@ class Config:
     # is never silently reseeded during a web-process restart.
     AUTO_SEED = env_bool("AUTO_SEED", False)
     DEV_AUTH_BYPASS = env_bool("DEV_AUTH_BYPASS", False)
+    ALLOWED_SIGNUP_EMAIL_DOMAINS = tuple(
+        part.strip().lower() for part in os.getenv(
+            "ALLOWED_SIGNUP_EMAIL_DOMAINS", "monedatechnologies.com,chemo.in",
+        ).split(",") if part.strip()
+    )
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_PATH = "/"
     SESSION_COOKIE_NAME = "session"
     SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", False)
     SESSION_REFRESH_EACH_REQUEST = True
-    PERMANENT_SESSION_LIFETIME = 60 * 60 * 12
+    AUTH_SESSION_LIFETIME_DAYS = max(1, int(os.getenv("AUTH_SESSION_LIFETIME_DAYS", "30")))
+    PERMANENT_SESSION_LIFETIME = timedelta(days=AUTH_SESSION_LIFETIME_DAYS)
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
     JSON_SORT_KEYS = False
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3005")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:3005")
     DATA_DIRECTORY = env_path("DATA_DIRECTORY", PROJECT_ROOT / "data")
     PDF_DIRECTORY = env_path("PDF_DIRECTORY", PROJECT_ROOT / "generated" / "quotations")
-    # auto prefers WeasyPrint when its native runtime is available and uses
-    # the portable ReportLab renderer otherwise. Set weasyprint to fail fast.
-    PDF_RENDERER = os.getenv("PDF_RENDERER", "auto").strip().lower()
+    # ReportLab is the single quotation renderer used by preview, download,
+    # print, and email attachments.
+    PDF_RENDERER = "reportlab"
     UPLOAD_DIRECTORY = env_path("UPLOAD_DIRECTORY", PROJECT_ROOT / "uploads")
     MAIL_TEST_TO = os.getenv("MAIL_TEST_TO", "")
     # Zoho Mail API OAuth.  These values are server-side only; never expose

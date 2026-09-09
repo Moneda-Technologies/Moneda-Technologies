@@ -1,0 +1,5872 @@
+{
+  "schema_version": 1,
+  "price_list": {
+    "id": "mpack-2026-h2-q3-q4",
+    "name": "MPack Price List 2026 H2 / Q3 / Q4",
+    "currency": "EUR",
+    "valid_from": "2026-07-01",
+    "valid_until": "2026-12-31",
+    "source_document": "MPack_Export_Pricelist_Euro_2026_Q4.pdf",
+    "quantity_unit": "box"
+  },
+  "thicknesses": [
+    {
+      "thickness_mm": 0.05,
+      "thickness_micron": 50,
+      "sheets_per_box": 200
+    },
+    {
+      "thickness_mm": 0.075,
+      "thickness_micron": 75,
+      "sheets_per_box": 200
+    },
+    {
+      "thickness_mm": 0.1,
+      "thickness_micron": 100,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.125,
+      "thickness_micron": 125,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.15,
+      "thickness_micron": 150,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.175,
+      "thickness_micron": 175,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.2,
+      "thickness_micron": 200,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.25,
+      "thickness_micron": 250,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.3,
+      "thickness_micron": 300,
+      "sheets_per_box": 100
+    },
+    {
+      "thickness_mm": 0.35,
+      "thickness_micron": 350,
+      "sheets_per_box": 50
+    },
+    {
+      "thickness_mm": 0.4,
+      "thickness_micron": 400,
+      "sheets_per_box": 50
+    },
+    {
+      "thickness_mm": 0.5,
+      "thickness_micron": 500,
+      "sheets_per_box": 50
+    }
+  ],
+  "machine_sizes": [
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "GTO 46",
+      "width_mm": 448,
+      "length_mm": 350,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.037,
+          "price_per_box_eur": 7.34
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.055,
+          "price_per_box_eur": 10.98
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.073,
+          "price_per_box_eur": 7.34
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.092,
+          "price_per_box_eur": 9.16
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.11,
+          "price_per_box_eur": 11.01
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.128,
+          "price_per_box_eur": 12.83
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.147,
+          "price_per_box_eur": 14.68
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.165,
+          "price_per_box_eur": 16.5
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.22,
+          "price_per_box_eur": 22.02
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.257,
+          "price_per_box_eur": 12.84
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.294,
+          "price_per_box_eur": 14.68
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.459,
+          "price_per_box_eur": 22.93
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "QUICKMASTER 46",
+      "width_mm": 485,
+      "length_mm": 340,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.039,
+          "price_per_box_eur": 7.72
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.058,
+          "price_per_box_eur": 11.55
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.077,
+          "price_per_box_eur": 7.72
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.096,
+          "price_per_box_eur": 9.63
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.116,
+          "price_per_box_eur": 11.58
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.135,
+          "price_per_box_eur": 13.49
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.154,
+          "price_per_box_eur": 15.44
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.174,
+          "price_per_box_eur": 17.35
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.232,
+          "price_per_box_eur": 23.16
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.27,
+          "price_per_box_eur": 13.51
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.309,
+          "price_per_box_eur": 15.44
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.482,
+          "price_per_box_eur": 24.11
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "GTO 52 - PRINTMASTER 52",
+      "width_mm": 510,
+      "length_mm": 360,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.043,
+          "price_per_box_eur": 8.59
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.064,
+          "price_per_box_eur": 12.85
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.086,
+          "price_per_box_eur": 8.59
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.107,
+          "price_per_box_eur": 10.72
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.129,
+          "price_per_box_eur": 12.89
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.15,
+          "price_per_box_eur": 15.02
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.172,
+          "price_per_box_eur": 17.19
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.193,
+          "price_per_box_eur": 19.32
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.258,
+          "price_per_box_eur": 25.78
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.301,
+          "price_per_box_eur": 15.04
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.344,
+          "price_per_box_eur": 17.19
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.537,
+          "price_per_box_eur": 26.85
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 52 / SX 52",
+      "width_mm": 532,
+      "length_mm": 377,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.047,
+          "price_per_box_eur": 9.39
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.07,
+          "price_per_box_eur": 14.04
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.094,
+          "price_per_box_eur": 9.39
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.117,
+          "price_per_box_eur": 11.72
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.141,
+          "price_per_box_eur": 14.08
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.164,
+          "price_per_box_eur": 16.41
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.188,
+          "price_per_box_eur": 18.78
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.211,
+          "price_per_box_eur": 21.1
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.282,
+          "price_per_box_eur": 28.17
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.329,
+          "price_per_box_eur": 16.43
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.376,
+          "price_per_box_eur": 18.78
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.587,
+          "price_per_box_eur": 29.33
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "MO 65 / SORK",
+      "width_mm": 650,
+      "length_mm": 530,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.081,
+          "price_per_box_eur": 16.13
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.121,
+          "price_per_box_eur": 24.12
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.161,
+          "price_per_box_eur": 16.13
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.201,
+          "price_per_box_eur": 20.12
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.242,
+          "price_per_box_eur": 24.19
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.282,
+          "price_per_box_eur": 28.19
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.323,
+          "price_per_box_eur": 32.25
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.362,
+          "price_per_box_eur": 36.25
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.484,
+          "price_per_box_eur": 48.38
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.564,
+          "price_per_box_eur": 28.22
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.645,
+          "price_per_box_eur": 32.25
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.008,
+          "price_per_box_eur": 50.38
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 72 / SORM",
+      "width_mm": 730,
+      "length_mm": 595,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.102,
+          "price_per_box_eur": 20.33
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.152,
+          "price_per_box_eur": 30.41
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.203,
+          "price_per_box_eur": 20.33
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.254,
+          "price_per_box_eur": 25.37
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.305,
+          "price_per_box_eur": 30.5
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.355,
+          "price_per_box_eur": 35.54
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.407,
+          "price_per_box_eur": 40.66
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.457,
+          "price_per_box_eur": 45.7
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.61,
+          "price_per_box_eur": 61.0
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.712,
+          "price_per_box_eur": 35.58
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.813,
+          "price_per_box_eur": 40.66
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.27,
+          "price_per_box_eur": 63.52
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 74 (OLD MODEL) - SX 74",
+      "width_mm": 750,
+      "length_mm": 550,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.097,
+          "price_per_box_eur": 19.31
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.144,
+          "price_per_box_eur": 28.88
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.193,
+          "price_per_box_eur": 19.31
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.241,
+          "price_per_box_eur": 24.09
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.29,
+          "price_per_box_eur": 28.96
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.337,
+          "price_per_box_eur": 33.75
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.386,
+          "price_per_box_eur": 38.62
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.434,
+          "price_per_box_eur": 43.4
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.579,
+          "price_per_box_eur": 57.93
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.676,
+          "price_per_box_eur": 33.79
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.772,
+          "price_per_box_eur": 38.62
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.206,
+          "price_per_box_eur": 60.32
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 74 - CD",
+      "width_mm": 760,
+      "length_mm": 620,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.11,
+          "price_per_box_eur": 22.06
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.165,
+          "price_per_box_eur": 32.99
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.221,
+          "price_per_box_eur": 22.06
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.275,
+          "price_per_box_eur": 27.52
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.331,
+          "price_per_box_eur": 33.09
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.386,
+          "price_per_box_eur": 38.55
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.441,
+          "price_per_box_eur": 44.11
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.496,
+          "price_per_box_eur": 49.58
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.662,
+          "price_per_box_eur": 66.17
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.772,
+          "price_per_box_eur": 38.6
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.882,
+          "price_per_box_eur": 44.11
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.378,
+          "price_per_box_eur": 68.91
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 74 / 75 XL",
+      "width_mm": 750,
+      "length_mm": 620,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.109,
+          "price_per_box_eur": 21.77
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.163,
+          "price_per_box_eur": 32.56
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.218,
+          "price_per_box_eur": 21.77
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.272,
+          "price_per_box_eur": 27.16
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.327,
+          "price_per_box_eur": 32.65
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.38,
+          "price_per_box_eur": 38.05
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.435,
+          "price_per_box_eur": 43.53
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.489,
+          "price_per_box_eur": 48.93
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.653,
+          "price_per_box_eur": 65.3
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.762,
+          "price_per_box_eur": 38.09
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.871,
+          "price_per_box_eur": 43.53
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.36,
+          "price_per_box_eur": 68.0
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 102 / SX 102",
+      "width_mm": 1030,
+      "length_mm": 735,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.177,
+          "price_per_box_eur": 35.44
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.265,
+          "price_per_box_eur": 53.0
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.354,
+          "price_per_box_eur": 35.44
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.442,
+          "price_per_box_eur": 44.22
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.532,
+          "price_per_box_eur": 53.16
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.619,
+          "price_per_box_eur": 61.94
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.709,
+          "price_per_box_eur": 70.88
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.797,
+          "price_per_box_eur": 79.66
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.063,
+          "price_per_box_eur": 106.31
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.24,
+          "price_per_box_eur": 62.02
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.418,
+          "price_per_box_eur": 70.88
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.214,
+          "price_per_box_eur": 110.71
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 102 CD / 102 CX",
+      "width_mm": 1030,
+      "length_mm": 795,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.192,
+          "price_per_box_eur": 38.33
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.287,
+          "price_per_box_eur": 57.33
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.383,
+          "price_per_box_eur": 38.33
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.478,
+          "price_per_box_eur": 47.83
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.575,
+          "price_per_box_eur": 57.5
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.67,
+          "price_per_box_eur": 67.0
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.767,
+          "price_per_box_eur": 76.66
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.862,
+          "price_per_box_eur": 86.16
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.15,
+          "price_per_box_eur": 114.99
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.342,
+          "price_per_box_eur": 67.08
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.533,
+          "price_per_box_eur": 76.66
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.395,
+          "price_per_box_eur": 119.74
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 102 CD / 102 CX",
+      "width_mm": 1050,
+      "length_mm": 795,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.195,
+          "price_per_box_eur": 39.08
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.292,
+          "price_per_box_eur": 58.44
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.391,
+          "price_per_box_eur": 39.08
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.488,
+          "price_per_box_eur": 48.76
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.586,
+          "price_per_box_eur": 58.61
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.683,
+          "price_per_box_eur": 68.3
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.782,
+          "price_per_box_eur": 78.15
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.878,
+          "price_per_box_eur": 87.83
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.172,
+          "price_per_box_eur": 117.23
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.368,
+          "price_per_box_eur": 68.38
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.563,
+          "price_per_box_eur": 78.15
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.441,
+          "price_per_box_eur": 122.07
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 105 XL / 106 XL",
+      "width_mm": 1054,
+      "length_mm": 765,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.189,
+          "price_per_box_eur": 37.74
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.282,
+          "price_per_box_eur": 56.45
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.377,
+          "price_per_box_eur": 37.74
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.471,
+          "price_per_box_eur": 47.1
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.566,
+          "price_per_box_eur": 56.62
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.66,
+          "price_per_box_eur": 65.97
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.755,
+          "price_per_box_eur": 75.49
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.848,
+          "price_per_box_eur": 84.84
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.132,
+          "price_per_box_eur": 113.23
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.321,
+          "price_per_box_eur": 66.05
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.51,
+          "price_per_box_eur": 75.49
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.358,
+          "price_per_box_eur": 117.91
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 145 XL",
+      "width_mm": 1460,
+      "length_mm": 1070,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.366,
+          "price_per_box_eur": 73.13
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.547,
+          "price_per_box_eur": 109.37
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.731,
+          "price_per_box_eur": 73.13
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.913,
+          "price_per_box_eur": 91.25
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.097,
+          "price_per_box_eur": 109.69
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.278,
+          "price_per_box_eur": 127.82
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.463,
+          "price_per_box_eur": 146.26
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.644,
+          "price_per_box_eur": 164.38
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.194,
+          "price_per_box_eur": 219.38
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.559,
+          "price_per_box_eur": 127.97
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.925,
+          "price_per_box_eur": 146.26
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.569,
+          "price_per_box_eur": 228.45
+        }
+      ]
+    },
+    {
+      "manufacturer": "Heidelberg",
+      "machine_model": "SPEEDMASTER 162 XL",
+      "width_mm": 1630,
+      "length_mm": 1220,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.465,
+          "price_per_box_eur": 93.09
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.696,
+          "price_per_box_eur": 139.23
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.931,
+          "price_per_box_eur": 93.09
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.162,
+          "price_per_box_eur": 116.16
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.396,
+          "price_per_box_eur": 139.63
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.627,
+          "price_per_box_eur": 162.7
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.862,
+          "price_per_box_eur": 186.18
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.092,
+          "price_per_box_eur": 209.25
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.793,
+          "price_per_box_eur": 279.27
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.258,
+          "price_per_box_eur": 162.9
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.724,
+          "price_per_box_eur": 186.18
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.816,
+          "price_per_box_eur": 290.8
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 50 / PRAKTICA 00",
+      "width_mm": 520,
+      "length_mm": 410,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.05,
+          "price_per_box_eur": 9.98
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.075,
+          "price_per_box_eur": 14.93
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.1,
+          "price_per_box_eur": 9.98
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.125,
+          "price_per_box_eur": 12.45
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.15,
+          "price_per_box_eur": 14.97
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.174,
+          "price_per_box_eur": 17.44
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.2,
+          "price_per_box_eur": 19.96
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.224,
+          "price_per_box_eur": 22.43
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.299,
+          "price_per_box_eur": 29.94
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.349,
+          "price_per_box_eur": 17.47
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.399,
+          "price_per_box_eur": 19.96
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.624,
+          "price_per_box_eur": 31.18
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "FAVORIT 01",
+      "width_mm": 650,
+      "length_mm": 530,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.081,
+          "price_per_box_eur": 16.13
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.121,
+          "price_per_box_eur": 24.12
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.161,
+          "price_per_box_eur": 16.13
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.201,
+          "price_per_box_eur": 20.12
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.242,
+          "price_per_box_eur": 24.19
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.282,
+          "price_per_box_eur": 28.19
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.323,
+          "price_per_box_eur": 32.25
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.362,
+          "price_per_box_eur": 36.25
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.484,
+          "price_per_box_eur": 48.38
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.564,
+          "price_per_box_eur": 28.22
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.645,
+          "price_per_box_eur": 32.25
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.008,
+          "price_per_box_eur": 50.38
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "PRAKTICA 01",
+      "width_mm": 670,
+      "length_mm": 480,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.075,
+          "price_per_box_eur": 15.05
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.113,
+          "price_per_box_eur": 22.52
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.151,
+          "price_per_box_eur": 15.05
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.188,
+          "price_per_box_eur": 18.79
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.226,
+          "price_per_box_eur": 22.58
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.263,
+          "price_per_box_eur": 26.31
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.301,
+          "price_per_box_eur": 30.11
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.338,
+          "price_per_box_eur": 33.84
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.452,
+          "price_per_box_eur": 45.16
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.527,
+          "price_per_box_eur": 26.35
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.602,
+          "price_per_box_eur": 30.11
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.941,
+          "price_per_box_eur": 47.03
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "FAVORIT OB",
+      "width_mm": 730,
+      "length_mm": 595,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.102,
+          "price_per_box_eur": 20.33
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.152,
+          "price_per_box_eur": 30.41
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.203,
+          "price_per_box_eur": 20.33
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.254,
+          "price_per_box_eur": 25.37
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.305,
+          "price_per_box_eur": 30.5
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.355,
+          "price_per_box_eur": 35.54
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.407,
+          "price_per_box_eur": 40.66
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.457,
+          "price_per_box_eur": 45.7
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.61,
+          "price_per_box_eur": 61.0
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.712,
+          "price_per_box_eur": 35.58
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.813,
+          "price_per_box_eur": 40.66
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.27,
+          "price_per_box_eur": 63.52
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 200 / 300",
+      "width_mm": 740,
+      "length_mm": 605,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.105,
+          "price_per_box_eur": 20.96
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.157,
+          "price_per_box_eur": 31.34
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.21,
+          "price_per_box_eur": 20.96
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.262,
+          "price_per_box_eur": 26.15
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.314,
+          "price_per_box_eur": 31.44
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.366,
+          "price_per_box_eur": 36.63
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.419,
+          "price_per_box_eur": 41.91
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.471,
+          "price_per_box_eur": 47.11
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.629,
+          "price_per_box_eur": 62.87
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.734,
+          "price_per_box_eur": 36.68
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.838,
+          "price_per_box_eur": 41.91
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.309,
+          "price_per_box_eur": 65.47
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 500",
+      "width_mm": 745,
+      "length_mm": 620,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.108,
+          "price_per_box_eur": 21.62
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.162,
+          "price_per_box_eur": 32.34
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.216,
+          "price_per_box_eur": 21.62
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.27,
+          "price_per_box_eur": 26.98
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.324,
+          "price_per_box_eur": 32.43
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.378,
+          "price_per_box_eur": 37.79
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.432,
+          "price_per_box_eur": 43.24
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.486,
+          "price_per_box_eur": 48.6
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.649,
+          "price_per_box_eur": 64.87
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.757,
+          "price_per_box_eur": 37.84
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.865,
+          "price_per_box_eur": 43.24
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.351,
+          "price_per_box_eur": 67.55
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND REKORD II/ II B/ PARVA",
+      "width_mm": 915,
+      "length_mm": 680,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.146,
+          "price_per_box_eur": 29.13
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.218,
+          "price_per_box_eur": 43.56
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.291,
+          "price_per_box_eur": 29.13
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.363,
+          "price_per_box_eur": 36.34
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.437,
+          "price_per_box_eur": 43.69
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.509,
+          "price_per_box_eur": 50.91
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.583,
+          "price_per_box_eur": 58.25
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.655,
+          "price_per_box_eur": 65.47
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.874,
+          "price_per_box_eur": 87.38
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.019,
+          "price_per_box_eur": 50.97
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.165,
+          "price_per_box_eur": 58.25
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.82,
+          "price_per_box_eur": 90.99
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND PARVA II / C",
+      "width_mm": 925,
+      "length_mm": 700,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.152,
+          "price_per_box_eur": 30.31
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.227,
+          "price_per_box_eur": 45.33
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.303,
+          "price_per_box_eur": 30.31
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.378,
+          "price_per_box_eur": 37.82
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.455,
+          "price_per_box_eur": 45.47
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.53,
+          "price_per_box_eur": 52.98
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.606,
+          "price_per_box_eur": 60.62
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.681,
+          "price_per_box_eur": 68.13
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.909,
+          "price_per_box_eur": 90.93
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.061,
+          "price_per_box_eur": 53.04
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.212,
+          "price_per_box_eur": 60.62
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.894,
+          "price_per_box_eur": 94.69
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND REKORD III",
+      "width_mm": 975,
+      "length_mm": 720,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.164,
+          "price_per_box_eur": 32.86
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.246,
+          "price_per_box_eur": 49.15
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.329,
+          "price_per_box_eur": 32.86
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.41,
+          "price_per_box_eur": 41.01
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.493,
+          "price_per_box_eur": 49.29
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.574,
+          "price_per_box_eur": 57.44
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.657,
+          "price_per_box_eur": 65.72
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.739,
+          "price_per_box_eur": 73.87
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.986,
+          "price_per_box_eur": 98.58
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.15,
+          "price_per_box_eur": 57.51
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.314,
+          "price_per_box_eur": 65.72
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.053,
+          "price_per_box_eur": 102.66
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND REKORD III B / 600",
+      "width_mm": 1030,
+      "length_mm": 795,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.192,
+          "price_per_box_eur": 38.33
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.287,
+          "price_per_box_eur": 57.33
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.383,
+          "price_per_box_eur": 38.33
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.478,
+          "price_per_box_eur": 47.83
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.575,
+          "price_per_box_eur": 57.5
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.67,
+          "price_per_box_eur": 67.0
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.767,
+          "price_per_box_eur": 76.66
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.862,
+          "price_per_box_eur": 86.16
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.15,
+          "price_per_box_eur": 114.99
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.342,
+          "price_per_box_eur": 67.08
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.533,
+          "price_per_box_eur": 76.66
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.395,
+          "price_per_box_eur": 119.74
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 700",
+      "width_mm": 1050,
+      "length_mm": 780,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.192,
+          "price_per_box_eur": 38.34
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.287,
+          "price_per_box_eur": 57.34
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.383,
+          "price_per_box_eur": 38.34
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.478,
+          "price_per_box_eur": 47.84
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.575,
+          "price_per_box_eur": 57.51
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.67,
+          "price_per_box_eur": 67.01
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.767,
+          "price_per_box_eur": 76.68
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.862,
+          "price_per_box_eur": 86.18
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.15,
+          "price_per_box_eur": 115.01
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.342,
+          "price_per_box_eur": 67.09
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.534,
+          "price_per_box_eur": 76.68
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.395,
+          "price_per_box_eur": 119.77
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA IV / 800 IV",
+      "width_mm": 1140,
+      "length_mm": 880,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.235,
+          "price_per_box_eur": 46.96
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.351,
+          "price_per_box_eur": 70.24
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.47,
+          "price_per_box_eur": 46.96
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.586,
+          "price_per_box_eur": 58.6
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.704,
+          "price_per_box_eur": 70.44
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.821,
+          "price_per_box_eur": 82.08
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.939,
+          "price_per_box_eur": 93.92
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.056,
+          "price_per_box_eur": 105.56
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.409,
+          "price_per_box_eur": 140.88
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.644,
+          "price_per_box_eur": 82.18
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.878,
+          "price_per_box_eur": 93.92
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.934,
+          "price_per_box_eur": 146.7
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA V / 800 V",
+      "width_mm": 1280,
+      "length_mm": 980,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.294,
+          "price_per_box_eur": 58.72
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.439,
+          "price_per_box_eur": 87.82
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.587,
+          "price_per_box_eur": 58.72
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.733,
+          "price_per_box_eur": 73.27
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.881,
+          "price_per_box_eur": 88.08
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.026,
+          "price_per_box_eur": 102.63
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.174,
+          "price_per_box_eur": 117.44
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.32,
+          "price_per_box_eur": 131.99
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.762,
+          "price_per_box_eur": 176.16
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.055,
+          "price_per_box_eur": 102.76
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.349,
+          "price_per_box_eur": 117.44
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.669,
+          "price_per_box_eur": 183.44
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 V",
+      "width_mm": 1280,
+      "length_mm": 1110,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.333,
+          "price_per_box_eur": 66.51
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.497,
+          "price_per_box_eur": 99.47
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.665,
+          "price_per_box_eur": 66.51
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.83,
+          "price_per_box_eur": 82.99
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.998,
+          "price_per_box_eur": 99.76
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.162,
+          "price_per_box_eur": 116.25
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.33,
+          "price_per_box_eur": 133.02
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.495,
+          "price_per_box_eur": 149.5
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.995,
+          "price_per_box_eur": 199.53
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.328,
+          "price_per_box_eur": 116.39
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.66,
+          "price_per_box_eur": 133.02
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.155,
+          "price_per_box_eur": 207.77
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA V / 800 / 900",
+      "width_mm": 1310,
+      "length_mm": 1000,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.307,
+          "price_per_box_eur": 61.32
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.459,
+          "price_per_box_eur": 91.72
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.613,
+          "price_per_box_eur": 61.32
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.765,
+          "price_per_box_eur": 76.52
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.92,
+          "price_per_box_eur": 91.98
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.072,
+          "price_per_box_eur": 107.18
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.226,
+          "price_per_box_eur": 122.64
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.378,
+          "price_per_box_eur": 137.84
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.84,
+          "price_per_box_eur": 183.97
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.146,
+          "price_per_box_eur": 107.31
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.453,
+          "price_per_box_eur": 122.64
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.831,
+          "price_per_box_eur": 191.57
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 V - MUNDIAL",
+      "width_mm": 1310,
+      "length_mm": 1110,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.34,
+          "price_per_box_eur": 68.07
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.509,
+          "price_per_box_eur": 101.81
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.681,
+          "price_per_box_eur": 68.07
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.849,
+          "price_per_box_eur": 84.94
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.021,
+          "price_per_box_eur": 102.1
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.19,
+          "price_per_box_eur": 118.97
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.361,
+          "price_per_box_eur": 136.14
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.53,
+          "price_per_box_eur": 153.0
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.042,
+          "price_per_box_eur": 204.2
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.382,
+          "price_per_box_eur": 119.12
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.723,
+          "price_per_box_eur": 136.14
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.253,
+          "price_per_box_eur": 212.64
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA VI / 800",
+      "width_mm": 1410,
+      "length_mm": 1110,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.366,
+          "price_per_box_eur": 73.26
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.548,
+          "price_per_box_eur": 109.58
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.733,
+          "price_per_box_eur": 73.26
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.914,
+          "price_per_box_eur": 91.42
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.099,
+          "price_per_box_eur": 109.9
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.281,
+          "price_per_box_eur": 128.05
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.465,
+          "price_per_box_eur": 146.53
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.647,
+          "price_per_box_eur": 164.68
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.198,
+          "price_per_box_eur": 219.79
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.564,
+          "price_per_box_eur": 128.21
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.931,
+          "price_per_box_eur": 146.53
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.577,
+          "price_per_box_eur": 228.87
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 / 6 - ULTRA 6 NEW",
+      "width_mm": 1410,
+      "length_mm": 1140,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.376,
+          "price_per_box_eur": 75.24
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.563,
+          "price_per_box_eur": 112.54
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.752,
+          "price_per_box_eur": 75.24
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.939,
+          "price_per_box_eur": 93.89
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.129,
+          "price_per_box_eur": 112.87
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.315,
+          "price_per_box_eur": 131.51
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.505,
+          "price_per_box_eur": 150.49
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.691,
+          "price_per_box_eur": 169.14
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.257,
+          "price_per_box_eur": 225.73
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.634,
+          "price_per_box_eur": 131.68
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.01,
+          "price_per_box_eur": 150.49
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.701,
+          "price_per_box_eur": 235.06
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 900",
+      "width_mm": 1440,
+      "length_mm": 1050,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.354,
+          "price_per_box_eur": 70.78
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.529,
+          "price_per_box_eur": 105.86
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.708,
+          "price_per_box_eur": 70.78
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.883,
+          "price_per_box_eur": 88.32
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.062,
+          "price_per_box_eur": 106.17
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.237,
+          "price_per_box_eur": 123.71
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.416,
+          "price_per_box_eur": 141.56
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.591,
+          "price_per_box_eur": 159.1
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.123,
+          "price_per_box_eur": 212.33
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.477,
+          "price_per_box_eur": 123.86
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.831,
+          "price_per_box_eur": 141.56
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.422,
+          "price_per_box_eur": 221.11
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA VI - VELT",
+      "width_mm": 1440,
+      "length_mm": 1110,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.374,
+          "price_per_box_eur": 74.82
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.56,
+          "price_per_box_eur": 111.91
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.748,
+          "price_per_box_eur": 74.82
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.934,
+          "price_per_box_eur": 93.37
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.122,
+          "price_per_box_eur": 112.23
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.308,
+          "price_per_box_eur": 130.78
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.496,
+          "price_per_box_eur": 149.65
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.682,
+          "price_per_box_eur": 168.19
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.245,
+          "price_per_box_eur": 224.47
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.619,
+          "price_per_box_eur": 130.94
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.993,
+          "price_per_box_eur": 149.65
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.675,
+          "price_per_box_eur": 233.74
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 VI",
+      "width_mm": 1450,
+      "length_mm": 1150,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.39,
+          "price_per_box_eur": 78.06
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.584,
+          "price_per_box_eur": 116.75
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.781,
+          "price_per_box_eur": 78.06
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.974,
+          "price_per_box_eur": 97.4
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.171,
+          "price_per_box_eur": 117.09
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.364,
+          "price_per_box_eur": 136.43
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.561,
+          "price_per_box_eur": 156.11
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.755,
+          "price_per_box_eur": 175.46
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.342,
+          "price_per_box_eur": 234.17
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.732,
+          "price_per_box_eur": 136.6
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.122,
+          "price_per_box_eur": 156.11
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.877,
+          "price_per_box_eur": 243.84
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 / ULTRA VII",
+      "width_mm": 1620,
+      "length_mm": 1190,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.451,
+          "price_per_box_eur": 90.24
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.675,
+          "price_per_box_eur": 134.97
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.902,
+          "price_per_box_eur": 90.24
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.126,
+          "price_per_box_eur": 112.61
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.354,
+          "price_per_box_eur": 135.36
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.577,
+          "price_per_box_eur": 157.73
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.805,
+          "price_per_box_eur": 180.48
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.028,
+          "price_per_box_eur": 202.85
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.707,
+          "price_per_box_eur": 270.73
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.158,
+          "price_per_box_eur": 157.92
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.61,
+          "price_per_box_eur": 180.48
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.638,
+          "price_per_box_eur": 281.91
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 800 / ULTRA VII B",
+      "width_mm": 1620,
+      "length_mm": 1270,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.482,
+          "price_per_box_eur": 96.31
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.72,
+          "price_per_box_eur": 144.04
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.963,
+          "price_per_box_eur": 96.31
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.202,
+          "price_per_box_eur": 120.18
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.445,
+          "price_per_box_eur": 144.46
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.683,
+          "price_per_box_eur": 168.33
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.926,
+          "price_per_box_eur": 192.62
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.165,
+          "price_per_box_eur": 216.49
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.889,
+          "price_per_box_eur": 288.93
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.371,
+          "price_per_box_eur": 168.54
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.852,
+          "price_per_box_eur": 192.62
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 6.017,
+          "price_per_box_eur": 300.86
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 900 VII B",
+      "width_mm": 1640,
+      "length_mm": 1250,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.48,
+          "price_per_box_eur": 95.96
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.718,
+          "price_per_box_eur": 143.53
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.96,
+          "price_per_box_eur": 95.96
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.197,
+          "price_per_box_eur": 119.74
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.439,
+          "price_per_box_eur": 143.94
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.677,
+          "price_per_box_eur": 167.73
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.919,
+          "price_per_box_eur": 191.93
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.157,
+          "price_per_box_eur": 215.71
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.879,
+          "price_per_box_eur": 287.89
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.359,
+          "price_per_box_eur": 167.93
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.839,
+          "price_per_box_eur": 191.93
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.996,
+          "price_per_box_eur": 299.78
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 900 XXL",
+      "width_mm": 1640,
+      "length_mm": 1290,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.495,
+          "price_per_box_eur": 99.03
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.741,
+          "price_per_box_eur": 148.12
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.99,
+          "price_per_box_eur": 99.03
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.236,
+          "price_per_box_eur": 123.58
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.486,
+          "price_per_box_eur": 148.55
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.731,
+          "price_per_box_eur": 173.09
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.981,
+          "price_per_box_eur": 198.07
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.226,
+          "price_per_box_eur": 222.61
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.971,
+          "price_per_box_eur": 297.1
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.466,
+          "price_per_box_eur": 173.31
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.961,
+          "price_per_box_eur": 198.07
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 6.187,
+          "price_per_box_eur": 309.37
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND ULTRA VIII",
+      "width_mm": 1780,
+      "length_mm": 1270,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.529,
+          "price_per_box_eur": 105.82
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.791,
+          "price_per_box_eur": 158.27
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.058,
+          "price_per_box_eur": 105.82
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.32,
+          "price_per_box_eur": 132.05
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.587,
+          "price_per_box_eur": 158.73
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.85,
+          "price_per_box_eur": 184.96
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.116,
+          "price_per_box_eur": 211.64
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.379,
+          "price_per_box_eur": 237.87
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 3.175,
+          "price_per_box_eur": 317.46
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.704,
+          "price_per_box_eur": 185.19
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.233,
+          "price_per_box_eur": 211.64
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 6.612,
+          "price_per_box_eur": 330.58
+        }
+      ]
+    },
+    {
+      "manufacturer": "Manroland",
+      "machine_model": "ROLAND 900 XXL- 8",
+      "width_mm": 1860,
+      "length_mm": 1320,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.575,
+          "price_per_box_eur": 114.93
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.859,
+          "price_per_box_eur": 171.9
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.149,
+          "price_per_box_eur": 114.93
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.434,
+          "price_per_box_eur": 143.41
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.724,
+          "price_per_box_eur": 172.4
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.009,
+          "price_per_box_eur": 200.88
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.299,
+          "price_per_box_eur": 229.86
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.583,
+          "price_per_box_eur": 258.34
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 3.448,
+          "price_per_box_eur": 344.79
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.023,
+          "price_per_box_eur": 201.13
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.597,
+          "price_per_box_eur": 229.86
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 7.181,
+          "price_per_box_eur": 359.03
+        }
+      ]
+    },
+    {
+      "manufacturer": "Komori",
+      "machine_model": "KOMORI LITHRONE 28 / 428 528 / 628 / 828",
+      "width_mm": 730,
+      "length_mm": 555,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.095,
+          "price_per_box_eur": 18.97
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.142,
+          "price_per_box_eur": 28.37
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.19,
+          "price_per_box_eur": 18.97
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.237,
+          "price_per_box_eur": 23.67
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.284,
+          "price_per_box_eur": 28.45
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.331,
+          "price_per_box_eur": 33.15
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.379,
+          "price_per_box_eur": 37.93
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.426,
+          "price_per_box_eur": 42.63
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.569,
+          "price_per_box_eur": 56.9
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.664,
+          "price_per_box_eur": 33.19
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.759,
+          "price_per_box_eur": 37.93
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.185,
+          "price_per_box_eur": 59.25
+        }
+      ]
+    },
+    {
+      "manufacturer": "Komori",
+      "machine_model": "KOMORI LITHRONE SPICA 29",
+      "width_mm": 760,
+      "length_mm": 570,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.101,
+          "price_per_box_eur": 20.28
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.152,
+          "price_per_box_eur": 30.33
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.203,
+          "price_per_box_eur": 20.28
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.253,
+          "price_per_box_eur": 25.3
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.304,
+          "price_per_box_eur": 30.42
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.354,
+          "price_per_box_eur": 35.44
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.406,
+          "price_per_box_eur": 40.56
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.456,
+          "price_per_box_eur": 45.58
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.608,
+          "price_per_box_eur": 60.84
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.71,
+          "price_per_box_eur": 35.49
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.811,
+          "price_per_box_eur": 40.56
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.267,
+          "price_per_box_eur": 63.35
+        }
+      ]
+    },
+    {
+      "manufacturer": "Komori",
+      "machine_model": "KOMORI LITHRONE G37",
+      "width_mm": 945,
+      "length_mm": 670,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.148,
+          "price_per_box_eur": 29.64
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.222,
+          "price_per_box_eur": 44.33
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.296,
+          "price_per_box_eur": 29.64
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.37,
+          "price_per_box_eur": 36.98
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.445,
+          "price_per_box_eur": 44.46
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.518,
+          "price_per_box_eur": 51.8
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.593,
+          "price_per_box_eur": 59.28
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.666,
+          "price_per_box_eur": 66.62
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.889,
+          "price_per_box_eur": 88.92
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.037,
+          "price_per_box_eur": 51.87
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.186,
+          "price_per_box_eur": 59.28
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.852,
+          "price_per_box_eur": 92.59
+        }
+      ]
+    },
+    {
+      "manufacturer": "Komori",
+      "machine_model": "KOMORI LITHRONE 40 / 440 450 / 540 / 640 / 840",
+      "width_mm": 1030,
+      "length_mm": 755,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.182,
+          "price_per_box_eur": 36.4
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.272,
+          "price_per_box_eur": 54.45
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.364,
+          "price_per_box_eur": 36.4
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.454,
+          "price_per_box_eur": 45.42
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.546,
+          "price_per_box_eur": 54.6
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.636,
+          "price_per_box_eur": 63.63
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.728,
+          "price_per_box_eur": 72.81
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.818,
+          "price_per_box_eur": 81.83
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.092,
+          "price_per_box_eur": 109.21
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.274,
+          "price_per_box_eur": 63.7
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.456,
+          "price_per_box_eur": 72.81
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.274,
+          "price_per_box_eur": 113.72
+        }
+      ]
+    },
+    {
+      "manufacturer": "Komori",
+      "machine_model": "KOMORI SX40 / GX40",
+      "width_mm": 1055,
+      "length_mm": 780,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.193,
+          "price_per_box_eur": 38.52
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.288,
+          "price_per_box_eur": 57.61
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.385,
+          "price_per_box_eur": 38.52
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.481,
+          "price_per_box_eur": 48.07
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.578,
+          "price_per_box_eur": 57.78
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.673,
+          "price_per_box_eur": 67.33
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.77,
+          "price_per_box_eur": 77.04
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.866,
+          "price_per_box_eur": 86.59
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.156,
+          "price_per_box_eur": 115.56
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.348,
+          "price_per_box_eur": 67.41
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.541,
+          "price_per_box_eur": 77.04
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.407,
+          "price_per_box_eur": 120.34
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 74 / 75",
+      "width_mm": 740,
+      "length_mm": 545,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.094,
+          "price_per_box_eur": 18.88
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.141,
+          "price_per_box_eur": 28.24
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.189,
+          "price_per_box_eur": 18.88
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.236,
+          "price_per_box_eur": 23.56
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.283,
+          "price_per_box_eur": 28.32
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.33,
+          "price_per_box_eur": 33.0
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.378,
+          "price_per_box_eur": 37.76
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.424,
+          "price_per_box_eur": 42.44
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.566,
+          "price_per_box_eur": 56.64
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.661,
+          "price_per_box_eur": 33.04
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.755,
+          "price_per_box_eur": 37.76
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.18,
+          "price_per_box_eur": 58.98
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 104 / 105 (OLD MODEL)",
+      "width_mm": 1045,
+      "length_mm": 750,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.183,
+          "price_per_box_eur": 36.69
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.274,
+          "price_per_box_eur": 54.87
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.367,
+          "price_per_box_eur": 36.69
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.458,
+          "price_per_box_eur": 45.78
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.55,
+          "price_per_box_eur": 55.03
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.641,
+          "price_per_box_eur": 64.12
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.734,
+          "price_per_box_eur": 73.38
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.825,
+          "price_per_box_eur": 82.47
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.101,
+          "price_per_box_eur": 110.06
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.284,
+          "price_per_box_eur": 64.2
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.468,
+          "price_per_box_eur": 73.38
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.292,
+          "price_per_box_eur": 114.61
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 106 / 105 (P40)",
+      "width_mm": 1060,
+      "length_mm": 760,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.189,
+          "price_per_box_eur": 37.71
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.282,
+          "price_per_box_eur": 56.4
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.377,
+          "price_per_box_eur": 37.71
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.471,
+          "price_per_box_eur": 47.06
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.566,
+          "price_per_box_eur": 56.57
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.659,
+          "price_per_box_eur": 65.91
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.754,
+          "price_per_box_eur": 75.42
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.848,
+          "price_per_box_eur": 84.77
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.131,
+          "price_per_box_eur": 113.13
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.32,
+          "price_per_box_eur": 65.99
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.508,
+          "price_per_box_eur": 75.42
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.356,
+          "price_per_box_eur": 117.81
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 130",
+      "width_mm": 1320,
+      "length_mm": 1080,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.334,
+          "price_per_box_eur": 66.73
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.499,
+          "price_per_box_eur": 99.81
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.667,
+          "price_per_box_eur": 66.73
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.833,
+          "price_per_box_eur": 83.27
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.001,
+          "price_per_box_eur": 100.1
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.166,
+          "price_per_box_eur": 116.64
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.335,
+          "price_per_box_eur": 133.47
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.5,
+          "price_per_box_eur": 150.01
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.002,
+          "price_per_box_eur": 200.2
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.336,
+          "price_per_box_eur": 116.78
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.669,
+          "price_per_box_eur": 133.47
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.169,
+          "price_per_box_eur": 208.47
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 142",
+      "width_mm": 1440,
+      "length_mm": 1080,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.364,
+          "price_per_box_eur": 72.8
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.544,
+          "price_per_box_eur": 108.88
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.728,
+          "price_per_box_eur": 72.8
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.908,
+          "price_per_box_eur": 90.84
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.092,
+          "price_per_box_eur": 109.2
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.272,
+          "price_per_box_eur": 127.24
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.456,
+          "price_per_box_eur": 145.6
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.636,
+          "price_per_box_eur": 163.64
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.184,
+          "price_per_box_eur": 218.4
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.548,
+          "price_per_box_eur": 127.4
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.912,
+          "price_per_box_eur": 145.6
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.548,
+          "price_per_box_eur": 227.42
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 145",
+      "width_mm": 1470,
+      "length_mm": 1110,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.382,
+          "price_per_box_eur": 76.38
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.571,
+          "price_per_box_eur": 114.24
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.764,
+          "price_per_box_eur": 76.38
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.953,
+          "price_per_box_eur": 95.31
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.146,
+          "price_per_box_eur": 114.57
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.335,
+          "price_per_box_eur": 133.5
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.528,
+          "price_per_box_eur": 152.76
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.717,
+          "price_per_box_eur": 171.69
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.291,
+          "price_per_box_eur": 229.14
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.673,
+          "price_per_box_eur": 133.67
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.055,
+          "price_per_box_eur": 152.76
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.772,
+          "price_per_box_eur": 238.61
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 145",
+      "width_mm": 1470,
+      "length_mm": 1125,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.387,
+          "price_per_box_eur": 77.41
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.579,
+          "price_per_box_eur": 115.78
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.774,
+          "price_per_box_eur": 77.41
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.966,
+          "price_per_box_eur": 96.6
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.161,
+          "price_per_box_eur": 116.12
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.353,
+          "price_per_box_eur": 135.31
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.548,
+          "price_per_box_eur": 154.83
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.74,
+          "price_per_box_eur": 174.01
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.322,
+          "price_per_box_eur": 232.24
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.709,
+          "price_per_box_eur": 135.47
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.097,
+          "price_per_box_eur": 154.83
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.837,
+          "price_per_box_eur": 241.83
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 162",
+      "width_mm": 1640,
+      "length_mm": 1150,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.441,
+          "price_per_box_eur": 88.29
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.66,
+          "price_per_box_eur": 132.04
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.883,
+          "price_per_box_eur": 88.29
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.102,
+          "price_per_box_eur": 110.17
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.324,
+          "price_per_box_eur": 132.43
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.543,
+          "price_per_box_eur": 154.31
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.766,
+          "price_per_box_eur": 176.57
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.985,
+          "price_per_box_eur": 198.45
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.649,
+          "price_per_box_eur": 264.86
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.09,
+          "price_per_box_eur": 154.5
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.531,
+          "price_per_box_eur": 176.57
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.516,
+          "price_per_box_eur": 275.8
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 162 - A",
+      "width_mm": 1640,
+      "length_mm": 1240,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.476,
+          "price_per_box_eur": 95.19
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.712,
+          "price_per_box_eur": 142.38
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.952,
+          "price_per_box_eur": 95.19
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.188,
+          "price_per_box_eur": 118.79
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.428,
+          "price_per_box_eur": 142.79
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.664,
+          "price_per_box_eur": 166.38
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.904,
+          "price_per_box_eur": 190.39
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.14,
+          "price_per_box_eur": 213.98
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.856,
+          "price_per_box_eur": 285.58
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.332,
+          "price_per_box_eur": 166.59
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.808,
+          "price_per_box_eur": 190.39
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.948,
+          "price_per_box_eur": 297.38
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 164",
+      "width_mm": 1660,
+      "length_mm": 1240,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.482,
+          "price_per_box_eur": 96.36
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.721,
+          "price_per_box_eur": 144.11
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.964,
+          "price_per_box_eur": 96.36
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.202,
+          "price_per_box_eur": 120.24
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.445,
+          "price_per_box_eur": 144.53
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.684,
+          "price_per_box_eur": 168.41
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.927,
+          "price_per_box_eur": 192.71
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.166,
+          "price_per_box_eur": 216.59
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.891,
+          "price_per_box_eur": 289.07
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.372,
+          "price_per_box_eur": 168.62
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 3.854,
+          "price_per_box_eur": 192.71
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 6.02,
+          "price_per_box_eur": 301.01
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 185",
+      "width_mm": 1870,
+      "length_mm": 1480,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.648,
+          "price_per_box_eur": 129.55
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.969,
+          "price_per_box_eur": 193.77
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.296,
+          "price_per_box_eur": 129.55
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.617,
+          "price_per_box_eur": 161.66
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.943,
+          "price_per_box_eur": 194.33
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.264,
+          "price_per_box_eur": 226.44
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.591,
+          "price_per_box_eur": 259.11
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.912,
+          "price_per_box_eur": 291.22
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 3.887,
+          "price_per_box_eur": 388.66
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.534,
+          "price_per_box_eur": 226.72
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.182,
+          "price_per_box_eur": 259.11
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 8.094,
+          "price_per_box_eur": 404.72
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 205",
+      "width_mm": 2040,
+      "length_mm": 1420,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.678,
+          "price_per_box_eur": 135.6
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 1.014,
+          "price_per_box_eur": 202.81
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.356,
+          "price_per_box_eur": 135.6
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.692,
+          "price_per_box_eur": 169.21
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.034,
+          "price_per_box_eur": 203.4
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.37,
+          "price_per_box_eur": 237.01
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.712,
+          "price_per_box_eur": 271.2
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 3.048,
+          "price_per_box_eur": 304.81
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 4.068,
+          "price_per_box_eur": 406.81
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 4.746,
+          "price_per_box_eur": 237.3
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.424,
+          "price_per_box_eur": 271.2
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 8.472,
+          "price_per_box_eur": 423.61
+        }
+      ]
+    },
+    {
+      "manufacturer": "KBA",
+      "machine_model": "KBA RAPIDA 205 (NEW)",
+      "width_mm": 2070,
+      "length_mm": 1540,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.746,
+          "price_per_box_eur": 149.22
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 1.116,
+          "price_per_box_eur": 223.19
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.492,
+          "price_per_box_eur": 149.22
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.862,
+          "price_per_box_eur": 186.21
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.238,
+          "price_per_box_eur": 223.84
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.608,
+          "price_per_box_eur": 260.82
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 2.984,
+          "price_per_box_eur": 298.45
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 3.354,
+          "price_per_box_eur": 335.43
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 4.477,
+          "price_per_box_eur": 447.67
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.223,
+          "price_per_box_eur": 261.14
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 5.969,
+          "price_per_box_eur": 298.45
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 9.323,
+          "price_per_box_eur": 466.16
+        }
+      ]
+    },
+    {
+      "manufacturer": "RMGT (Ryobi - Mitsubishi)",
+      "machine_model": "MITSUBISHI 1E - 1F / DIAMOND 1000",
+      "width_mm": 725,
+      "length_mm": 610,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.104,
+          "price_per_box_eur": 20.7
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.155,
+          "price_per_box_eur": 30.96
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.207,
+          "price_per_box_eur": 20.7
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.258,
+          "price_per_box_eur": 25.83
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.311,
+          "price_per_box_eur": 31.05
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.362,
+          "price_per_box_eur": 36.18
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.414,
+          "price_per_box_eur": 41.4
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.465,
+          "price_per_box_eur": 46.53
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.621,
+          "price_per_box_eur": 62.11
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.725,
+          "price_per_box_eur": 36.23
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.828,
+          "price_per_box_eur": 41.4
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.293,
+          "price_per_box_eur": 64.67
+        }
+      ]
+    },
+    {
+      "manufacturer": "RMGT (Ryobi - Mitsubishi)",
+      "machine_model": "MITSUBISHI 3F / DIAMOND 3000 - S / LS / LX",
+      "width_mm": 1030,
+      "length_mm": 820,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.198,
+          "price_per_box_eur": 39.54
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.296,
+          "price_per_box_eur": 59.13
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.395,
+          "price_per_box_eur": 39.54
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.493,
+          "price_per_box_eur": 49.33
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.593,
+          "price_per_box_eur": 59.3
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.691,
+          "price_per_box_eur": 69.1
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.791,
+          "price_per_box_eur": 79.07
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.889,
+          "price_per_box_eur": 88.87
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 1.186,
+          "price_per_box_eur": 118.61
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.384,
+          "price_per_box_eur": 69.19
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.581,
+          "price_per_box_eur": 79.07
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 2.47,
+          "price_per_box_eur": 123.51
+        }
+      ]
+    },
+    {
+      "manufacturer": "RMGT (Ryobi - Mitsubishi)",
+      "machine_model": "RYOBI 920",
+      "width_mm": 910,
+      "length_mm": 630,
+      "prices": [
+        {
+          "thickness_mm": 0.05,
+          "thickness_micron": 50,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.134,
+          "price_per_box_eur": 26.84
+        },
+        {
+          "thickness_mm": 0.075,
+          "thickness_micron": 75,
+          "sheets_per_box": 200,
+          "price_per_sheet_eur": 0.201,
+          "price_per_box_eur": 40.14
+        },
+        {
+          "thickness_mm": 0.1,
+          "thickness_micron": 100,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.268,
+          "price_per_box_eur": 26.84
+        },
+        {
+          "thickness_mm": 0.125,
+          "thickness_micron": 125,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.335,
+          "price_per_box_eur": 33.49
+        },
+        {
+          "thickness_mm": 0.15,
+          "thickness_micron": 150,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.403,
+          "price_per_box_eur": 40.26
+        },
+        {
+          "thickness_mm": 0.175,
+          "thickness_micron": 175,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.469,
+          "price_per_box_eur": 46.91
+        },
+        {
+          "thickness_mm": 0.2,
+          "thickness_micron": 200,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.537,
+          "price_per_box_eur": 53.67
+        },
+        {
+          "thickness_mm": 0.25,
+          "thickness_micron": 250,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.603,
+          "price_per_box_eur": 60.32
+        },
+        {
+          "thickness_mm": 0.3,
+          "thickness_micron": 300,
+          "sheets_per_box": 100,
+          "price_per_sheet_eur": 0.805,
+          "price_per_box_eur": 80.51
+        },
+        {
+          "thickness_mm": 0.35,
+          "thickness_micron": 350,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 0.939,
+          "price_per_box_eur": 46.96
+        },
+        {
+          "thickness_mm": 0.4,
+          "thickness_micron": 400,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.073,
+          "price_per_box_eur": 53.67
+        },
+        {
+          "thickness_mm": 0.5,
+          "thickness_micron": 500,
+          "sheets_per_box": 50,
+          "price_per_sheet_eur": 1.677,
+          "price_per_box_eur": 83.84
+        }
+      ]
+    }
+  ]
+}

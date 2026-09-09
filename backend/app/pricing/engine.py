@@ -74,7 +74,122 @@ def area_sqm(configuration: dict[str, Any]) -> Decimal:
     return length * width
 
 
+def resolve_mpack_selection(product: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve one exact, server-owned MPack machine/size/thickness row."""
+    if str(product.get("pricing", {}).get("pricing_type", "")) != "per_pack":
+        return None
+    machine_sizes = product.get("configuration", {}).get("machine_sizes") or []
+    if not machine_sizes:
+        return None
+    manufacturer = " ".join(str(configuration.get("manufacturer", "")).split())
+    machine_model = " ".join(str(configuration.get("machine_model", "")).split())
+    if not manufacturer or not machine_model:
+        raise ValueError("Machine manufacturer and model are required")
+    width = decimal_value(configuration.get("width_mm"), "width_mm")
+    length = decimal_value(configuration.get("length_mm"), "length_mm")
+    thickness_value = configuration.get("thickness_mm")
+    if thickness_value in (None, "") and configuration.get("thickness_micron") not in (None, ""):
+        thickness_value = decimal_value(configuration.get("thickness_micron"), "thickness_micron") / Decimal("1000")
+    thickness = decimal_value(thickness_value, "thickness_mm")
+    machine_row = next((
+        row for row in machine_sizes
+        if str(row.get("manufacturer", "")).casefold() == manufacturer.casefold()
+        and str(row.get("machine_model", "")).casefold() == machine_model.casefold()
+        and Decimal(str(row.get("width_mm"))) == width
+        and Decimal(str(row.get("length_mm"))) == length
+    ), None)
+    if not machine_row:
+        raise ValueError("Size is not available for the selected machine model")
+    price_row = next((
+        row for row in machine_row.get("prices", [])
+        if Decimal(str(row.get("thickness_mm"))) == thickness
+    ), None)
+    if not price_row:
+        raise ValueError("Thickness is not available for the selected machine size")
+    return {
+        "manufacturer": machine_row["manufacturer"],
+        "machine_model": machine_row["machine_model"],
+        "width_mm": int(machine_row["width_mm"]),
+        "length_mm": int(machine_row["length_mm"]),
+        "thickness_mm": float(Decimal(str(price_row["thickness_mm"]))),
+        "thickness_micron": int(price_row["thickness_micron"]),
+        "sheets_per_box": int(price_row["sheets_per_box"]),
+        "price_per_sheet_eur": float(decimal_value(price_row["price_per_sheet_eur"], "price_per_sheet_eur")),
+        "price_per_box_eur": float(decimal_value(price_row["price_per_box_eur"], "price_per_box_eur")),
+    }
+
+
+def validate_blanket_machine_selection(
+    product: dict[str, Any], configuration: dict[str, Any],
+    allowed_machines: list[dict[str, Any]] | None = None,
+) -> None:
+    """Validate a blanket machine name before pricing.
+
+    Machine names are optional for cut format and mandatory for bar format.
+    When a configured machine catalogue exists, an entered name must match a
+    known record; the UI is never the authority for this rule.
+    """
+    if product.get("category_id") != "blankets":
+        return
+    machine_name = " ".join(str(configuration.get("machine", configuration.get("machine_name", ""))).split())
+    machine_id = str(configuration.get("machine_id", "")).strip()
+    if configuration.get("format_type") == "bar_format" and not machine_name:
+        raise ValueError("Bar Format requires a machine name")
+    if not machine_name:
+        return
+
+    declared = product.get("configuration", {}).get("machine_options") or []
+    if isinstance(declared, dict):
+        flattened: list[dict[str, Any]] = []
+        for manufacturer_row in declared.get("manufacturers", []):
+            models = manufacturer_row.get("models") or []
+            if models:
+                flattened.extend({
+                    "manufacturer": manufacturer_row.get("name") or manufacturer_row.get("manufacturer"),
+                    "manufacturer_id": manufacturer_row.get("id") or manufacturer_row.get("manufacturer_id"),
+                    "machine_model": model.get("name") or model.get("model"),
+                    "model_id": model.get("id") or model.get("model_id"),
+                    "id": model.get("id") or model.get("model_id"),
+                } for model in models)
+            else:
+                flattened.append(manufacturer_row)
+        declared = flattened
+    candidates = declared if declared else (allowed_machines or [])
+    # Some installations do not yet have a machine catalogue. In that case a
+    # non-empty machine name is still a valid user-supplied configuration; the
+    # mandatory bar-format rule above remains enforced server-side.
+    if not candidates:
+        if machine_id:
+            return
+        return
+
+    def same(value: Any, expected: str) -> bool:
+        return bool(expected) and str(value or "").strip().casefold() == expected.casefold()
+
+    match = next((row for row in candidates if machine_id and str(row.get("id") or row.get("_id") or "") == machine_id), None)
+    if machine_id and not match:
+        raise ValueError("Selected machine ID is not available for this product")
+    if match and machine_name:
+        row_name = match.get("name") or (
+            f"{match.get('manufacturer', '')} - {match.get('machine_model', match.get('model', ''))}"
+        ).strip(" -")
+        if not same(row_name, machine_name):
+            raise ValueError("Machine ID and machine name do not match")
+    if not match:
+        match = next((row for row in candidates if same(
+        row.get("name") or (
+            f"{row.get('manufacturer', '')} - {row.get('machine_model', row.get('model', ''))}"
+        ).strip(" -"), machine_name)), None)
+    if not match:
+        raise ValueError("Selected machine name is not available for this product")
+
+
 def calculate_master_unit_price(product: dict[str, Any], configuration: dict[str, Any]) -> Decimal:
+    mpack_selection = resolve_mpack_selection(product, configuration)
+    if mpack_selection:
+        # Client-supplied price fields are deliberately ignored.  The exact
+        # per-box amount always comes from the seeded official price matrix.
+        return money(decimal_value(mpack_selection["price_per_box_eur"], "price_per_box_eur"))
     base, pricing_type, _unit = pricing_value(product, configuration)
     if pricing_type in UNIT_PRICING_TYPES:
         return money(base)
@@ -161,6 +276,9 @@ def validate_configuration(product: dict[str, Any], configuration: dict[str, Any
         if formats and configuration.get("format_type") not in formats:
             raise ValueError("Format is not available for the selected product")
     elif configurator == "mpack":
+        if rules.get("machine_sizes") and str(product.get("pricing", {}).get("pricing_type", "")) == "per_pack":
+            resolve_mpack_selection(product, configuration)
+            return
         valid = [Decimal(str(row.get("value"))) for row in rules.get("thicknesses", [])]
         if valid and decimal_value(configuration.get("thickness_micron"), "thickness_micron") not in valid:
             raise ValueError("Thickness is not available for the selected Underpacking product")
@@ -269,6 +387,13 @@ def calculate_line(
         raise ValueError(f"Discount exceeds the allowed {max_discount}% maximum")
 
     validate_configuration(product, configuration)
+    mpack_selection = resolve_mpack_selection(product, configuration)
+    if mpack_selection:
+        configuration.update(mpack_selection)
+        price_list = product.get("configuration", {}).get("machine_price_list") or {}
+        configuration["price_list_id"] = str(price_list.get("id", ""))
+        configuration["price_valid_from"] = str(price_list.get("valid_from", ""))
+        configuration["price_valid_until"] = str(price_list.get("valid_until", ""))
     rate = decimal_value(exchange_rate, "exchange_rate")
     if not rate:
         raise ValueError("Exchange rate must be greater than zero")
@@ -281,6 +406,8 @@ def calculate_line(
     # conversion happens only after discounting, so FX rounding never changes
     # the authoritative commercial result.
     master_subtotal = money(unit_master * effective_quantity)
+    if mpack_selection:
+        configuration["total_eur"] = float(master_subtotal)
     master_discount_amount = money(master_subtotal * discount / Decimal("100"))
     master_total = money(master_subtotal - master_discount_amount)
     unit_selected = money(unit_master * rate)
@@ -292,6 +419,11 @@ def calculate_line(
         "product_id": product["_id"], "article_no": product.get("article_no"),
         "product_name": product["name"], "description": product.get("description", ""),
         "sku": product.get("sku"), "configuration": configuration,
+        "commercial_unit": product.get("commercial_unit") or (
+            "box" if product.get("category_id") == "mpacks" else
+            "pc" if product.get("category_id") == "blankets" else
+            str(product.get("pricing", {}).get("unit", "unit"))
+        ),
         "pricing_type": product.get("pricing", {}).get("pricing_type", product.get("pricing", {}).get("type")),
         "pricing_unit": product.get("pricing", {}).get("unit"),
         "requested_quantity": quantity, "quantity": effective_quantity,
@@ -312,6 +444,11 @@ def calculate_line(
     }
     if packaging:
         result["packaging"] = packaging
+    if mpack_selection:
+        result["price_per_sheet_eur"] = mpack_selection["price_per_sheet_eur"]
+        result["price_per_box_eur"] = mpack_selection["price_per_box_eur"]
+        result["sheets_per_box"] = mpack_selection["sheets_per_box"]
+        result["price_list"] = product.get("configuration", {}).get("machine_price_list") or {}
     if product.get("pricing", {}).get("pricing_type") in {"per_sqm", "formula"}:
         result["area_sqm"] = float(area_sqm(configuration))
     return result

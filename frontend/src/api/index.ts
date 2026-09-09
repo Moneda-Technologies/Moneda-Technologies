@@ -10,7 +10,7 @@ export const authApi = {
   verifyOtp: (email: string, code: string, purpose: "login" | "signup" | "reset" = "login") => api<{ next_step: string }>("/auth/verify-otp", jsonBody({ email, code, purpose })),
   signupStart: (value: { name: string; username: string; email: string; previous_pending_signup_id?: string }) => api<{ pending_signup_id: string; masked_email: string; otp_sent: boolean }>("/auth/signup/start", jsonBody(value)),
   signupVerifyEmail: (pending_signup_id: string, otp: string) => api<{ pending_signup_id: string; email_verified: boolean }>("/auth/signup/verify-email", jsonBody({ pending_signup_id, otp })),
-  signupComplete: (value: { pending_signup_id: string; password: string; confirm_password: string }) => api<{ next_step: string }>("/auth/signup/complete", jsonBody(value)),
+  signupComplete: (value: { pending_signup_id: string; password: string; confirm_password: string }) => api<{ next_step: string; selection_context?: string; authenticated: boolean; user_id: string }>("/auth/signup/complete", jsonBody(value)),
   register: (value: { name: string; phone: string; password: string }) => api<{ next_step: string }>("/auth/register", jsonBody(value)),
   resetPassword: (password: string) => api<null>("/auth/reset-password", jsonBody({ password })),
   changePassword: (current_password: string, new_password: string) => api<null>("/auth/change-password", jsonBody({ current_password, new_password })),
@@ -35,8 +35,8 @@ export const catalogApi = {
 };
 
 export const machineApi = {
-  list: () => api<{ items: Array<{ _id: string; name: string }>; total: number }>("/machines"),
-  create: (name: string) => api<{ _id: string; name: string }>("/machines", jsonBody({ name })),
+  list: () => api<{ items: Array<{ _id: string; name: string; manufacturer?: string; machine_model?: string }>; total: number }>("/machines"),
+  create: (manufacturer: string, machineModel: string) => api<{ _id: string; name: string; manufacturer: string; machine_model: string }>("/machines", jsonBody({ manufacturer, machine_model: machineModel })),
 };
 
 export const customerCompanyApi = {
@@ -79,11 +79,12 @@ export const cartApi = {
   clear: (customerId: string) => api<{ removed: number }>(`/cart?customer_id=${encodeURIComponent(customerId)}`, { method: "DELETE" }),
 };
 
-export const dashboardApi = { get: (customerId: string) => api<DashboardData>(`/dashboard?customer_id=${encodeURIComponent(customerId)}`) };
-export const rateApi = { get: () => api<{ base: string; rates: Record<Currency, number>; provider: string; provider_source?: string; source?: string; status?: "live" | "cached"; rate_date?: string | null; provider_dates?: Record<string, string | null>; fetched_at: string; expires_at?: string; stale: boolean; warning?: string }>("/exchange-rates") };
+export const dashboardApi = { get: (customerId?: string) => api<DashboardData>(`/dashboard${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ""}`) };
+export const rateApi = { get: (refresh = true) => api<{ base: string; rates: Record<Currency, number>; provider: string; provider_source?: string; source?: string; status?: "live" | "cached"; rate_date?: string | null; provider_dates?: Record<string, string | null>; fetched_at: string; expires_at?: string; stale: boolean; warning?: string }>(`/exchange-rates${refresh ? "?refresh=true" : ""}`) };
 export const crmApi = {
-  leads: (customerId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/leads?customer_id=${encodeURIComponent(customerId)}`),
-  reminders: (customerId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/reminders?customer_id=${encodeURIComponent(customerId)}`),
+  leads: (query = "") => api<{ items: Record<string, unknown>[]; total: number; pagination?: { page: number; limit: number; total: number } }>(`/leads${query ? `?${query}` : ""}`),
+  createLead: (value: unknown) => api<Record<string, unknown>>("/leads", jsonBody(value)),
+  reminders: (customerId?: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/reminders${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ""}`),
   completeReminder: (id: string) => api<{ reminder: Record<string, unknown>; next_reminder?: Record<string, unknown> | null }>(`/reminders/${encodeURIComponent(id)}/complete`, jsonBody({})),
 };
 export const orderApi = {
@@ -94,6 +95,7 @@ export const orderApi = {
 };
 export const adminApi = {
   users: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/users"),
+  updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
   settings: () => api<Record<string, unknown>>("/settings"),
   zohoStatus: () => api<{

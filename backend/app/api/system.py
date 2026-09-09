@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, request, session
 
-from app.api.responses import success
-from app.middleware.access import can_view_all_customers, current_user, customer_record, login_required, permitted_customer_query, selected_customer_id
+from app.api.responses import failure, success
+from app.customers.metadata import phone_is_valid
+from app.middleware.access import current_user, customer_access_summary, customer_record, login_required, permitted_customer_query, selected_customer_id
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -50,6 +51,7 @@ def public_config():
         "master_currency": settings.get("master_currency", "EUR"), "demo_mode": current_app.config["DEMO_MODE"],
         "app": {"name": brand_name, "logo_path": brand_logo_path},
         "features": {"email_otp": email_otp_enabled, "signup": True, "email_provider": current_app.config.get("EMAIL_PROVIDER", "zoho_mail_api")},
+        "signup_email_domains": sorted(current_app.config.get("ALLOWED_SIGNUP_EMAIL_DOMAINS", ("monedatechnologies.com", "chemo.in"))),
         "currencies": currencies,
     })
 
@@ -61,13 +63,21 @@ def me():
     user.pop("password_hash", None)
     user.pop("currency_preference", None)
     store = current_app.extensions["store"]
-    if can_view_all_customers(user):
+    access = customer_access_summary(user)
+    if access["global"]:
         customers = [row for row in store.list("customers", permitted_customer_query(user), limit=500, sort="name", direction=1)[0] if not row.get("is_issuer")]
     else:
-        customers = [customer_record(customer_id) for customer_id in (user.get("customer_ids") or user.get("customer_company_ids") or user.get("company_ids", []))]
+        customers = [customer_record(customer_id) for customer_id in access["customer_ids"]]
         customers = [customer for customer in customers if customer and not customer.get("is_issuer")]
+    user["customer_access_global"] = access["global"]
+    user["assigned_customer_ids"] = access["customer_ids"]
+    user["customer_access_count"] = access["count"]
     customers = [{**customer, "customer_id": customer.get("_id"), "company_name": customer.get("name")} for customer in customers]
     selected = selected_customer_id()
+    if selected and not access["global"] and selected not in access["customer_ids"]:
+        for key in ("active_customer_id", "selected_customer_company_id", "active_company_id"):
+            session.pop(key, None)
+        selected = None
     active = customer_record(selected)
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
     current_app.logger.info(
@@ -94,7 +104,13 @@ def update_profile():
     user = current_user() or {}
     allowed = {"name", "phone", "notification_preferences", "profile_image"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
+    if "name" in changes and len(str(changes["name"]).strip()) < 2:
+        return failure("Full name must contain at least 2 characters", status=422)
+    if "phone" in changes and not phone_is_valid(str(changes["phone"]).strip()):
+        return failure("Enter a valid phone number", status=422)
     row = current_app.extensions["store"].update_one("users", {"_id": user["_id"]}, changes)
+    if not row:
+        return failure("Profile could not be updated", status=404)
     row.pop("password_hash", None)
     audit("profile.update", "user", str(user["_id"]), {"fields": sorted(changes)})
     return success(row, "Profile updated")
