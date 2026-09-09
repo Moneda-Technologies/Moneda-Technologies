@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from flask import Blueprint, current_app, request, session
+from pydantic import ValidationError
 
 from app.api.responses import failure, success
+from app.auth.policy import SIGNUP_EMAIL_DOMAIN_MESSAGE, is_allowed_signup_email, normalize_signup_email
+from app.auth.schemas import EmailChangeRequest, EmailChangeVerify
+from app.auth.service import OtpError
+from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.metadata import phone_is_valid
 from app.middleware.access import current_user, customer_access_summary, customer_record, login_required, permitted_customer_query, selected_customer_id
-from app.repositories.store import utcnow
+from app.repositories.store import ensure_utc, utcnow
 from app.services.audit import audit
 
 
@@ -60,7 +65,8 @@ def public_config():
 @login_required
 def me():
     user = {**(current_user() or {})}
-    user.pop("password_hash", None)
+    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts"):
+        user.pop(field, None)
     user.pop("currency_preference", None)
     store = current_app.extensions["store"]
     access = customer_access_summary(user)
@@ -111,9 +117,163 @@ def update_profile():
     row = current_app.extensions["store"].update_one("users", {"_id": user["_id"]}, changes)
     if not row:
         return failure("Profile could not be updated", status=404)
-    row.pop("password_hash", None)
+    row = _safe_profile_user(row)
     audit("profile.update", "user", str(user["_id"]), {"fields": sorted(changes)})
     return success(row, "Profile updated")
+
+
+_EMAIL_CHANGE_FIELDS = [
+    "pending_email", "pending_email_verification_id", "pending_email_verification_expires_at",
+    "pending_email_verification_attempts", "pending_email_verification_token_hash",
+]
+
+
+def _invalidate_email_change_challenges(store, user_id: str) -> None:
+    rows, _ = store.list("otp_challenges", {"purpose": "email_change", "user_id": user_id, "used": False}, limit=100)
+    for row in rows:
+        store.update_one("otp_challenges", {"_id": row["_id"]}, {"used": True})
+
+
+def _safe_profile_user(row: dict) -> dict:
+    result = {**row}
+    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts"):
+        result.pop(field, None)
+    return result
+
+
+def _email_change_error(exc: EmailDeliveryError) -> str:
+    if exc.error_code == "OAUTH_NOT_CONNECTED":
+        return "Email service is not connected. Please contact the administrator."
+    if exc.error_code == "OTP_SENDER_ALIAS_UNAVAILABLE":
+        return "OTP email is not ready because its Zoho sender alias is unavailable."
+    return "Unable to send verification email."
+
+
+def _start_email_change(user: dict, email: str, *, request_id: str, resend: bool = False):
+    store = current_app.extensions["store"]
+    normalized = normalize_signup_email(email)
+    if not normalized:
+        return failure("Enter a valid email address.", status=422, error="invalid_email")
+    if not is_allowed_signup_email(normalized, current_app.config.get("ALLOWED_SIGNUP_EMAIL_DOMAINS")):
+        return failure(SIGNUP_EMAIL_DOMAIN_MESSAGE, status=422, error="email_domain_not_allowed")
+    current = normalize_signup_email(user.get("email")) or str(user.get("email") or "").strip().lower()
+    if normalized == current:
+        return failure("That is already your current email address.", status=422, error="email_unchanged")
+    duplicate = store.find_one("users", {"email": normalized})
+    if duplicate and str(duplicate.get("_id")) != str(user.get("_id")):
+        return failure("That email address is already associated with another account.", status=409, error="email_in_use")
+
+    # A new address invalidates any earlier transaction. For resend, leave the
+    # active challenge in place so OtpService enforces its resend cooldown and
+    # replaces it only after a permitted request.
+    if not resend:
+        _invalidate_email_change_challenges(store, str(user["_id"]))
+    try:
+        challenge_result = current_app.extensions["otp_service"].request(
+            normalized, "email_change", request_id=request_id, return_challenge=True,
+            metadata={"user_id": user["_id"], "name": user.get("name", "there")},
+        )
+        challenge = challenge_result if isinstance(challenge_result, dict) else store.find_one(
+            "otp_challenges", {"email": normalized, "purpose": "email_change", "user_id": user["_id"], "used": False},
+        )
+        if not challenge:
+            current_app.logger.error("email_change stage=challenge_persistence result=FAIL request_id=%s", request_id)
+            return failure("Email verification could not be started. Please try again.", status=500, error="email_change_persistence_failed")
+        updated = store.update_one("users", {"_id": user["_id"]}, {
+            "pending_email": normalized,
+            "pending_email_verification_id": challenge["_id"],
+            "pending_email_verification_expires_at": challenge["expires_at"],
+            "pending_email_verification_attempts": 0,
+        })
+        if not updated:
+            store.update_one("otp_challenges", {"_id": challenge["_id"]}, {"used": True})
+            return failure("Email verification could not be started. Please try again.", status=500, error="email_change_persistence_failed")
+        current_app.logger.info("email_change stage=request result=PASS request_id=%s resend=%s", request_id, resend)
+        return success({"pending_email": normalized, "expires_at": challenge["expires_at"]}, "Verification code sent")
+    except OtpError as exc:
+        return failure(str(exc), status=429, error="otp_policy")
+    except EmailDeliveryError as exc:
+        current_app.logger.error("email_change stage=otp_delivery result=FAIL request_id=%s error_code=%s diagnostic_id=%s", request_id, exc.error_code, exc.diagnostic_id)
+        return failure(_email_change_error(exc), status=503, error=exc.error_code, diagnostic_id=exc.diagnostic_id, stage=exc.stage)
+    except Exception:
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("email_change stage=otp_delivery result=FAIL request_id=%s diagnostic_id=%s", request_id, diagnostic_id)
+        return failure("Unable to send verification email.", status=503, error="otp_delivery_failed", diagnostic_id=diagnostic_id)
+
+
+@bp.post("/profile/email-change/request")
+@login_required
+def request_email_change():
+    try:
+        payload = EmailChangeRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return failure("Enter a valid email address.", exc.errors(include_url=False), status=422, error="invalid_email")
+    return _start_email_change(current_user() or {}, str(payload.email), request_id=f"email-change-{utcnow():%Y%m%d}-{email_diagnostic_id()[-6:]}")
+
+
+@bp.post("/profile/email-change/resend")
+@login_required
+def resend_email_change():
+    user = current_user() or {}
+    pending = normalize_signup_email(user.get("pending_email"))
+    if not pending:
+        return failure("There is no pending email change to resend.", status=409, error="email_change_not_pending")
+    return _start_email_change(user, pending, resend=True, request_id=f"email-change-resend-{utcnow():%Y%m%d}-{email_diagnostic_id()[-6:]}")
+
+
+@bp.post("/profile/email-change/verify")
+@login_required
+def verify_email_change():
+    try:
+        payload = EmailChangeVerify.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return failure("Enter the six-digit verification code.", exc.errors(include_url=False), status=422, error="invalid_otp")
+    user = current_user() or {}
+    pending = normalize_signup_email(user.get("pending_email"))
+    challenge_id = user.get("pending_email_verification_id")
+    if not pending or not challenge_id:
+        return failure("There is no pending email change to verify.", status=409, error="email_change_not_pending")
+    expires_at = ensure_utc(user.get("pending_email_verification_expires_at"))
+    store = current_app.extensions["store"]
+    if not expires_at or expires_at <= utcnow():
+        _invalidate_email_change_challenges(store, str(user["_id"]))
+        store.unset_many("users", {"_id": user["_id"]}, _EMAIL_CHANGE_FIELDS)
+        return failure("This verification code has expired. Request a new code.", status=410, error="email_change_expired")
+    duplicate = store.find_one("users", {"email": pending})
+    if duplicate and str(duplicate.get("_id")) != str(user["_id"]):
+        return failure("That email address is already associated with another account.", status=409, error="email_in_use")
+    try:
+        current_app.extensions["otp_service"].verify_challenge(
+            pending, "email_change", payload.code,
+            extra_query={"_id": challenge_id, "user_id": user["_id"]},
+        )
+    except OtpError as exc:
+        return failure(str(exc), status=400, error="email_change_otp_invalid")
+    try:
+        updated = store.update_one("users", {"_id": user["_id"], "pending_email_verification_id": challenge_id}, {
+            "email": pending, "email_verified": True,
+        }, unset_fields=_EMAIL_CHANGE_FIELDS)
+    except Exception as exc:
+        if exc.__class__.__name__ == "DuplicateKeyError":
+            return failure("That email address is already associated with another account.", status=409, error="email_in_use")
+        raise
+    if not updated:
+        return failure("This email change is no longer pending. Request a new code.", status=409, error="email_change_not_pending")
+    audit("profile.email_change", "user", str(user["_id"]), {"email_verified": True})
+    current_app.logger.info("email_change stage=verification result=PASS user_id=%s", user["_id"])
+    return success(_safe_profile_user(updated), "Email address updated")
+
+
+@bp.post("/profile/email-change/cancel")
+@login_required
+def cancel_email_change():
+    user = current_user() or {}
+    store = current_app.extensions["store"]
+    _invalidate_email_change_challenges(store, str(user["_id"]))
+    updated = store.unset_many("users", {"_id": user["_id"]}, _EMAIL_CHANGE_FIELDS)
+    audit("profile.email_change_cancel", "user", str(user["_id"]), {"fields_cleared": bool(updated)})
+    current = store.find_one("users", {"_id": user["_id"]}) or user
+    return success(_safe_profile_user(current), "Email change cancelled")
 
 
 @bp.get("/notifications")
@@ -165,6 +325,6 @@ def openapi():
             "/cart/items": {"post": {"summary": "Server-price and add a cart item"}},
             "/quotations": {"get": {"summary": "List quotations"}, "post": {"summary": "Create immutable quotation snapshot"}},
             "/quotations/preview": {"post": {"summary": "Validate and calculate an unsaved quotation preview"}},
-            "/exchange-rates": {"get": {"summary": "EUR to USD/INR live or cached rates"}},
+            "/exchange-rates": {"get": {"summary": "EUR master to USD/INR ECB reference rates"}},
         },
     })

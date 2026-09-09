@@ -191,6 +191,12 @@ class EmailService(EmailProvider):
     def send_reset_otp(self, *, to: list[str], html: str, request_id: str | None = None) -> dict[str, Any]:
         return self._send_otp(to=to, html=html, purpose="reset", request_id=request_id)
 
+    def send_email_change_otp(self, *, to: list[str], html: str, request_id: str | None = None) -> dict[str, Any]:
+        return self.send(
+            to=to, subject="Moneda Technologies - Email change verification code",
+            html=html, request_id=request_id, purpose="otp",
+        )
+
     def send_quotation(self, *, to: list[str], subject: str, html: str,
                        attachments: list[dict[str, Any]] | None = None,
                        cc: list[str] | None = None, bcc: list[str] | None = None,

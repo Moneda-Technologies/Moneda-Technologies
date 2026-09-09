@@ -48,6 +48,8 @@ export interface User {
   permissions: string[];
   active?: boolean;
   email_verified?: boolean;
+  pending_email?: string;
+  pending_email_verification_expires_at?: string;
   created_at?: string;
   demo?: boolean;
 }

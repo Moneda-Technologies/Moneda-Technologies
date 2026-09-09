@@ -14,6 +14,14 @@ class OtpVerify(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
 
 
+class EmailChangeRequest(BaseModel):
+    email: EmailStr
+
+
+class EmailChangeVerify(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
 class PasswordLogin(BaseModel):
     """Credentials accepted by the workspace sign-in form.
 

@@ -25,7 +25,8 @@ class OtpService:
         self.store = store
         self.email_provider = email_provider
 
-    def request(self, email: str, purpose: str, *, metadata: dict[str, Any] | None = None, request_id: str | None = None) -> bool:
+    def request(self, email: str, purpose: str, *, metadata: dict[str, Any] | None = None,
+                request_id: str | None = None, return_challenge: bool = False) -> bool | dict[str, Any]:
         trace_id = request_id or "otp-untracked"
         email = email.lower().strip()
         user = self.store.find_one("users", {"email": email})
@@ -59,6 +60,7 @@ class OtpService:
                     "<p>It expires in 10 minutes. If you did not request it, ignore this email.</p></div>")
             method_name = {
                 "signup": "send_signup_otp", "login": "send_login_otp", "reset": "send_reset_otp",
+                "email_change": "send_email_change_otp",
             }.get(purpose, "send_otp")
             send_otp = getattr(self.email_provider, method_name, None) or getattr(self.email_provider, "send_otp", None)
             result = (send_otp(to=[email], html=html, request_id=request_id) if callable(send_otp) else
@@ -84,12 +86,18 @@ class OtpService:
                 "channel": "email", "created_at": utcnow(),
             })
             raise
-        return True
+        return row if return_challenge else True
 
     def verify(self, email: str, purpose: str, code: str, *, pending_signup_id: str | None = None) -> dict[str, Any] | None:
+        row = self.verify_challenge(email, purpose, code, pending_signup_id=pending_signup_id)
+        return self.store.find_one("users", {"email": email.lower().strip()}) if row else None
+
+    def verify_challenge(self, email: str, purpose: str, code: str, *, pending_signup_id: str | None = None,
+                         extra_query: dict[str, Any] | None = None) -> dict[str, Any]:
         query: dict[str, Any] = {"email": email.lower().strip(), "purpose": purpose, "used": False}
         if pending_signup_id:
             query["pending_signup_id"] = pending_signup_id
+        query.update(extra_query or {})
         row = self.store.find_one("otp_challenges", query)
         expires_at = self._normalized_datetime(row, "expires_at", "otp-verify") if row else None
         if not row or not expires_at or expires_at < utcnow():
@@ -102,7 +110,7 @@ class OtpService:
             self.store.update_one("otp_challenges", {"_id": row["_id"]}, {"attempts": attempts})
             raise OtpError("The verification code is invalid or expired")
         self.store.update_one("otp_challenges", {"_id": row["_id"]}, {"attempts": attempts, "used": True})
-        return self.store.find_one("users", {"email": email.lower().strip()})
+        return row
 
     @staticmethod
     def _normalized_datetime(row: dict[str, Any] | None, field: str, trace_id: str) -> datetime | None:

@@ -25,6 +25,8 @@ class FrankfurterProvider:
         self.last_provider_date: str | None = None
 
     def get_rates(self, base: str, targets: list[str]) -> dict[str, float]:
+        if base.upper() != "EUR":
+            raise ValueError("Frankfurter ECB reference rates must use EUR as the base currency")
         params = {"base": base, "quotes": ",".join(targets), "providers": "ECB"}
         try:
             response = requests.get(self.api_url, params=params, timeout=8)

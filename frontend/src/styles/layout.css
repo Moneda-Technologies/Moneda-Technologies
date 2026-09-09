@@ -87,8 +87,8 @@
 .page { margin: 0 auto; max-width: 1500px; }
 .page-header { align-items: flex-end; display: flex; justify-content: space-between; min-height: 139px; padding: 26px 0 23px; }
 .breadcrumb { color: #92958f; font-size: .65rem; font-weight: 650; margin-bottom: 11px; }
-.page-header h1 { font-size: clamp(1.5rem, 2vw, 2rem); letter-spacing: -.035em; line-height: 1.05; margin: 0 0 7px; }
-.page-header p { color: var(--text-muted); font-size: .77rem; margin: 0; max-width: 610px; }
+.page-header h1 { font-size: clamp(2rem, 3vw, 2.5rem); letter-spacing: -.035em; line-height: 1.05; margin: 0 0 8px; }
+.page-header p { color: var(--text-muted); font-size: 1rem; margin: 0; max-width: 680px; }
 .page-actions { display: flex; gap: 8px; }
 .mobile-menu { display: none; }
 .mobile-scrim { display: none; }
@@ -147,7 +147,7 @@
   .search-trigger { flex: 0 0 38px; justify-content: center; margin-left: auto; }
   .top-actions { gap: 6px; }
   .compact-select select { max-width: 130px; }
-  .page-header h1 { font-size: 1.6rem; }
+  .page-header h1 { font-size: 2rem; }
   .page-actions { overflow-x: auto; }
   .page-actions .button { flex: 0 0 auto; }
 }

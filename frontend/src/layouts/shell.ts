@@ -25,26 +25,26 @@ function fxDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function fxValue(target: string, rates: Record<string, number>): number | null {
+function fxValues(base: string, rates: Record<string, number>): Array<[string, number | null]> {
   const eurUsd = Number(rates.USD); const eurInr = Number(rates.INR);
-  if (!(eurUsd > 0) || !(eurInr > 0)) return null;
-  return target === "USD" ? eurUsd : eurInr;
+  if (!(eurUsd > 0) || !(eurInr > 0)) return [];
+  if (base === "USD") return [["INR", eurInr / eurUsd], ["EUR", 1 / eurUsd]];
+  if (base === "INR") return [["USD", eurUsd / eurInr], ["EUR", 1 / eurInr]];
+  return [["USD", eurUsd], ["INR", eurInr]];
 }
 
 function fxSymbol(currency: string): string { return currency === "USD" ? "$" : currency === "INR" ? "₹" : "€"; }
 
 function renderFxPopover(popover: HTMLElement): void {
-  const currency = "EUR";
+  const currency = appStore.state.currency;
   const snapshot = fxSnapshot;
   if (!snapshot) { popover.innerHTML = `<span class="eyebrow">FX Rates</span><strong>FX rates unavailable</strong><small>Try again when the rate service is available.</small>`; return; }
-  const targets = ["USD", "INR"];
-  const rows = targets.map((target) => {
-    const value = fxValue(target, snapshot.rates);
+  const rows = fxValues(currency, snapshot.rates).map(([target, value]) => {
     return `<div class="fx-rate-row"><span>1 ${currency}</span><strong>= ${value === null ? "—" : `${fxSymbol(target)}${value.toFixed(4)}`}</strong><em>${target}</em></div>`;
   }).join("");
-  const status = snapshot.stale || snapshot.source === "cached" ? "Cached" : "Live";
+  const status = snapshot.status === "stored_fallback" || snapshot.stale ? "Using last successful ECB rate" : "Latest available";
   const providerDate = snapshot.provider_dates?.USD || snapshot.provider_dates?.INR;
-  popover.innerHTML = `<div class="fx-popover-title"><span class="eyebrow">FX Rates</span><strong>Base: ${currency}</strong></div><div class="fx-rate-list">${rows}</div><div class="fx-meta"><span>ECB Reference Rate</span><span>Rate date: ${escapeHtml(providerDate ?? "Unavailable")}</span><span>Fetched: ${escapeHtml(fxDate(snapshot.fetched_at))}</span><strong class="fx-status ${status === "Live" ? "is-live" : "is-cached"}"><i></i>${status}</strong></div>`;
+  popover.innerHTML = `<div class="fx-popover-title"><span class="eyebrow">FX Rates</span><strong>Base: ${currency}</strong></div><div class="fx-rate-list">${rows}</div><div class="fx-meta"><span>Latest available ECB Reference Rate</span><span>Rate date: ${escapeHtml(providerDate ?? "Unavailable")}</span><span>Fetched: ${escapeHtml(fxDate(snapshot.fetched_at))}</span><strong class="fx-status ${status === "Latest available" ? "is-live" : "is-cached"}"><i></i>${status}</strong></div>`;
   refreshIcons(popover);
 }
 
@@ -170,7 +170,7 @@ export function renderShell(): HTMLElement {
   let closeTimer = 0;
   const setFxOpen = (open: boolean) => { window.clearTimeout(closeTimer); fxControl?.classList.toggle("is-open", open); };
   const scheduleFxClose = () => { window.clearTimeout(closeTimer); closeTimer = window.setTimeout(() => setFxOpen(false), 100); };
-  const refreshFx = () => { setFxOpen(true); void loadFxSnapshot(true).then((snapshot) => { if (snapshot) appStore.set({ fxRates: snapshot.rates }); renderFx(); }); };
+  const refreshFx = () => { setFxOpen(true); void loadFxSnapshot(false).then((snapshot) => { if (snapshot) appStore.set({ fxRates: snapshot.rates }); renderFx(); }); };
   fxControl?.addEventListener("mouseenter", refreshFx);
   fxControl?.addEventListener("mouseleave", scheduleFxClose);
   currencySelect?.addEventListener("focus", refreshFx);
@@ -197,7 +197,7 @@ export function renderShell(): HTMLElement {
   document.addEventListener("click", closeFxOutside);
   const renderFx = () => { if (fxPopover) renderFxPopover(fxPopover); };
   renderFx();
-  void loadFxSnapshot(true).then((snapshot) => {
+  void loadFxSnapshot(false).then((snapshot) => {
     if (snapshot) appStore.set({ fxRates: snapshot.rates });
     renderFx();
   });

@@ -77,7 +77,7 @@ export async function adminPage(): Promise<HTMLElement> {
   try {
     const result = await catalogApi.products();
     const pending = result.items.filter((product) => product.pricing_status !== "configured").length;
-    body.innerHTML = `<div class="admin-callout"><div><span class="eyebrow">EUR pricing control</span><h2>One master catalogue, live conversions.</h2><p>Review all ${result.pagination?.total ?? result.items.length} active products. ${pending} still require commercial pricing.</p></div><div class="admin-flow"><span>Catalog</span><i data-lucide="chevron-right"></i><span>EUR price</span><i data-lucide="chevron-right"></i><span>Live FX</span><i data-lucide="chevron-right"></i><strong>Product tax</strong></div></div><div class="section-title"><div><span class="eyebrow">Master catalogue</span><h2>Product pricing</h2></div><span class="count-badge">${pending} pending</span></div>${result.items.length ? `<div class="pricing-list panel">${result.items.map(pricingRow).join("")}</div>` : emptyState("circle-check-big", "Catalogue is empty", "Import products to begin pricing.")}`;
+    body.innerHTML = `<div class="admin-callout"><div><span class="eyebrow">EUR pricing control</span><h2>One master catalogue, reference conversions.</h2><p>Review all ${result.pagination?.total ?? result.items.length} active products. ${pending} still require commercial pricing.</p></div><div class="admin-flow"><span>Catalog</span><i data-lucide="chevron-right"></i><span>EUR price</span><i data-lucide="chevron-right"></i><span>ECB reference rate</span><i data-lucide="chevron-right"></i><strong>Product tax</strong></div></div><div class="section-title"><div><span class="eyebrow">Master catalogue</span><h2>Product pricing</h2></div><span class="count-badge">${pending} pending</span></div>${result.items.length ? `<div class="pricing-list panel">${result.items.map(pricingRow).join("")}</div>` : emptyState("circle-check-big", "Catalogue is empty", "Import products to begin pricing.")}`;
     body.querySelectorAll<HTMLFormElement>(".inline-price-form").forEach((form) => form.addEventListener("submit", async (event) => {
       event.preventDefault(); const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("button")!; button.disabled = true;
       const variantInputs = Array.from(form.querySelectorAll<HTMLInputElement>("[data-thickness]"));
@@ -189,8 +189,74 @@ export async function profilePage(): Promise<HTMLElement> {
   const permissionLabels: Record<string, string> = { view: "View", create: "Create", update: "Edit", edit: "Edit", delete: "Delete", manage: "Manage", history: "View history", send: "Send", download: "Download", print: "Print", confirm: "Confirm", pack: "Pack", ship: "Ship", receive: "Receive", complete: "Complete", override: "Override" };
   const permissionGroups = permissions.reduce<Record<string, string[]>>((groups, permission) => { const [module, action] = permission.split("."); (groups[module] ??= []).push(permissionLabels[action] ? `${permissionLabels[action]} ${module}` : permission); return groups; }, {});
     const customerCount = user.customer_access_global ? "All" : String(user.customer_access_count ?? user.assigned_customer_ids?.length ?? user.customer_ids?.length ?? user.company_ids?.length ?? 0);
-    body.innerHTML = `<div class="profile-layout"><aside class="profile-card panel"><div class="profile-avatar">${escapeHtml(user.name.replace(/\s+/g, "").slice(0, 2).toUpperCase())}</div><h2>${escapeHtml(user.name)}</h2><p>${escapeHtml(user.email)}</p>${statusBadge(user.role_display_name)}<div class="profile-stat"><span>Customers</span><strong>${customerCount}</strong></div><button type="button" class="profile-stat profile-stat-button" data-show-permissions><span>Permissions</span><strong>${permissions.length}</strong></button></aside><div class="profile-stack"><form class="panel settings-panel profile-form"><span class="eyebrow">Profile</span><h2>Personal details</h2><div class="form-grid"><label>Full name<input name="name" value="${escapeHtml(user.name)}" required></label><label>Username<input value="${escapeHtml(user.username ?? "—")}" disabled></label><label>Email<input value="${escapeHtml(user.email)}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(user.phone ?? "")}"></label><label>Role<input value="${escapeHtml(user.role_display_name)}" disabled></label></div><p class="muted">Username, role, permissions and email identity are protected account fields.</p><button class="button button-dark" type="submit">Save profile</button></form><section class="panel settings-panel profile-account"><span class="eyebrow">Account</span><h2>Account status</h2><div class="detail-grid"><div><span>Email verification</span><strong>${user.email_verified ? "Verified" : "Not verified"}</strong></div><div><span>Account status</span><strong>${user.active === false ? "Inactive" : "Active"}</strong></div><div><span>Created</span><strong>${escapeHtml(String(user.created_at ?? "—"))}</strong></div></div></section><form class="panel settings-panel password-form"><span class="eyebrow">Security</span><h2>Change password</h2><div class="form-grid"><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" minlength="10" autocomplete="new-password" required></label></div><button class="button button-secondary" type="submit">Change password</button><button type="button" class="button button-danger profile-signout">Sign out</button></form></div></div>`;
+    body.innerHTML = `<div class="profile-layout"><aside class="profile-card panel"><div class="profile-avatar">${escapeHtml(user.name.replace(/\s+/g, "").slice(0, 2).toUpperCase())}</div><h2>${escapeHtml(user.name)}</h2><p data-profile-email>${escapeHtml(user.email)}</p>${statusBadge(user.role_display_name)}<div class="profile-stat"><span>Customers</span><strong>${customerCount}</strong></div><button type="button" class="profile-stat profile-stat-button" data-show-permissions><span>Permissions</span><strong>${permissions.length}</strong></button></aside><div class="profile-stack"><form class="panel settings-panel profile-form"><span class="eyebrow">Profile</span><h2>Personal details</h2><div class="form-grid"><label>Full name<input name="name" value="${escapeHtml(user.name)}" required></label><label>Username<input value="${escapeHtml(user.username ?? "—")}" disabled></label><label class="profile-email-field">Email<div class="profile-email-control"><input name="email" value="${escapeHtml(user.email)}" disabled autocomplete="email"><button type="button" class="icon-button profile-email-edit" data-email-edit aria-label="Edit email" title="Edit email"><i data-lucide="pencil"></i></button></div><span class="profile-email-actions hidden"><button type="button" class="button button-secondary" data-email-cancel>Cancel</button><button type="button" class="button button-dark" data-email-save>Change email</button></span><small class="field-error" data-email-error></small></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(user.phone ?? "")}"></label><label>Role<input value="${escapeHtml(user.role_display_name)}" disabled></label></div><div class="profile-email-verify hidden" data-email-verify><p>We&apos;ve sent a verification code to <strong data-email-pending></strong></p><label>Verification code<input data-email-otp class="otp-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000"></label><div class="profile-email-actions"><button type="button" class="button button-secondary" data-email-cancel-pending>Keep current email</button><button type="button" class="button button-dark" data-email-verify-submit>Verify email</button></div><button type="button" class="button button-quiet" data-email-resend>Resend code</button><small class="field-error" data-email-verify-error></small></div><p class="muted">Username, role, permissions and email identity are protected account fields.</p><button class="button button-dark" type="submit">Save profile</button></form><section class="panel settings-panel profile-account"><span class="eyebrow">Account</span><h2>Account status</h2><div class="detail-grid"><div><span>Email verification</span><strong data-email-verification>${user.email_verified ? "Verified" : "Not verified"}</strong></div><div><span>Account status</span><strong>${user.active === false ? "Inactive" : "Active"}</strong></div><div><span>Created</span><strong>${escapeHtml(String(user.created_at ?? "—"))}</strong></div></div></section><form class="panel settings-panel password-form"><span class="eyebrow">Security</span><h2>Change password</h2><div class="form-grid"><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" minlength="10" autocomplete="new-password" required></label></div><button class="button button-secondary" type="submit">Change password</button><button type="button" class="button button-danger profile-signout">Sign out</button></form></div></div>`;
   enhancePasswordFields(body);
+  const emailField = body.querySelector<HTMLInputElement>('[name="email"]');
+  const emailEdit = body.querySelector<HTMLButtonElement>('[data-email-edit]');
+  const emailEditActions = body.querySelector<HTMLElement>('.profile-email-field .profile-email-actions');
+  const emailVerify = body.querySelector<HTMLElement>('[data-email-verify]');
+  const emailError = body.querySelector<HTMLElement>('[data-email-error]');
+  const emailVerifyError = body.querySelector<HTMLElement>('[data-email-verify-error]');
+  const currentEmail = () => appStore.state.user?.email ?? user.email;
+  const showEmailError = (node: HTMLElement | null, message = "") => { if (node) node.textContent = message; };
+  const showEmailEdit = () => {
+    if (!emailField || !emailEdit || !emailEditActions) return;
+    emailField.disabled = false; emailField.focus(); emailEdit.hidden = true; emailEditActions.classList.remove("hidden"); showEmailError(emailError);
+  };
+  const resetEmailEdit = () => {
+    if (!emailField || !emailEdit || !emailEditActions) return;
+    emailField.value = currentEmail(); emailField.disabled = true; emailEdit.hidden = false; emailEditActions.classList.add("hidden"); showEmailError(emailError);
+  };
+  const showEmailVerification = (pendingEmail: string) => {
+    if (!emailVerify) return;
+    emailVerify.querySelector<HTMLElement>('[data-email-pending]')!.textContent = pendingEmail;
+    emailVerify.classList.remove("hidden"); emailEdit?.setAttribute("hidden", "true"); emailEditActions?.classList.add("hidden");
+    emailField?.setAttribute("disabled", "true"); showEmailError(emailVerifyError); emailVerify.querySelector<HTMLInputElement>('[data-email-otp]')?.focus();
+  };
+  const hideEmailVerification = () => { emailVerify?.classList.add("hidden"); emailEdit?.removeAttribute("hidden"); if (emailField) { emailField.value = currentEmail(); emailField.disabled = true; } };
+  if (user.pending_email) showEmailVerification(user.pending_email);
+  emailEdit?.addEventListener("click", showEmailEdit);
+  body.querySelector<HTMLButtonElement>('[data-email-cancel]')?.addEventListener("click", resetEmailEdit);
+  body.querySelector<HTMLButtonElement>('[data-email-save]')?.addEventListener("click", async (event) => {
+    if (!emailField) return;
+    const button = event.currentTarget as HTMLButtonElement;
+    if (!emailField.checkValidity()) { emailField.reportValidity(); return; }
+    button.disabled = true; showEmailError(emailError);
+    try {
+      const result = await profileApi.requestEmailChange(emailField.value.trim());
+      appStore.set({ user: { ...appStore.state.user!, pending_email: result.pending_email, pending_email_verification_expires_at: result.expires_at } });
+      showEmailVerification(result.pending_email); toast("Verification code sent to the new email", "info");
+    } catch (error) { showEmailError(emailError, error instanceof Error ? error.message : "Email change could not be started"); }
+    finally { button.disabled = false; }
+  });
+  body.querySelector<HTMLButtonElement>('[data-email-verify-submit]')?.addEventListener("click", async (event) => {
+    const code = emailVerify?.querySelector<HTMLInputElement>('[data-email-otp]')?.value.trim() ?? "";
+    const button = event.currentTarget as HTMLButtonElement;
+    if (!/^\d{6}$/.test(code)) { showEmailError(emailVerifyError, "Enter the six-digit verification code."); return; }
+    button.disabled = true; showEmailError(emailVerifyError);
+    try {
+      const updated = await profileApi.verifyEmailChange(code);
+      appStore.set({ user: updated });
+      body.querySelector<HTMLElement>('[data-profile-email]')!.textContent = updated.email;
+      body.querySelector<HTMLElement>('[data-email-verification]')!.textContent = updated.email_verified ? "Verified" : "Not verified";
+      hideEmailVerification(); toast("Email address updated");
+    } catch (error) { showEmailError(emailVerifyError, error instanceof Error ? error.message : "Email could not be verified"); }
+    finally { button.disabled = false; }
+  });
+  body.querySelector<HTMLButtonElement>('[data-email-resend]')?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true; showEmailError(emailVerifyError);
+    try { const result = await profileApi.resendEmailChange(); appStore.set({ user: { ...appStore.state.user!, pending_email: result.pending_email, pending_email_verification_expires_at: result.expires_at } }); showEmailVerification(result.pending_email); toast("A new verification code was sent", "info"); }
+    catch (error) { showEmailError(emailVerifyError, error instanceof Error ? error.message : "Verification code could not be resent"); }
+    finally { button.disabled = false; }
+  });
+  body.querySelector<HTMLButtonElement>('[data-email-cancel-pending]')?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true; showEmailError(emailVerifyError);
+    try { const updated = await profileApi.cancelEmailChange(); appStore.set({ user: updated }); hideEmailVerification(); toast("Email change cancelled", "info"); }
+    catch (error) { showEmailError(emailVerifyError, error instanceof Error ? error.message : "Email change could not be cancelled"); }
+    finally { button.disabled = false; }
+  });
   body.querySelector<HTMLButtonElement>('[data-show-permissions]')?.addEventListener('click', () => {
     const content = document.createElement('div');
     content.innerHTML = `<p class="permission-modal-count">${permissions.length} permissions assigned to ${escapeHtml(user.name)}.</p><div class="permission-groups">${Object.entries(permissionGroups).sort(([a], [b]) => a.localeCompare(b)).map(([module, values]) => `<section><h3>${escapeHtml(module.replace(/_/g, ' '))}</h3><ul>${values.sort().map((value) => `<li><i data-lucide="check"></i>${escapeHtml(value)}</li>`).join('')}</ul></section>`).join('')}</div>`;

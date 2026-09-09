@@ -78,8 +78,8 @@ def exchange_rates():
         return success(current_app.extensions["exchange_rate_service"].get_rates(force=force))
     except ExchangeRateUnavailable:
         return failure(
-            "No live or cached exchange rate is currently available.",
-            status=503, error="exchange_rate_unavailable",
+            "FX rates currently unavailable. Please try again when the ECB reference rate service is available.",
+            status=503, error="exchange_rate_unavailable", rate_status="unavailable",
         )
 
 

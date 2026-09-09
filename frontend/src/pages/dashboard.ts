@@ -18,16 +18,18 @@ export async function dashboardPage(): Promise<HTMLElement> {
       ["Conversion", `${data.metrics.conversion_rate}%`, "gauge", `${data.metrics.accepted_quotations} accepted`],
       ["Follow-ups", String(data.metrics.follow_ups_due), "bell-ring", "Open reminders"],
     ];
+    const fxFallback = rates.status === "stored_fallback" || rates.stale;
+    const fxStatus = fxFallback ? "Using last successful ECB rate" : "Latest available";
+    const fxStatusCopy = fxFallback ? "Provider temporarily unavailable; using the stored ECB reference rate." : "Latest available ECB reference rate.";
     body.innerHTML = `
-      ${rates.stale ? `<div class="notice warning"><i data-lucide="triangle-alert"></i><div><strong>Stored exchange rate in use</strong><p>${escapeHtml(rates.warning ?? "Live rate unavailable")}. Last updated ${formatDate(rates.fetched_at)}.</p></div></div>` : ""}
       <div class="metric-grid">${metrics.map(([label, value, icon, copy], index) => `<article class="metric-card"><div class="metric-top"><span>${label}</span><i data-lucide="${icon}"></i></div><strong>${value}</strong><p>${copy}</p><div class="metric-accent accent-${index}"></div></article>`).join("")}</div>
       <div class="dashboard-grid">
         <article class="panel chart-panel"><div class="panel-head"><div><span class="eyebrow">Pipeline signal</span><h2>Quotation status</h2></div><select aria-label="Chart period"><option>All time</option></select></div>${Object.keys(data.quotation_status).length ? '<div class="chart-wrap"><canvas id="quotation-chart"></canvas></div>' : emptyState("chart-no-axes-column-increasing", "No quotation activity yet", "Create the first quotation to begin measuring your pipeline.")}</article>
-        <article class="panel rate-panel"><div class="panel-head"><div><span class="eyebrow">Currency engine</span><h2>EUR master rates</h2></div><span class="live-state ${rates.stale ? "stale" : ""}"><span></span>${rates.stale ? "Stored" : "Live"}</span></div>
+        <article class="panel rate-panel"><div class="panel-head"><div><span class="eyebrow">Currency engine</span><h2>EUR master rates</h2></div><span class="live-state ${fxFallback ? "stale" : ""}"><span></span>${fxStatus}</span></div>
           <div class="rate-row"><div><span class="currency-flag flag-eu">€</span><p><strong>EUR</strong><small>Master catalogue</small></p></div><strong>1.0000</strong></div>
-          <div class="rate-row"><div><span class="currency-flag flag-us">$</span><p><strong>USD</strong><small>US dollar</small></p></div><strong>${rates.rates.USD?.toFixed(4) ?? "—"}</strong></div>
-          <div class="rate-row"><div><span class="currency-flag flag-in">₹</span><p><strong>INR</strong><small>Indian rupee</small></p></div><strong>${rates.rates.INR?.toFixed(4) ?? "—"}</strong></div>
-          <p class="rate-foot">${escapeHtml(rates.provider)} · ${formatDate(rates.fetched_at)}</p>
+          <div class="rate-row"><div><span class="currency-flag flag-us">$</span><p><strong>USD</strong><small>Reference conversion</small></p></div><strong>${rates.rates.USD?.toFixed(4) ?? "—"}</strong></div>
+          <div class="rate-row"><div><span class="currency-flag flag-in">₹</span><p><strong>INR</strong><small>Reference conversion</small></p></div><strong>${rates.rates.INR?.toFixed(4) ?? "—"}</strong></div>
+          <p class="rate-foot">${escapeHtml(rates.provider)} · ${formatDate(rates.fetched_at)} · ${fxStatusCopy}</p>
         </article>
       </div>
       <div class="dashboard-grid lower-grid">

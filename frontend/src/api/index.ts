@@ -19,6 +19,10 @@ export const authApi = {
 };
 export const profileApi = {
   update: (value: unknown) => api<SessionPayload["user"]>("/me", patchBody(value)),
+  requestEmailChange: (email: string) => api<{ pending_email: string; expires_at: string }>("/profile/email-change/request", jsonBody({ email })),
+  resendEmailChange: () => api<{ pending_email: string; expires_at: string }>("/profile/email-change/resend", jsonBody({})),
+  verifyEmailChange: (code: string) => api<SessionPayload["user"]>("/profile/email-change/verify", jsonBody({ code })),
+  cancelEmailChange: () => api<SessionPayload["user"]>("/profile/email-change/cancel", jsonBody({})),
   notifications: () => api<{ items: Record<string, unknown>[]; unread: number; total: number }>("/notifications"),
   markNotificationRead: (id: string) => api<null>(`/notifications/${encodeURIComponent(id)}`, patchBody({ read: true })),
 };
@@ -82,7 +86,7 @@ export const cartApi = {
 };
 
 export const dashboardApi = { get: (customerId?: string) => api<DashboardData>(`/dashboard${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ""}`) };
-export const rateApi = { get: (refresh = true) => api<{ base: string; rates: Record<Currency, number>; provider: string; provider_source?: string; source?: string; status?: "live" | "cached"; rate_date?: string | null; provider_dates?: Record<string, string | null>; fetched_at: string; expires_at?: string; stale: boolean; warning?: string }>(`/exchange-rates${refresh ? "?refresh=true" : ""}`) };
+export const rateApi = { get: (refresh = false) => api<{ base: string; rates: Record<Currency, number>; provider: string; provider_source?: string; source?: string; status?: "latest" | "stored_fallback" | "unavailable" | "live" | "cached"; rate_date?: string | null; provider_dates?: Record<string, string | null>; provider_fetched_at?: string; last_successful_refresh_at?: string; fetched_at: string; expires_at?: string; stale: boolean; warning?: string }>(`/exchange-rates${refresh ? "?refresh=true" : ""}`) };
 export const crmApi = {
   leads: (query = "") => api<{ items: Record<string, unknown>[]; total: number; pagination?: { page: number; limit: number; total: number } }>(`/leads${query ? `?${query}` : ""}`),
   createLead: (value: unknown) => api<Record<string, unknown>>("/leads", jsonBody(value)),

@@ -31,7 +31,7 @@ class Store(Protocol):
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]: ...
     def find_one(self, collection: str, query: dict[str, Any]) -> dict[str, Any] | None: ...
     def insert_one(self, collection: str, document: dict[str, Any]) -> dict[str, Any]: ...
-    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False) -> dict[str, Any] | None: ...
+    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False, unset_fields: list[str] | None = None) -> dict[str, Any] | None: ...
     def unset_many(self, collection: str, query: dict[str, Any], fields: list[str]) -> int: ...
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool: ...
     def count(self, collection: str, query: dict[str, Any] | None = None) -> int: ...
@@ -105,11 +105,13 @@ class MemoryStore:
             self._data.setdefault(collection, []).append(row)
         return copy.deepcopy(row)
 
-    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False) -> dict[str, Any] | None:
+    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False, unset_fields: list[str] | None = None) -> dict[str, Any] | None:
         with self._lock:
             for row in self._data.setdefault(collection, []):
                 if _matches(row, query):
                     row.update(copy.deepcopy(changes))
+                    for field in unset_fields or []:
+                        row.pop(field, None)
                     row["updated_at"] = utcnow()
                     return copy.deepcopy(row)
         if upsert:
@@ -219,9 +221,12 @@ class MongoStore:
         self.db[collection].insert_one(row)
         return row
 
-    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False) -> dict[str, Any] | None:
+    def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False, unset_fields: list[str] | None = None) -> dict[str, Any] | None:
+        update: dict[str, Any] = {"$set": {**changes, "updated_at": utcnow()}}
+        if unset_fields:
+            update["$unset"] = {field: "" for field in unset_fields}
         return self.db[collection].find_one_and_update(
-            query, {"$set": {**changes, "updated_at": utcnow()}}, upsert=upsert,
+            query, update, upsert=upsert,
             return_document=ReturnDocument.AFTER,
         )
 
