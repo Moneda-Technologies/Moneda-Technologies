@@ -79,9 +79,14 @@ function familyCards(families: CatalogOption[]): string {
   }).join("")}</div>`;
 }
 
+function configurationField(label: string, control: string, helper = "", attrs = ""): string {
+  return `<label class="configuration-field"${attrs ? ` ${attrs}` : ""}><span class="field-label">${label}</span><span class="field-control">${control}</span><small class="field-helper">${helper}</small></label>`;
+}
+
 function machineField(initial: Config): string {
   const initialMachine = String(initial.machine ?? initial.machine_name ?? "");
-  return `<label data-machine-name-field>Machine Name <small data-machine-required-copy>(Optional for Cut Format)</small><span class="machine-combobox-field"><input name="machine" data-blanket-machine role="combobox" aria-autocomplete="list" aria-expanded="false" value="${valueAttr(initialMachine)}" placeholder="Search or select machine name" autocomplete="off"><input type="hidden" name="machine_id" value="${valueAttr(initial.machine_id)}"><div class="machine-search-results" data-blanket-machines role="listbox" hidden></div></span><small>Required when Format is Bar Format.</small></label>`;
+  const control = `<span class="machine-combobox-field"><input name="machine" data-blanket-machine role="combobox" aria-autocomplete="list" aria-expanded="false" value="${valueAttr(initialMachine)}" placeholder="Search or select machine name" autocomplete="off"><input type="hidden" name="machine_id" value="${valueAttr(initial.machine_id)}"><div class="machine-search-results" data-blanket-machines role="listbox" hidden></div></span>`;
+  return configurationField(`Machine Name <small data-machine-required-copy>(Optional for Cut Format)</small>`, control, "Required when Format is Bar Format.", "data-machine-name-field");
 }
 
 function blanketFields(product: Product, initial: Config): string {
@@ -97,7 +102,13 @@ function blanketFields(product: Product, initial: Config): string {
   const initialFormat = formats.includes(String(initial.format_type)) ? String(initial.format_type) : String(formats[0] ?? "cut_format");
   const initialUseSecondBar = initial.use_second_bar === true || Boolean(initial.bar_2_id && initial.bar_1_id && initial.bar_2_id !== initial.bar_1_id);
   const barOptions = (value: unknown, fallback: string) => bars.map((bar) => `<option value="${escapeHtml(bar.id)}" ${selected(value ?? fallback, bar.id)} ${bar.pricing_status !== "configured" ? "disabled" : ""}>${escapeHtml(bar.name)} · Art. ${escapeHtml(bar.article_no)}${bar.pricing_status !== "configured" ? " · On request" : ""}</option>`).join("");
-  return `<div class="form-grid">${machineField(initial)}<label>Thickness<select name="thickness_mm" required>${thicknesses.map((value) => `<option value="${value}" ${selected(initial.thickness_mm ?? thicknesses[0], value)}>${value.toFixed(2)} mm</option>`).join("")}</select></label><label>Dimension Unit<select name="dimension_unit"><option value="mm" ${selected(initial.dimension_unit ?? "mm", "mm")}>Millimetres</option><option value="inch" ${selected(initial.dimension_unit, "inch")}>Inches</option><option value="m" ${selected(initial.dimension_unit, "m")}>Metres</option></select></label><label>Length<input name="length" type="number" min="0.001" step="any" value="${valueAttr(initial.length)}" placeholder="Enter length" required></label><label>Width<input name="width" type="number" min="0.001" step="any" value="${valueAttr(initial.width)}" placeholder="Enter or select width" list="standard-widths" required><datalist id="standard-widths">${widths.map((width) => `<option value="${width}"></option>`).join("")}</datalist><small class="width-guidance">${widths.length ? `Standard: ${widths.join(", ")} mm` : "Custom width"}</small></label><label>Format<select name="format_type" required>${formats.map((format) => `<option value="${format}" ${selected(initialFormat, format)}>${format === "bar_format" ? "Bar Format" : "Cut Format"}</option>`).join("")}</select></label></div><div class="form-grid bar-fields" ${initialFormat === "bar_format" ? "" : "hidden"}><label>Bar 1<select name="bar_1_id" ${initialFormat === "bar_format" ? "required" : ""}>${barOptions(initial.bar_1_id, defaults[0])}</select></label><label class="check-row different-second-bar"><input name="use_second_bar" type="checkbox" ${initialUseSecondBar ? "checked" : ""}><span>Different second bar</span></label><label class="second-bar-field" ${initialUseSecondBar ? "" : "hidden"}>Bar 2<select name="bar_2_id" ${initialUseSecondBar ? "required" : ""}>${barOptions(initial.bar_2_id, defaults[1])}</select></label></div>`;
+  const dimensionUnit = configurationField("Dimension Unit", `<select name="dimension_unit"><option value="mm" ${selected(initial.dimension_unit ?? "mm", "mm")}>Millimetres</option><option value="inch" ${selected(initial.dimension_unit, "inch")}>Inches</option><option value="m" ${selected(initial.dimension_unit, "m")}>Metres</option></select>`);
+  const thickness = configurationField("Thickness", `<select name="thickness_mm" required>${thicknesses.map((value) => `<option value="${value}" ${selected(initial.thickness_mm ?? thicknesses[0], value)}>${value.toFixed(2)} mm</option>`).join("")}</select>`);
+  const length = configurationField("Length", `<input name="length" type="number" min="0.001" step="any" value="${valueAttr(initial.length)}" placeholder="Enter length" required>`);
+  const width = configurationField("Width", `<input name="width" type="number" min="0.001" step="any" value="${valueAttr(initial.width)}" placeholder="Enter or select width" list="standard-widths" required><datalist id="standard-widths">${widths.map((value) => `<option value="${value}"></option>`).join("")}</datalist>`, widths.length ? `Standard: ${widths.join(", ")} mm` : "Custom width");
+  const format = configurationField("Format", `<select name="format_type" required>${formats.map((value) => `<option value="${value}" ${selected(initialFormat, value)}>${value === "bar_format" ? "Bar Format" : "Cut Format"}</option>`).join("")}</select>`);
+  const barFields = `<div class="form-grid bar-fields" ${initialFormat === "bar_format" ? "" : "hidden"}><label>Bar 1<select name="bar_1_id" ${initialFormat === "bar_format" ? "required" : ""}>${barOptions(initial.bar_1_id, defaults[0])}</select></label><label class="check-row different-second-bar"><input name="use_second_bar" type="checkbox" ${initialUseSecondBar ? "checked" : ""}><span>Different second bar</span></label><label class="second-bar-field" ${initialUseSecondBar ? "" : "hidden"}>Bar 2<select name="bar_2_id" ${initialUseSecondBar ? "required" : ""}>${barOptions(initial.bar_2_id, defaults[1])}</select></label></div>`;
+  return `<div class="configuration-grid">${machineField(initial)}${dimensionUnit}${thickness}${length}${width}${format}</div>${barFields}`;
 }
 
 function mpackFields(product: Product, initial: Config): string {
@@ -111,7 +122,7 @@ function mpackFields(product: Product, initial: Config): string {
   const initialRows = rows.filter((row) => row.manufacturer === initialManufacturer && row.machine_model === initialModel);
   const sizeValue = initial.width_mm && initial.length_mm ? `${initial.width_mm}x${initial.length_mm}` : "";
   const initialSize = initialRows.find((row) => `${row.width_mm}x${row.length_mm}` === sizeValue);
-  return `<div class="form-grid mpack-dependent-fields"><label>Machine Manufacturer<select name="manufacturer" required><option value="">Select manufacturer</option>${manufacturers.map((manufacturer) => `<option value="${escapeHtml(manufacturer)}" ${selected(initialManufacturer, manufacturer)}>${escapeHtml(manufacturer)}</option>`).join("")}</select></label><label>Machine Model<select name="machine_model" required ${initialManufacturer ? "" : "disabled"}><option value="">Select model</option>${[...new Set(rows.filter((row) => row.manufacturer === initialManufacturer).map((row) => row.machine_model))].map((model) => `<option value="${escapeHtml(model)}" ${selected(initialModel, model)}>${escapeHtml(model)}</option>`).join("")}</select></label><label>Size<select name="machine_size" required ${initialModel ? "" : "disabled"}><option value="">Select size</option>${initialRows.map((row) => `<option value="${row.width_mm}x${row.length_mm}" data-width-mm="${row.width_mm}" data-length-mm="${row.length_mm}" ${selected(sizeValue, `${row.width_mm}x${row.length_mm}`)}>${row.width_mm} mm Across (W) × ${row.length_mm} mm Around (L)</option>`).join("")}</select></label><label>Thickness<select name="thickness_mm" required ${initialSize ? "" : "disabled"}><option value="">Select thickness</option>${(initialSize?.prices ?? []).map((price) => `<option value="${price.thickness_mm}" ${selected(initial.thickness_mm, price.thickness_mm)}>${price.thickness_mm.toFixed(3)} mm (${price.thickness_micron} µ)</option>`).join("")}</select></label></div>`;
+  return `<div class="form-grid configuration-fields-row mpack-dependent-fields"><label>Machine Manufacturer<select name="manufacturer" required><option value="">Select manufacturer</option>${manufacturers.map((manufacturer) => `<option value="${escapeHtml(manufacturer)}" ${selected(initialManufacturer, manufacturer)}>${escapeHtml(manufacturer)}</option>`).join("")}</select></label><label>Machine Model<select name="machine_model" required ${initialManufacturer ? "" : "disabled"}><option value="">Select model</option>${[...new Set(rows.filter((row) => row.manufacturer === initialManufacturer).map((row) => row.machine_model))].map((model) => `<option value="${escapeHtml(model)}" ${selected(initialModel, model)}>${escapeHtml(model)}</option>`).join("")}</select></label></div><div class="form-grid configuration-fields-row mpack-dependent-fields"><label>Size<select name="machine_size" required ${initialModel ? "" : "disabled"}><option value="">Select size</option>${initialRows.map((row) => `<option value="${row.width_mm}x${row.length_mm}" data-width-mm="${row.width_mm}" data-length-mm="${row.length_mm}" ${selected(sizeValue, `${row.width_mm}x${row.length_mm}`)}>${row.width_mm} mm Across (W) × ${row.length_mm} mm Around (L)</option>`).join("")}</select></label><label>Thickness<select name="thickness_mm" required ${initialSize ? "" : "disabled"}><option value="">Select thickness</option>${(initialSize?.prices ?? []).map((price) => `<option value="${price.thickness_mm}" ${selected(initial.thickness_mm, price.thickness_mm)}>${price.thickness_mm.toFixed(3)} mm (${price.thickness_micron} µ)</option>`).join("")}</select></label></div>`;
 }
 
 function chemicalFields(product: Product, initial: Config): string {
@@ -220,17 +231,16 @@ function priceListDate(value?: string): string {
 
 function mpackSummaryPlaceholder(product: Product, form?: HTMLFormElement): string {
   const data = form ? configurationFromForm(product, form) : {};
-  const priceList = (product.configuration.machine_price_list as { valid_from?: string; valid_until?: string } | undefined) ?? {};
-  const rows = (product.configuration.machine_sizes as MpackMachineSize[] | undefined) ?? [];
-  const selectedRow = rows.find((row) => row.manufacturer === data.manufacturer && row.machine_model === data.machine_model
-    && row.width_mm === Number(data.width_mm) && row.length_mm === Number(data.length_mm));
-  const selectedPrice = selectedRow?.prices.find((price) => price.thickness_mm === Number(data.thickness_mm));
-  const quantity = Number(form?.querySelector<HTMLInputElement>("[name=quantity]")?.value ?? 1);
   const value = (field: string) => escapeHtml(String(data[field] || "—"));
   const size = data.width_mm && data.length_mm ? `${data.width_mm} × ${data.length_mm} mm` : "—";
   const thickness = data.thickness_mm ? `${Number(data.thickness_mm).toFixed(3)} mm (${Math.round(Number(data.thickness_mm) * 1000)} µ)` : "—";
-  const total = selectedPrice && quantity > 0 ? formatMoney(selectedPrice.price_per_box_eur * quantity, "EUR") : "—";
-  return `<div class="live-price-head"><span><i data-lucide="list-checks"></i>Underpacking</span><span class="rate-live">EUR commercial</span></div><p class="configuration-summary-title">Selected configuration</p><div class="live-price-rows configuration-summary-rows"><div><span>Manufacturer</span><strong>${value("manufacturer")}</strong></div><div><span>Machine</span><strong>${value("machine_model")}</strong></div><div><span>Size</span><strong>${size}</strong></div><div><span>Thickness</span><strong>${thickness}</strong></div><div><span>Price / sheet</span><strong>${selectedPrice ? formatMoney(selectedPrice.price_per_sheet_eur, "EUR") : "—"}</strong></div><div><span>Sheets / box</span><strong>${selectedPrice?.sheets_per_box ?? "—"}</strong></div><div><span>Price / box</span><strong>${selectedPrice ? formatMoney(selectedPrice.price_per_box_eur, "EUR") : "—"}</strong></div></div><div class="live-price-total"><span>Total price</span><strong>${total}</strong></div><p class="rate-caption">Price list: ${priceListDate(priceList.valid_from)} – ${priceListDate(priceList.valid_until)}</p>`;
+  return `<div class="live-price-head"><span><i data-lucide="list-checks"></i>Underpacking</span></div><p class="configuration-summary-title">Selected configuration</p><div class="live-price-rows configuration-summary-rows"><div><span>Manufacturer</span><strong>${value("manufacturer")}</strong></div><div><span>Machine model</span><strong>${value("machine_model")}</strong></div><div><span>Size</span><strong>${size}</strong></div><div><span>Thickness</span><strong>${thickness}</strong></div></div><p class="rate-caption">Complete the configuration to load the server-calculated EUR pricing.</p>`;
+}
+
+function formatSheetPrice(amount: number): string {
+  return new Intl.NumberFormat("en-IE", {
+    style: "currency", currency: "EUR", minimumFractionDigits: 3, maximumFractionDigits: 3,
+  }).format(amount || 0);
 }
 
 function pricingMarkup(line: PriceLine, _rate: { provider: string; provider_source?: string; source?: string; fetched_at: string; stale: boolean; warning?: string }): string {
@@ -245,12 +255,20 @@ function pricingMarkup(line: PriceLine, _rate: { provider: string; provider_sour
     : "";
   const configuration = line.configuration ?? {};
   const mpackRows = line.price_per_box_eur !== undefined
-    ? `<div><span>Manufacturer</span><strong>${escapeHtml(String(configuration.manufacturer ?? "—"))}</strong></div><div><span>Machine model</span><strong>${escapeHtml(String(configuration.machine_model ?? "—"))}</strong></div><div><span>Size</span><strong>${Number(configuration.width_mm)} × ${Number(configuration.length_mm)} mm</strong></div><div><span>Thickness</span><strong>${Number(configuration.thickness_mm).toFixed(3)} mm (${Number(configuration.thickness_micron)} µ)</strong></div><div><span>Price / sheet</span><strong>${formatMoney(line.price_per_sheet_eur ?? 0, "EUR")}</strong></div><div><span>Sheets / box</span><strong>${line.sheets_per_box}</strong></div><div><span>Price / box</span><strong>${formatMoney(line.price_per_box_eur, "EUR")}</strong></div>`
+    ?
+    `<p class="configuration-summary-title">Selected configuration</p><div class="live-price-rows configuration-summary-rows"><div><span>Manufacturer</span><strong>${escapeHtml(String(configuration.manufacturer ?? "—"))}</strong></div><div><span>Machine model</span><strong>${escapeHtml(String(configuration.machine_model ?? "—"))}</strong></div><div><span>Size</span><strong>${Number(configuration.width_mm)} × ${Number(configuration.length_mm)} mm</strong></div><div><span>Thickness</span><strong>${Number(configuration.thickness_mm).toFixed(3)} mm (${Number(configuration.thickness_micron)} µ)</strong></div></div><div class="live-price-rows pricing-hierarchy"><div class="pricing-primary-row"><span>Price per sheet</span><strong>${formatSheetPrice(line.price_per_sheet_eur ?? 0)}</strong></div><div><span>Discount</span><strong>${line.discount_percent ? `- ${line.discount_percent}%` : "0%"}</strong></div><div class="pricing-discounted-row"><span>Discounted price per sheet</span><strong>${line.discounted_price_per_sheet_eur === undefined ? "—" : formatSheetPrice(line.discounted_price_per_sheet_eur)}</strong></div><div><span>Sheets per box</span><strong>${line.sheets_per_box ?? "—"}</strong></div><div><span>Price per box</span><strong>${formatMoney(line.price_per_box_eur, "EUR")}</strong></div><div><span>Quantity</span><strong>${line.requested_quantity ?? line.quantity} Box</strong></div></div>`
+    : "";
+  const isBlanket = line.commercial_unit === "pc";
+  const blanketRows = isBlanket
+    ? `<div class="live-price-rows pricing-hierarchy">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}<div class="pricing-primary-row"><span>Price per Pc</span><strong>${formatMoney(line.master_unit_price, "EUR")}</strong></div><div><span>Discount</span><strong>${line.discount_percent ? `- ${line.discount_percent}%` : "0%"}</strong></div><div class="pricing-discounted-row"><span>Discounted price per Pc</span><strong>${line.master_discounted_unit_price === undefined ? "—" : formatMoney(line.master_discounted_unit_price, "EUR")}</strong></div><div><span>Quantity</span><strong>${line.requested_quantity ?? line.quantity} Pc</strong></div></div>`
     : "";
   const validity = line.price_list?.valid_from && line.price_list?.valid_until
     ? `<p class="rate-caption">Price list: ${priceListDate(line.price_list.valid_from)} – ${priceListDate(line.price_list.valid_until)}</p>`
     : "";
-  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>${mpackRows ? "Configuration & Pricing" : "Pricing Summary"}</span><span class="rate-live">EUR commercial</span></div><div class="live-price-rows ${mpackRows ? "configuration-summary-rows" : ""}">${mpackRows}${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${adjustmentRows}<div><span>Subtotal</span><strong>${formatMoney(masterSubtotal, "EUR")}</strong></div><div><span>Discount ${line.discount_percent}%</span><strong>${masterDiscount ? `- ${formatMoney(masterDiscount, "EUR")}` : "—"}</strong></div></div><div class="live-price-total"><span>Total</span><strong>${formatMoney(masterTotalEur, "EUR")}</strong></div>${reference}${validity}`;
+  const standardRows = !mpackRows && !isBlanket
+    ? `<div class="live-price-rows">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${adjustmentRows}<div><span>Subtotal</span><strong>${formatMoney(masterSubtotal, "EUR")}</strong></div><div><span>Discount ${line.discount_percent}%</span><strong>${masterDiscount ? `- ${formatMoney(masterDiscount, "EUR")}` : "—"}</strong></div></div>`
+    : "";
+  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>${mpackRows ? "Configuration & Pricing" : "Pricing Summary"}</span></div>${mpackRows}${blanketRows}${standardRows}<div class="live-price-total"><span>Total</span><strong>${formatMoney(masterTotalEur, "EUR")}</strong></div>${reference}${validity}`;
 }
 
 function discountOptions(product: Product, initialDiscount = 0): string {
@@ -336,9 +354,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   const configured = product.pricing_status === "configured" || structuredMpack;
   const commercialUnit = String(product.commercial_unit ?? (structuredMpack ? "box" : product.category_id === "blankets" ? "pc" : ""));
   const quantityLabel = commercialUnit ? `Quantity (${commercialUnit === "box" ? "Box" : commercialUnit === "pc" ? "Pc" : commercialUnit})` : "Quantity";
-  host.innerHTML = `<section class="inline-configurator ${structuredMpack ? "structured-machine-configurator" : ""}"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount permissions and tax rules are validated on the server.</p></div></div><div class="form-grid"><label>${quantityLabel}<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${discountOptions(product, initialDiscount)}</select></label></div><button class="button button-primary button-full" type="submit" ${configured ? "" : "disabled"}><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button></form><aside class="live-price inline-price-summary panel">${structuredMpack ? mpackSummaryPlaceholder(product) : `<div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div>`}</aside></section>`;
-  const commercialCopy = [...host.querySelectorAll(".form-section h4")].find((heading) => heading.textContent === "Commercial Details")?.nextElementSibling;
-  if (commercialCopy) commercialCopy.textContent = "Discount permissions are validated on the server. Quotations are issued in EUR.";
+  host.innerHTML = `<section class="inline-configurator ${structuredMpack ? "structured-machine-configurator" : ""}"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount is applied to the EUR master price; USD/INR are display references only.</p></div></div><div class="form-grid commercial-fields"><label>${quantityLabel}<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${discountOptions(product, initialDiscount)}</select></label></div><aside class="live-price inline-price-summary panel" aria-live="polite">${structuredMpack ? mpackSummaryPlaceholder(product) : `<div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div>`}</aside><div class="configurator-actions"><button class="button button-primary button-full" type="submit" disabled><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button><a class="button button-secondary button-full" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>View Cart</a></div></form></section>`;
   const form = host.querySelector<HTMLFormElement>(".configure-form")!;
   const blanketMachine = product.category_id === "blankets" ? form.querySelector<HTMLInputElement>("[data-blanket-machine]") : null;
   const machineIdInput = form.querySelector<HTMLInputElement>("[name=machine_id]");
@@ -430,6 +446,22 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   const commercialNote = form.querySelectorAll<HTMLElement>(".form-section")[1]?.querySelector("p");
   if (commercialNote) commercialNote.textContent = "Discount is applied to the EUR master price; USD/INR are display references only.";
   const preview = host.querySelector<HTMLElement>(".live-price")!;
+  const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  let latestPreviewLine: PriceLine | null = null;
+  let addSucceeded = false;
+  const resetSubmitLabel = () => {
+    submitButton.classList.remove("is-added");
+    submitButton.innerHTML = `<i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}`;
+    refreshIcons(submitButton);
+  };
+  const syncSubmitAvailability = () => {
+    submitButton.disabled = addSucceeded || !configured || !form.checkValidity() || !latestPreviewLine;
+  };
+  const clearAddedState = () => {
+    if (!addSucceeded) return;
+    addSucceeded = false;
+    resetSubmitLabel();
+  };
   const toggleBars = () => {
     const barFields = form.querySelector<HTMLElement>(".bar-fields");
     const barFormat = form.querySelector<HTMLSelectElement>("[name=format_type]")?.value === "bar_format";
@@ -475,10 +507,11 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   };
   let timer = 0;
   let previewSequence = 0;
-  let latestPreviewLine: PriceLine | null = null;
   const calculatePreview = () => {
     const sequence = ++previewSequence;
     window.clearTimeout(timer);
+    latestPreviewLine = null;
+    syncSubmitAvailability();
     if (structuredMpack) {
       preview.innerHTML = mpackSummaryPlaceholder(product, form);
       refreshIcons(preview);
@@ -505,12 +538,12 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
         latestPreviewLine = result.line;
         console.debug("discount_debug", { item_id: options.initial?._id ?? "new", response_discount: result.line.discount_percent });
         console.debug("add_to_cart_ui", { step: "PRICE_PREVIEW_COMPLETE", item_id: options.initial?._id ?? "new" });
-        preview.innerHTML = pricingMarkup(result.line, result.rate); refreshIcons(preview);
+        preview.innerHTML = pricingMarkup(result.line, result.rate); refreshIcons(preview); syncSubmitAvailability();
       } catch (error) {
         if (sequence !== previewSequence) return;
         preview.innerHTML = `<div class="notice warning"><i data-lucide="circle-alert"></i><div><strong>Preview unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Check the configuration")}</p></div></div>`;
         refreshIcons(preview);
-      } finally { if (sequence === previewSequence) preview.classList.remove("loading"); }
+      } finally { if (sequence === previewSequence) { preview.classList.remove("loading"); syncSubmitAvailability(); } }
     }, 220);
   };
   let lastDisplayCurrency = appStore.state.currency;
@@ -549,11 +582,11 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   form.querySelector<HTMLInputElement>("[name=use_second_bar]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
   form.querySelector<HTMLSelectElement>("[name=thickness_mm]")?.addEventListener("change", () => { updateWidthGuidance(); calculatePreview(); });
   form.querySelector<HTMLSelectElement>("[name=size_preset]")?.addEventListener("change", () => { applyPreset(); calculatePreview(); });
-  form.addEventListener("input", calculatePreview);
-  form.addEventListener("change", calculatePreview);
+  form.addEventListener("input", () => { clearAddedState(); calculatePreview(); });
+  form.addEventListener("change", () => { clearAddedState(); calculatePreview(); });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    const data = new FormData(form); const button = submitButton;
     button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Adding to Cart…";
     console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });
     const payload = { customer_id: customerCompany._id, product_id: product._id, display_currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")) };
@@ -571,13 +604,18 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
         // not turn a successful add into a stuck or misleading error state.
         toast(refreshError instanceof ApiError ? `Item saved, but cart refresh failed: ${refreshError.message}` : "Item saved, but the cart could not be refreshed.", "error");
       }
+      if (options.mode === "add") {
+        addSucceeded = true;
+        button.classList.add("is-added");
+        button.innerHTML = '<i data-lucide="check"></i>Added to Cart';
+        refreshIcons(button);
+      }
     } catch (error) {
       toast(error instanceof ApiError ? error.message : "Product could not be saved", "error");
     } finally {
-      button.disabled = false;
-      button.innerHTML = `<i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}`;
+      if (!addSucceeded) resetSubmitLabel();
+      syncSubmitAvailability();
       console.debug("add_to_cart_ui", { step: "LOADING_RESET", item_id: options.initial?._id ?? "new" });
-      refreshIcons(button);
     }
   });
   toggleBars(); updateWidthGuidance(); calculatePreview(); refreshIcons(host);
@@ -660,12 +698,7 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
   try {
     if (!selectedFamily) {
       const families = await catalogApi.families();
-      let rateText = "EUR master pricing";
-      try {
-        const rate = await rateApi.get();
-        if (appStore.state.currency !== "EUR") rateText = `1 EUR = ${Number(rate.rates[appStore.state.currency]).toFixed(4)} ${appStore.state.currency}`;
-      } catch { /* Server resolves the rate during calculation. */ }
-      body.innerHTML = `<section class="calculator-welcome"><div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="active"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="calculator-context"><div><span class="eyebrow">Quotation For</span><h2>${escapeHtml(customerCompany.name)}</h2><p>Choose one of the three active Moneda product families.</p></div><div class="context-pills"><span><i data-lucide="building-2"></i>Customer: ${escapeHtml(customerCompany.name)}</span><span><i data-lucide="euro"></i>${escapeHtml(rateText)}</span><span><i data-lucide="shield-check"></i>Server-calculated</span></div></div></section>${familyCards(families)}`;
+      body.innerHTML = `<section class="calculator-welcome"><div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="active"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="calculator-context"><div><span class="eyebrow">Quotation For</span><h2>${escapeHtml(customerCompany.name)}</h2><p>Choose one of the three active Moneda product families.</p></div><div class="context-pills"><span><i data-lucide="building-2"></i>Customer: ${escapeHtml(customerCompany.name)}</span></div></div></section>${familyCards(families)}`;
       refreshIcons(page); return page;
     }
     let products = await loadFamilyProducts(selectedFamily);
@@ -675,7 +708,7 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
       ? [{ id: "all", name: "All" }, ...blanketCategories]
       : chemicalCategories;
     const mpackOnly = selectedFamily === "mpacks";
-    body.innerHTML = `<div class="calculator-toolbar"><a href="/calculator" data-route="/calculator" class="back-link"><i data-lucide="arrow-left"></i>All Product Families</a><span><strong class="product-count">${products.length}</strong> products available</span></div><div class="workspace-steps compact"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="active"><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><section class="family-selector panel"><div class="section-title"><div><span class="eyebrow">${escapeHtml(copy?.label ?? selectedFamily)}</span><h2>${mpackOnly ? "Mtech Mpack" : "Choose a category and product"}</h2><p>${mpackOnly ? "Art. MTECH-MPACK · Configure the machine, size and thickness." : escapeHtml(copy?.detail ?? "Select a product to continue.")}</p></div><i data-lucide="${mpackOnly ? "layers-3" : "list-filter"}"></i></div>${mpackOnly ? `<div class="selected-product-fixed"><strong>Mtech Mpack</strong><span>Art. MTECH-MPACK</span></div>` : `<div class="form-grid">${subcategories.length ? `<label>Category<select class="subcategory-select" required><option value="">Select category</option>${subcategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("")}</select></label>` : ""}<label>Product<input class="product-combobox" autocomplete="off" placeholder="Search products by name or article" ${subcategories.length ? "disabled" : ""}></label></div>`}</section><div class="configurator-host"><div class="selection-summary"><i data-lucide="mouse-pointer-2"></i><span>${mpackOnly ? "Loading Mtech Mpack configuration…" : subcategories.length ? "Select a category, then choose a product." : "Choose a product to continue."}</span></div></div>`;
+      body.innerHTML = `<div class="calculator-toolbar"><a href="/calculator" data-route="/calculator" class="back-link button back-to-products"><i data-lucide="arrow-left"></i>Back to Products</a><span><strong class="product-count">${products.length}</strong> products available</span></div><div class="workspace-steps compact"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="active"><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><section class="family-selector panel"><div class="section-title"><div><span class="eyebrow">${escapeHtml(copy?.label ?? selectedFamily)}</span><h2>${mpackOnly ? "Mtech Mpack" : "Choose a category and product"}</h2><p>${mpackOnly ? "Art. MTECH-MPACK · Configure the machine, size and thickness." : escapeHtml(copy?.detail ?? "Select a product to continue.")}</p></div><i data-lucide="${mpackOnly ? "layers-3" : "list-filter"}"></i></div>${mpackOnly ? `<div class="selected-product-fixed"><strong>Mtech Mpack</strong><span>Art. MTECH-MPACK</span></div>` : `<div class="form-grid">${subcategories.length ? `<label>Category<select class="subcategory-select" required><option value="">Select category</option>${subcategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("")}</select></label>` : ""}<label>Product<input class="product-combobox" autocomplete="off" placeholder="Search products by name or article" ${subcategories.length ? "disabled" : ""}></label></div>`}</section><div class="configurator-host"><div class="selection-summary"><i data-lucide="mouse-pointer-2"></i><span>${mpackOnly ? "Loading Mtech Mpack configuration…" : subcategories.length ? "Select a category, then choose a product." : "Choose a product to continue."}</span></div></div>`;
     const input = body.querySelector<HTMLInputElement>(".product-combobox")!;
     const host = body.querySelector<HTMLElement>(".configurator-host")!;
     if (mpackOnly) {

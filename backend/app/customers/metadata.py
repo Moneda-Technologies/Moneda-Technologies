@@ -6,6 +6,8 @@ import re
 
 from email_validator import EmailNotValidError, validate_email
 
+from app.customers.countries import countries_by_code, countries_by_name
+
 
 PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
 VALIDATION_MESSAGES = {
@@ -15,10 +17,11 @@ VALIDATION_MESSAGES = {
     "CUSTOMER_EMAIL_INVALID": "Enter a valid customer email address",
     "CUSTOMER_PHONE_REQUIRED": "Phone number is required",
     "CUSTOMER_PHONE_INVALID": "Phone contains invalid characters",
-    "CONTINENT_REQUIRED": "Continent / region is required",
-    "CONTINENT_INVALID": "Continent / region is not recognized",
+    "CONTINENT_REQUIRED": "Region / Continent is required",
+    "CONTINENT_INVALID": "Region / Continent is not recognized",
     "COUNTRY_REQUIRED": "Country is required",
-    "COUNTRY_CONTINENT_MISMATCH": "Country must belong to the selected continent",
+    "COUNTRY_INVALID": "Select a valid country from the country list",
+    "COUNTRY_CONTINENT_MISMATCH": "Country must belong to the selected region / continent",
     "CUSTOMER_CURRENCY_REQUIRED": "Display currency is required",
     "PAYMENT_TERMS_REQUIRED": "Payment terms are required",
     "CUSTOM_PAYMENT_DAYS_REQUIRED": "Custom payment term must be a positive whole number of days",
@@ -34,68 +37,34 @@ def customer_gst_applicable(customer: dict) -> bool:
     """Deprecated compatibility hook; customer location never activates tax."""
     return False
 SUPPORTED_CURRENCIES = ("EUR", "USD", "INR")
-
-COUNTRIES_BY_CONTINENT = {
-    "Africa": (
-        {"code": "ZA", "name": "South Africa", "default_currency": "USD"},
-        {"code": "NG", "name": "Nigeria", "default_currency": "USD"},
-        {"code": "EG", "name": "Egypt", "default_currency": "USD"},
-        {"code": "KE", "name": "Kenya", "default_currency": "USD"},
-    ),
-    "Asia": (
-        {"code": "IN", "name": "India", "default_currency": "INR", "gst_applicable": True},
-        {"code": "CN", "name": "China", "default_currency": "USD"},
-        {"code": "JP", "name": "Japan", "default_currency": "USD"},
-        {"code": "SG", "name": "Singapore", "default_currency": "USD"},
-        {"code": "AE", "name": "United Arab Emirates", "default_currency": "USD"},
-        {"code": "SA", "name": "Saudi Arabia", "default_currency": "USD"},
-        {"code": "TH", "name": "Thailand", "default_currency": "USD"},
-        {"code": "MY", "name": "Malaysia", "default_currency": "USD"},
-    ),
-    "Europe": (
-        {"code": "DE", "name": "Germany", "default_currency": "EUR"},
-        {"code": "FR", "name": "France", "default_currency": "EUR"},
-        {"code": "IT", "name": "Italy", "default_currency": "EUR"},
-        {"code": "ES", "name": "Spain", "default_currency": "EUR"},
-        {"code": "GB", "name": "United Kingdom", "default_currency": "USD"},
-        {"code": "NL", "name": "Netherlands", "default_currency": "EUR"},
-    ),
-    "North America": (
-        {"code": "US", "name": "United States", "default_currency": "USD"},
-        {"code": "CA", "name": "Canada", "default_currency": "USD"},
-        {"code": "MX", "name": "Mexico", "default_currency": "USD"},
-    ),
-    "South America": (
-        {"code": "BR", "name": "Brazil", "default_currency": "USD"},
-        {"code": "AR", "name": "Argentina", "default_currency": "USD"},
-        {"code": "CL", "name": "Chile", "default_currency": "USD"},
-    ),
-    "Oceania": (
-        {"code": "AU", "name": "Australia", "default_currency": "USD"},
-        {"code": "NZ", "name": "New Zealand", "default_currency": "USD"},
-    ),
-    "Antarctica": (),
-}
-
-COUNTRIES_BY_CODE = {country["code"]: {**country, "continent": continent} for continent, countries in COUNTRIES_BY_CONTINENT.items() for country in countries}
-COUNTRIES_BY_NAME = {country["name"].casefold(): country for country in COUNTRIES_BY_CODE.values()}
-COUNTRIES_BY_NAME.update({"usa": COUNTRIES_BY_CODE["US"], "uk": COUNTRIES_BY_CODE["GB"]})
+COUNTRIES_BY_CODE = countries_by_code()
+COUNTRIES_BY_NAME = countries_by_name()
+VALID_REGIONS = {country["region"].casefold() for country in COUNTRIES_BY_CODE.values()}
 
 
 def country_for(continent: str | None, country_code: str | None, country_name: str | None = None) -> dict | None:
+    """Resolve a country and reject mismatched country/name/region values."""
     code = str(country_code or "").strip().upper()
-    if code and code in COUNTRIES_BY_CODE:
-        country = COUNTRIES_BY_CODE[code]
-        return country if not continent or country["continent"] == continent else None
-    if country_name:
-        country = COUNTRIES_BY_NAME.get(str(country_name).strip().casefold())
-        if country and (not continent or country["continent"] == continent):
-            return country
-    return None
+    name = str(country_name or "").strip().casefold()
+    by_code = COUNTRIES_BY_CODE.get(code) if code else None
+    by_name = COUNTRIES_BY_NAME.get(name) if name else None
+    if (code and not by_code) or (name and not by_name):
+        return None
+    if by_code and by_name and by_code["code"] != by_name["code"]:
+        return None
+    country = by_code or by_name
+    if not country:
+        return None
+    requested_region = str(continent or "").strip().casefold()
+    if requested_region and requested_region != country["region"].casefold():
+        return None
+    return country
 
 
-def phone_is_valid(value: str) -> bool:
+def phone_is_valid(value: str, *, allow_unknown: bool = False) -> bool:
     if not value:
+        return True
+    if allow_unknown and value == "-":
         return True
     if not re.fullmatch(r"\+?[0-9().\-\s]{2,29}", value):
         return False
@@ -141,7 +110,7 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
     email = str(changes.get("email") if "email" in changes else existing.get("email") or "").strip()
     if required("email") and not email:
         return None, "CUSTOMER_EMAIL_REQUIRED"
-    if email:
+    if email and email != "-":
         try:
             changes["email"] = validate_email(email, check_deliverability=False).normalized
         except EmailNotValidError:
@@ -149,8 +118,8 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
     phone = str(changes.get("phone") if "phone" in changes else existing.get("phone") or "").strip()
     if required("phone") and not phone:
         return None, "CUSTOMER_PHONE_REQUIRED"
-    if phone and not phone_is_valid(phone):
-            return None, "CUSTOMER_PHONE_INVALID" if require_complete else "Phone contains invalid characters"
+    if phone and not phone_is_valid(phone, allow_unknown=True):
+        return None, "CUSTOMER_PHONE_INVALID" if require_complete else "Phone contains invalid characters"
     if "phone" in changes or require_complete:
         changes["phone"] = phone
     address = str(changes.get("address") if "address" in changes else existing.get("address") or "").strip()
@@ -159,28 +128,27 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
     if "address" in changes or require_complete:
         changes["address"] = address
     continent = str(changes.get("continent") or (existing.get("region") or {}).get("continent") or "").strip()
+    if continent and continent.casefold() not in VALID_REGIONS:
+        return None, "CONTINENT_INVALID"
     country_code = str(changes.get("country_code") or (existing.get("region") or {}).get("country_code") or "").strip().upper()
     country_name = str(changes.get("country_name") or changes.get("country") or (existing.get("region") or {}).get("country_name") or existing.get("country") or "").strip()
     country = country_for(continent, country_code, country_name)
-    if require_complete and not continent:
-        return None, "CONTINENT_REQUIRED"
     if require_complete and not (country_code or country_name):
         return None, "COUNTRY_REQUIRED"
     if continent or country_code or country_name:
-        if not continent and country:
-            continent = country["continent"]
-        if continent not in COUNTRIES_BY_CONTINENT:
-            return None, "CONTINENT_INVALID"
         if not country:
-            return None, "COUNTRY_CONTINENT_MISMATCH" if require_complete else "Country must belong to the selected continent"
-        changes["continent"] = country["continent"]
+            unfiltered = country_for("", country_code, country_name)
+            if unfiltered and continent and unfiltered["region"].casefold() != continent.casefold():
+                return None, "COUNTRY_CONTINENT_MISMATCH"
+            return None, "COUNTRY_INVALID"
+        continent = country["region"]
+        changes["continent"] = continent
         changes["country_code"] = country["code"]
         changes["country_name"] = country["name"]
         changes["country"] = country["name"]
-        changes["region"] = {"continent": country["continent"], "country_code": country["code"], "country_name": country["name"]}
-    currency = str(changes.get("preferred_currency") or changes.get("default_currency") or existing.get("preferred_currency") or "EUR").upper()
-    if require_complete and not (changes.get("preferred_currency") or changes.get("default_currency")):
-        return None, "CUSTOMER_CURRENCY_REQUIRED"
+        changes["region"] = {"continent": continent, "country_code": country["code"], "country_name": country["name"]}
+    default_currency = country["default_display_currency"] if country else "EUR"
+    currency = str(changes.get("preferred_currency") or changes.get("default_currency") or existing.get("preferred_currency") or default_currency).upper()
     if currency not in SUPPORTED_CURRENCIES:
         return None, "Unsupported customer currency"
     changes["preferred_currency"] = currency

@@ -190,6 +190,7 @@ export interface PriceLine {
   configuration?: Record<string, unknown>;
   commercial_unit?: "pc" | "box" | "litre" | string;
   pricing_unit: string;
+  requested_quantity?: number;
   quantity: number;
   currency: Currency;
   display_currency?: Currency;
@@ -202,6 +203,7 @@ export interface PriceLine {
   master_discount_amount?: number;
   master_total?: number;
   master_final_total?: number;
+  master_discounted_unit_price?: number;
   display_unit_price?: number;
   display_subtotal?: number;
   display_discount_amount?: number;
@@ -213,6 +215,8 @@ export interface PriceLine {
   area_sqm?: number;
   price_per_sheet_eur?: number;
   price_per_box_eur?: number;
+  discounted_price_per_sheet_eur?: number;
+  discounted_price_per_box_eur?: number;
   sheets_per_box?: number;
   price_list?: { id?: string; valid_from?: string; valid_until?: string };
   unit_price: number;

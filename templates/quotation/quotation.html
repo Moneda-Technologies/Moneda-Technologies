@@ -18,14 +18,13 @@
     .document-number { color: #d9342f; font-size: 10px; font-weight: 700; margin-top: 3px; }
     .document-date { color: #70706b; font-size: 7px; margin-top: 2px; }
     .brand-stripe { background: linear-gradient(to right,#171717 0%,#171717 33.333333%,#df3731 33.333333%,#df3731 66.666666%,#f2c800 66.666666%,#f2c800 100%); height: 2.2mm; margin-bottom: 6mm; width: 100%; }
-    .parties { display: flex; gap: 4mm; margin-bottom: 5mm; }
-    .party { background: #f5f5f2; border: 1px solid #e0e0dc; border-radius: 2mm; min-height: 38mm; padding: 4mm; width: 50%; }
-    .party.company { background: #1c1c1c; border-color: #1c1c1c; color: #fff; }
+    .parties { border: 1px solid #e0e0dc; display: flex; margin-bottom: 5mm; }
+    .party { background: #fff; min-height: 38mm; padding: 4mm; width: 50%; }
+    .party + .party { border-left: 2px solid #1c1c1c; }
     .eyebrow { color: #8b8b86; font-size: 6.4px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
-    .party.company .eyebrow { color: #f2c800; }
+    .party .eyebrow { color: #f2c800; }
     .party h2 { font-size: 12px; line-height: 1.2; margin: 2.2mm 0 1.4mm; }
     .party p { color: #676762; margin: .7mm 0; white-space: pre-line; }
-    .party.company p { color: #bdbdbd; }
     .meta-band { align-items: stretch; border-bottom: 1px solid #dadad6; border-top: 1px solid #dadad6; display: flex; margin-bottom: 5mm; padding: 3mm 0; }
     .meta-item { border-right: 1px solid #dededa; padding: 0 3mm; width: 33.333333%; }
     .meta-item:first-child { padding-left: 0; }

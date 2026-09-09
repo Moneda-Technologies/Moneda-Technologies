@@ -1,0 +1,2007 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/mledoze/countries",
+  "source_standard": "ISO 3166-1 alpha-2",
+  "countries": [
+    {
+      "code": "AF",
+      "name": "Afghanistan",
+      "region": "Asia",
+      "currency_code": "AFN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+93"
+    },
+    {
+      "code": "AL",
+      "name": "Albania",
+      "region": "Europe",
+      "currency_code": "ALL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+355"
+    },
+    {
+      "code": "DZ",
+      "name": "Algeria",
+      "region": "Africa",
+      "currency_code": "DZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+213"
+    },
+    {
+      "code": "AS",
+      "name": "American Samoa",
+      "region": "Oceania",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "AD",
+      "name": "Andorra",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+376"
+    },
+    {
+      "code": "AO",
+      "name": "Angola",
+      "region": "Africa",
+      "currency_code": "AOA",
+      "default_display_currency": "USD",
+      "phone_country_code": "+244"
+    },
+    {
+      "code": "AI",
+      "name": "Anguilla",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "AQ",
+      "name": "Antarctica",
+      "region": "Antarctica",
+      "currency_code": "",
+      "default_display_currency": "USD",
+      "phone_country_code": ""
+    },
+    {
+      "code": "AG",
+      "name": "Antigua and Barbuda",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "AR",
+      "name": "Argentina",
+      "region": "South America",
+      "currency_code": "ARS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+54"
+    },
+    {
+      "code": "AM",
+      "name": "Armenia",
+      "region": "Asia",
+      "currency_code": "AMD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+374"
+    },
+    {
+      "code": "AW",
+      "name": "Aruba",
+      "region": "North America",
+      "currency_code": "AWG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+297"
+    },
+    {
+      "code": "AU",
+      "name": "Australia",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+61"
+    },
+    {
+      "code": "AT",
+      "name": "Austria",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+43"
+    },
+    {
+      "code": "AZ",
+      "name": "Azerbaijan",
+      "region": "Asia",
+      "currency_code": "AZN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+994"
+    },
+    {
+      "code": "BS",
+      "name": "Bahamas",
+      "region": "North America",
+      "currency_code": "BSD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "BH",
+      "name": "Bahrain",
+      "region": "Asia",
+      "currency_code": "BHD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+973"
+    },
+    {
+      "code": "BD",
+      "name": "Bangladesh",
+      "region": "Asia",
+      "currency_code": "BDT",
+      "default_display_currency": "USD",
+      "phone_country_code": "+880"
+    },
+    {
+      "code": "BB",
+      "name": "Barbados",
+      "region": "North America",
+      "currency_code": "BBD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "BY",
+      "name": "Belarus",
+      "region": "Europe",
+      "currency_code": "BYN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+375"
+    },
+    {
+      "code": "BE",
+      "name": "Belgium",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+32"
+    },
+    {
+      "code": "BZ",
+      "name": "Belize",
+      "region": "North America",
+      "currency_code": "BZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+501"
+    },
+    {
+      "code": "BJ",
+      "name": "Benin",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+229"
+    },
+    {
+      "code": "BM",
+      "name": "Bermuda",
+      "region": "North America",
+      "currency_code": "BMD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "BT",
+      "name": "Bhutan",
+      "region": "Asia",
+      "currency_code": "BTN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+975"
+    },
+    {
+      "code": "BO",
+      "name": "Bolivia",
+      "region": "South America",
+      "currency_code": "BOB",
+      "default_display_currency": "USD",
+      "phone_country_code": "+591"
+    },
+    {
+      "code": "BA",
+      "name": "Bosnia and Herzegovina",
+      "region": "Europe",
+      "currency_code": "BAM",
+      "default_display_currency": "USD",
+      "phone_country_code": "+387"
+    },
+    {
+      "code": "BW",
+      "name": "Botswana",
+      "region": "Africa",
+      "currency_code": "BWP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+267"
+    },
+    {
+      "code": "BV",
+      "name": "Bouvet Island",
+      "region": "Antarctica",
+      "currency_code": "",
+      "default_display_currency": "USD",
+      "phone_country_code": "+47"
+    },
+    {
+      "code": "BR",
+      "name": "Brazil",
+      "region": "South America",
+      "currency_code": "BRL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+55"
+    },
+    {
+      "code": "IO",
+      "name": "British Indian Ocean Territory",
+      "region": "Africa",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+246"
+    },
+    {
+      "code": "VG",
+      "name": "British Virgin Islands",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "BN",
+      "name": "Brunei",
+      "region": "Asia",
+      "currency_code": "BND",
+      "default_display_currency": "USD",
+      "phone_country_code": "+673"
+    },
+    {
+      "code": "BG",
+      "name": "Bulgaria",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+359"
+    },
+    {
+      "code": "BF",
+      "name": "Burkina Faso",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+226"
+    },
+    {
+      "code": "BI",
+      "name": "Burundi",
+      "region": "Africa",
+      "currency_code": "BIF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+257"
+    },
+    {
+      "code": "KH",
+      "name": "Cambodia",
+      "region": "Asia",
+      "currency_code": "KHR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+855"
+    },
+    {
+      "code": "CM",
+      "name": "Cameroon",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+237"
+    },
+    {
+      "code": "CA",
+      "name": "Canada",
+      "region": "North America",
+      "currency_code": "CAD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "CV",
+      "name": "Cape Verde",
+      "region": "Africa",
+      "currency_code": "CVE",
+      "default_display_currency": "USD",
+      "phone_country_code": "+238"
+    },
+    {
+      "code": "BQ",
+      "name": "Caribbean Netherlands",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+599"
+    },
+    {
+      "code": "KY",
+      "name": "Cayman Islands",
+      "region": "North America",
+      "currency_code": "KYD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "CF",
+      "name": "Central African Republic",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+236"
+    },
+    {
+      "code": "TD",
+      "name": "Chad",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+235"
+    },
+    {
+      "code": "CL",
+      "name": "Chile",
+      "region": "South America",
+      "currency_code": "CLP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+56"
+    },
+    {
+      "code": "CN",
+      "name": "China",
+      "region": "Asia",
+      "currency_code": "CNY",
+      "default_display_currency": "USD",
+      "phone_country_code": "+86"
+    },
+    {
+      "code": "CX",
+      "name": "Christmas Island",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+61"
+    },
+    {
+      "code": "CC",
+      "name": "Cocos (Keeling) Islands",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+61"
+    },
+    {
+      "code": "CO",
+      "name": "Colombia",
+      "region": "South America",
+      "currency_code": "COP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+57"
+    },
+    {
+      "code": "KM",
+      "name": "Comoros",
+      "region": "Africa",
+      "currency_code": "KMF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+269"
+    },
+    {
+      "code": "CG",
+      "name": "Congo",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+242"
+    },
+    {
+      "code": "CK",
+      "name": "Cook Islands",
+      "region": "Oceania",
+      "currency_code": "CKD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+682"
+    },
+    {
+      "code": "CR",
+      "name": "Costa Rica",
+      "region": "North America",
+      "currency_code": "CRC",
+      "default_display_currency": "USD",
+      "phone_country_code": "+506"
+    },
+    {
+      "code": "HR",
+      "name": "Croatia",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+385"
+    },
+    {
+      "code": "CU",
+      "name": "Cuba",
+      "region": "North America",
+      "currency_code": "CUC",
+      "default_display_currency": "USD",
+      "phone_country_code": "+53"
+    },
+    {
+      "code": "CW",
+      "name": "Cura\u00e7ao",
+      "region": "North America",
+      "currency_code": "ANG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+599"
+    },
+    {
+      "code": "CY",
+      "name": "Cyprus",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+357"
+    },
+    {
+      "code": "CZ",
+      "name": "Czechia",
+      "region": "Europe",
+      "currency_code": "CZK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+420"
+    },
+    {
+      "code": "DK",
+      "name": "Denmark",
+      "region": "Europe",
+      "currency_code": "DKK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+45"
+    },
+    {
+      "code": "DJ",
+      "name": "Djibouti",
+      "region": "Africa",
+      "currency_code": "DJF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+253"
+    },
+    {
+      "code": "DM",
+      "name": "Dominica",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "DO",
+      "name": "Dominican Republic",
+      "region": "North America",
+      "currency_code": "DOP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "CD",
+      "name": "DR Congo",
+      "region": "Africa",
+      "currency_code": "CDF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+243"
+    },
+    {
+      "code": "EC",
+      "name": "Ecuador",
+      "region": "South America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+593"
+    },
+    {
+      "code": "EG",
+      "name": "Egypt",
+      "region": "Africa",
+      "currency_code": "EGP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+20"
+    },
+    {
+      "code": "SV",
+      "name": "El Salvador",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+503"
+    },
+    {
+      "code": "GQ",
+      "name": "Equatorial Guinea",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+240"
+    },
+    {
+      "code": "ER",
+      "name": "Eritrea",
+      "region": "Africa",
+      "currency_code": "ERN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+291"
+    },
+    {
+      "code": "EE",
+      "name": "Estonia",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+372"
+    },
+    {
+      "code": "SZ",
+      "name": "Eswatini",
+      "region": "Africa",
+      "currency_code": "SZL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+268"
+    },
+    {
+      "code": "ET",
+      "name": "Ethiopia",
+      "region": "Africa",
+      "currency_code": "ETB",
+      "default_display_currency": "USD",
+      "phone_country_code": "+251"
+    },
+    {
+      "code": "FK",
+      "name": "Falkland Islands",
+      "region": "South America",
+      "currency_code": "FKP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+500"
+    },
+    {
+      "code": "FO",
+      "name": "Faroe Islands",
+      "region": "Europe",
+      "currency_code": "DKK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+298"
+    },
+    {
+      "code": "FJ",
+      "name": "Fiji",
+      "region": "Oceania",
+      "currency_code": "FJD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+679"
+    },
+    {
+      "code": "FI",
+      "name": "Finland",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+358"
+    },
+    {
+      "code": "FR",
+      "name": "France",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+33"
+    },
+    {
+      "code": "GF",
+      "name": "French Guiana",
+      "region": "South America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+594"
+    },
+    {
+      "code": "PF",
+      "name": "French Polynesia",
+      "region": "Oceania",
+      "currency_code": "XPF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+689"
+    },
+    {
+      "code": "TF",
+      "name": "French Southern and Antarctic Lands",
+      "region": "Antarctica",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+262"
+    },
+    {
+      "code": "GA",
+      "name": "Gabon",
+      "region": "Africa",
+      "currency_code": "XAF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+241"
+    },
+    {
+      "code": "GM",
+      "name": "Gambia",
+      "region": "Africa",
+      "currency_code": "GMD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+220"
+    },
+    {
+      "code": "GE",
+      "name": "Georgia",
+      "region": "Asia",
+      "currency_code": "GEL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+995"
+    },
+    {
+      "code": "DE",
+      "name": "Germany",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+49"
+    },
+    {
+      "code": "GH",
+      "name": "Ghana",
+      "region": "Africa",
+      "currency_code": "GHS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+233"
+    },
+    {
+      "code": "GI",
+      "name": "Gibraltar",
+      "region": "Europe",
+      "currency_code": "GIP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+350"
+    },
+    {
+      "code": "GR",
+      "name": "Greece",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+30"
+    },
+    {
+      "code": "GL",
+      "name": "Greenland",
+      "region": "North America",
+      "currency_code": "DKK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+299"
+    },
+    {
+      "code": "GD",
+      "name": "Grenada",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "GP",
+      "name": "Guadeloupe",
+      "region": "North America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+590"
+    },
+    {
+      "code": "GU",
+      "name": "Guam",
+      "region": "Oceania",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "GT",
+      "name": "Guatemala",
+      "region": "North America",
+      "currency_code": "GTQ",
+      "default_display_currency": "USD",
+      "phone_country_code": "+502"
+    },
+    {
+      "code": "GG",
+      "name": "Guernsey",
+      "region": "Europe",
+      "currency_code": "GBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+44"
+    },
+    {
+      "code": "GN",
+      "name": "Guinea",
+      "region": "Africa",
+      "currency_code": "GNF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+224"
+    },
+    {
+      "code": "GW",
+      "name": "Guinea-Bissau",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+245"
+    },
+    {
+      "code": "GY",
+      "name": "Guyana",
+      "region": "South America",
+      "currency_code": "GYD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+592"
+    },
+    {
+      "code": "HT",
+      "name": "Haiti",
+      "region": "North America",
+      "currency_code": "HTG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+509"
+    },
+    {
+      "code": "HM",
+      "name": "Heard Island and McDonald Islands",
+      "region": "Antarctica",
+      "currency_code": "",
+      "default_display_currency": "USD",
+      "phone_country_code": ""
+    },
+    {
+      "code": "HN",
+      "name": "Honduras",
+      "region": "North America",
+      "currency_code": "HNL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+504"
+    },
+    {
+      "code": "HK",
+      "name": "Hong Kong",
+      "region": "Asia",
+      "currency_code": "HKD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+852"
+    },
+    {
+      "code": "HU",
+      "name": "Hungary",
+      "region": "Europe",
+      "currency_code": "HUF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+36"
+    },
+    {
+      "code": "IS",
+      "name": "Iceland",
+      "region": "Europe",
+      "currency_code": "ISK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+354"
+    },
+    {
+      "code": "IN",
+      "name": "India",
+      "region": "Asia",
+      "currency_code": "INR",
+      "default_display_currency": "INR",
+      "phone_country_code": "+91"
+    },
+    {
+      "code": "ID",
+      "name": "Indonesia",
+      "region": "Asia",
+      "currency_code": "IDR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+62"
+    },
+    {
+      "code": "IR",
+      "name": "Iran",
+      "region": "Asia",
+      "currency_code": "IRR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+98"
+    },
+    {
+      "code": "IQ",
+      "name": "Iraq",
+      "region": "Asia",
+      "currency_code": "IQD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+964"
+    },
+    {
+      "code": "IE",
+      "name": "Ireland",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+353"
+    },
+    {
+      "code": "IM",
+      "name": "Isle of Man",
+      "region": "Europe",
+      "currency_code": "GBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+44"
+    },
+    {
+      "code": "IL",
+      "name": "Israel",
+      "region": "Asia",
+      "currency_code": "ILS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+972"
+    },
+    {
+      "code": "IT",
+      "name": "Italy",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+39"
+    },
+    {
+      "code": "CI",
+      "name": "Ivory Coast",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+225"
+    },
+    {
+      "code": "JM",
+      "name": "Jamaica",
+      "region": "North America",
+      "currency_code": "JMD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "JP",
+      "name": "Japan",
+      "region": "Asia",
+      "currency_code": "JPY",
+      "default_display_currency": "USD",
+      "phone_country_code": "+81"
+    },
+    {
+      "code": "JE",
+      "name": "Jersey",
+      "region": "Europe",
+      "currency_code": "GBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+44"
+    },
+    {
+      "code": "JO",
+      "name": "Jordan",
+      "region": "Asia",
+      "currency_code": "JOD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+962"
+    },
+    {
+      "code": "KZ",
+      "name": "Kazakhstan",
+      "region": "Asia",
+      "currency_code": "KZT",
+      "default_display_currency": "USD",
+      "phone_country_code": "+7"
+    },
+    {
+      "code": "KE",
+      "name": "Kenya",
+      "region": "Africa",
+      "currency_code": "KES",
+      "default_display_currency": "USD",
+      "phone_country_code": "+254"
+    },
+    {
+      "code": "KI",
+      "name": "Kiribati",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+686"
+    },
+    {
+      "code": "XK",
+      "name": "Kosovo",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+383"
+    },
+    {
+      "code": "KW",
+      "name": "Kuwait",
+      "region": "Asia",
+      "currency_code": "KWD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+965"
+    },
+    {
+      "code": "KG",
+      "name": "Kyrgyzstan",
+      "region": "Asia",
+      "currency_code": "KGS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+996"
+    },
+    {
+      "code": "LA",
+      "name": "Laos",
+      "region": "Asia",
+      "currency_code": "LAK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+856"
+    },
+    {
+      "code": "LV",
+      "name": "Latvia",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+371"
+    },
+    {
+      "code": "LB",
+      "name": "Lebanon",
+      "region": "Asia",
+      "currency_code": "LBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+961"
+    },
+    {
+      "code": "LS",
+      "name": "Lesotho",
+      "region": "Africa",
+      "currency_code": "LSL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+266"
+    },
+    {
+      "code": "LR",
+      "name": "Liberia",
+      "region": "Africa",
+      "currency_code": "LRD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+231"
+    },
+    {
+      "code": "LY",
+      "name": "Libya",
+      "region": "Africa",
+      "currency_code": "LYD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+218"
+    },
+    {
+      "code": "LI",
+      "name": "Liechtenstein",
+      "region": "Europe",
+      "currency_code": "CHF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+423"
+    },
+    {
+      "code": "LT",
+      "name": "Lithuania",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+370"
+    },
+    {
+      "code": "LU",
+      "name": "Luxembourg",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+352"
+    },
+    {
+      "code": "MO",
+      "name": "Macau",
+      "region": "Asia",
+      "currency_code": "MOP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+853"
+    },
+    {
+      "code": "MG",
+      "name": "Madagascar",
+      "region": "Africa",
+      "currency_code": "MGA",
+      "default_display_currency": "USD",
+      "phone_country_code": "+261"
+    },
+    {
+      "code": "MW",
+      "name": "Malawi",
+      "region": "Africa",
+      "currency_code": "MWK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+265"
+    },
+    {
+      "code": "MY",
+      "name": "Malaysia",
+      "region": "Asia",
+      "currency_code": "MYR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+60"
+    },
+    {
+      "code": "MV",
+      "name": "Maldives",
+      "region": "Asia",
+      "currency_code": "MVR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+960"
+    },
+    {
+      "code": "ML",
+      "name": "Mali",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+223"
+    },
+    {
+      "code": "MT",
+      "name": "Malta",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+356"
+    },
+    {
+      "code": "MH",
+      "name": "Marshall Islands",
+      "region": "Oceania",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+692"
+    },
+    {
+      "code": "MQ",
+      "name": "Martinique",
+      "region": "North America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+596"
+    },
+    {
+      "code": "MR",
+      "name": "Mauritania",
+      "region": "Africa",
+      "currency_code": "MRU",
+      "default_display_currency": "USD",
+      "phone_country_code": "+222"
+    },
+    {
+      "code": "MU",
+      "name": "Mauritius",
+      "region": "Africa",
+      "currency_code": "MUR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+230"
+    },
+    {
+      "code": "YT",
+      "name": "Mayotte",
+      "region": "Africa",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+262"
+    },
+    {
+      "code": "MX",
+      "name": "Mexico",
+      "region": "North America",
+      "currency_code": "MXN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+52"
+    },
+    {
+      "code": "FM",
+      "name": "Micronesia",
+      "region": "Oceania",
+      "currency_code": "",
+      "default_display_currency": "USD",
+      "phone_country_code": "+691"
+    },
+    {
+      "code": "MD",
+      "name": "Moldova",
+      "region": "Europe",
+      "currency_code": "MDL",
+      "default_display_currency": "USD",
+      "phone_country_code": "+373"
+    },
+    {
+      "code": "MC",
+      "name": "Monaco",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+377"
+    },
+    {
+      "code": "MN",
+      "name": "Mongolia",
+      "region": "Asia",
+      "currency_code": "MNT",
+      "default_display_currency": "USD",
+      "phone_country_code": "+976"
+    },
+    {
+      "code": "ME",
+      "name": "Montenegro",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+382"
+    },
+    {
+      "code": "MS",
+      "name": "Montserrat",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "MA",
+      "name": "Morocco",
+      "region": "Africa",
+      "currency_code": "MAD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+212"
+    },
+    {
+      "code": "MZ",
+      "name": "Mozambique",
+      "region": "Africa",
+      "currency_code": "MZN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+258"
+    },
+    {
+      "code": "MM",
+      "name": "Myanmar",
+      "region": "Asia",
+      "currency_code": "MMK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+95"
+    },
+    {
+      "code": "NA",
+      "name": "Namibia",
+      "region": "Africa",
+      "currency_code": "NAD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+264"
+    },
+    {
+      "code": "NR",
+      "name": "Nauru",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+674"
+    },
+    {
+      "code": "NP",
+      "name": "Nepal",
+      "region": "Asia",
+      "currency_code": "NPR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+977"
+    },
+    {
+      "code": "NL",
+      "name": "Netherlands",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+31"
+    },
+    {
+      "code": "NC",
+      "name": "New Caledonia",
+      "region": "Oceania",
+      "currency_code": "XPF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+687"
+    },
+    {
+      "code": "NZ",
+      "name": "New Zealand",
+      "region": "Oceania",
+      "currency_code": "NZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+64"
+    },
+    {
+      "code": "NI",
+      "name": "Nicaragua",
+      "region": "North America",
+      "currency_code": "NIO",
+      "default_display_currency": "USD",
+      "phone_country_code": "+505"
+    },
+    {
+      "code": "NE",
+      "name": "Niger",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+227"
+    },
+    {
+      "code": "NG",
+      "name": "Nigeria",
+      "region": "Africa",
+      "currency_code": "NGN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+234"
+    },
+    {
+      "code": "NU",
+      "name": "Niue",
+      "region": "Oceania",
+      "currency_code": "NZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+683"
+    },
+    {
+      "code": "NF",
+      "name": "Norfolk Island",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+672"
+    },
+    {
+      "code": "KP",
+      "name": "North Korea",
+      "region": "Asia",
+      "currency_code": "KPW",
+      "default_display_currency": "USD",
+      "phone_country_code": "+850"
+    },
+    {
+      "code": "MK",
+      "name": "North Macedonia",
+      "region": "Europe",
+      "currency_code": "MKD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+389"
+    },
+    {
+      "code": "MP",
+      "name": "Northern Mariana Islands",
+      "region": "Oceania",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "NO",
+      "name": "Norway",
+      "region": "Europe",
+      "currency_code": "NOK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+47"
+    },
+    {
+      "code": "OM",
+      "name": "Oman",
+      "region": "Asia",
+      "currency_code": "OMR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+968"
+    },
+    {
+      "code": "PK",
+      "name": "Pakistan",
+      "region": "Asia",
+      "currency_code": "PKR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+92"
+    },
+    {
+      "code": "PW",
+      "name": "Palau",
+      "region": "Oceania",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+680"
+    },
+    {
+      "code": "PS",
+      "name": "Palestine",
+      "region": "Asia",
+      "currency_code": "EGP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+970"
+    },
+    {
+      "code": "PA",
+      "name": "Panama",
+      "region": "North America",
+      "currency_code": "PAB",
+      "default_display_currency": "USD",
+      "phone_country_code": "+507"
+    },
+    {
+      "code": "PG",
+      "name": "Papua New Guinea",
+      "region": "Oceania",
+      "currency_code": "PGK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+675"
+    },
+    {
+      "code": "PY",
+      "name": "Paraguay",
+      "region": "South America",
+      "currency_code": "PYG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+595"
+    },
+    {
+      "code": "PE",
+      "name": "Peru",
+      "region": "South America",
+      "currency_code": "PEN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+51"
+    },
+    {
+      "code": "PH",
+      "name": "Philippines",
+      "region": "Asia",
+      "currency_code": "PHP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+63"
+    },
+    {
+      "code": "PN",
+      "name": "Pitcairn Islands",
+      "region": "Oceania",
+      "currency_code": "NZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+64"
+    },
+    {
+      "code": "PL",
+      "name": "Poland",
+      "region": "Europe",
+      "currency_code": "PLN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+48"
+    },
+    {
+      "code": "PT",
+      "name": "Portugal",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+351"
+    },
+    {
+      "code": "PR",
+      "name": "Puerto Rico",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "QA",
+      "name": "Qatar",
+      "region": "Asia",
+      "currency_code": "QAR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+974"
+    },
+    {
+      "code": "RO",
+      "name": "Romania",
+      "region": "Europe",
+      "currency_code": "RON",
+      "default_display_currency": "USD",
+      "phone_country_code": "+40"
+    },
+    {
+      "code": "RU",
+      "name": "Russia",
+      "region": "Europe",
+      "currency_code": "RUB",
+      "default_display_currency": "USD",
+      "phone_country_code": "+7"
+    },
+    {
+      "code": "RW",
+      "name": "Rwanda",
+      "region": "Africa",
+      "currency_code": "RWF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+250"
+    },
+    {
+      "code": "RE",
+      "name": "R\u00e9union",
+      "region": "Africa",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+262"
+    },
+    {
+      "code": "BL",
+      "name": "Saint Barth\u00e9lemy",
+      "region": "North America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+590"
+    },
+    {
+      "code": "SH",
+      "name": "Saint Helena, Ascension and Tristan da Cunha",
+      "region": "Africa",
+      "currency_code": "GBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+290"
+    },
+    {
+      "code": "KN",
+      "name": "Saint Kitts and Nevis",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "LC",
+      "name": "Saint Lucia",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "MF",
+      "name": "Saint Martin",
+      "region": "North America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+590"
+    },
+    {
+      "code": "PM",
+      "name": "Saint Pierre and Miquelon",
+      "region": "North America",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+508"
+    },
+    {
+      "code": "VC",
+      "name": "Saint Vincent and the Grenadines",
+      "region": "North America",
+      "currency_code": "XCD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "WS",
+      "name": "Samoa",
+      "region": "Oceania",
+      "currency_code": "WST",
+      "default_display_currency": "USD",
+      "phone_country_code": "+685"
+    },
+    {
+      "code": "SM",
+      "name": "San Marino",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+378"
+    },
+    {
+      "code": "SA",
+      "name": "Saudi Arabia",
+      "region": "Asia",
+      "currency_code": "SAR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+966"
+    },
+    {
+      "code": "SN",
+      "name": "Senegal",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+221"
+    },
+    {
+      "code": "RS",
+      "name": "Serbia",
+      "region": "Europe",
+      "currency_code": "RSD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+381"
+    },
+    {
+      "code": "SC",
+      "name": "Seychelles",
+      "region": "Africa",
+      "currency_code": "SCR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+248"
+    },
+    {
+      "code": "SL",
+      "name": "Sierra Leone",
+      "region": "Africa",
+      "currency_code": "SLE",
+      "default_display_currency": "USD",
+      "phone_country_code": "+232"
+    },
+    {
+      "code": "SG",
+      "name": "Singapore",
+      "region": "Asia",
+      "currency_code": "SGD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+65"
+    },
+    {
+      "code": "SX",
+      "name": "Sint Maarten",
+      "region": "North America",
+      "currency_code": "ANG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "SK",
+      "name": "Slovakia",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+421"
+    },
+    {
+      "code": "SI",
+      "name": "Slovenia",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+386"
+    },
+    {
+      "code": "SB",
+      "name": "Solomon Islands",
+      "region": "Oceania",
+      "currency_code": "SBD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+677"
+    },
+    {
+      "code": "SO",
+      "name": "Somalia",
+      "region": "Africa",
+      "currency_code": "SOS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+252"
+    },
+    {
+      "code": "ZA",
+      "name": "South Africa",
+      "region": "Africa",
+      "currency_code": "ZAR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+27"
+    },
+    {
+      "code": "GS",
+      "name": "South Georgia",
+      "region": "Antarctica",
+      "currency_code": "SHP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+500"
+    },
+    {
+      "code": "KR",
+      "name": "South Korea",
+      "region": "Asia",
+      "currency_code": "KRW",
+      "default_display_currency": "USD",
+      "phone_country_code": "+82"
+    },
+    {
+      "code": "SS",
+      "name": "South Sudan",
+      "region": "Africa",
+      "currency_code": "SSP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+211"
+    },
+    {
+      "code": "ES",
+      "name": "Spain",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+34"
+    },
+    {
+      "code": "LK",
+      "name": "Sri Lanka",
+      "region": "Asia",
+      "currency_code": "LKR",
+      "default_display_currency": "USD",
+      "phone_country_code": "+94"
+    },
+    {
+      "code": "SD",
+      "name": "Sudan",
+      "region": "Africa",
+      "currency_code": "SDG",
+      "default_display_currency": "USD",
+      "phone_country_code": "+249"
+    },
+    {
+      "code": "SR",
+      "name": "Suriname",
+      "region": "South America",
+      "currency_code": "SRD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+597"
+    },
+    {
+      "code": "SJ",
+      "name": "Svalbard and Jan Mayen",
+      "region": "Europe",
+      "currency_code": "NOK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+4779"
+    },
+    {
+      "code": "SE",
+      "name": "Sweden",
+      "region": "Europe",
+      "currency_code": "SEK",
+      "default_display_currency": "USD",
+      "phone_country_code": "+46"
+    },
+    {
+      "code": "CH",
+      "name": "Switzerland",
+      "region": "Europe",
+      "currency_code": "CHF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+41"
+    },
+    {
+      "code": "SY",
+      "name": "Syria",
+      "region": "Asia",
+      "currency_code": "SYP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+963"
+    },
+    {
+      "code": "ST",
+      "name": "S\u00e3o Tom\u00e9 and Pr\u00edncipe",
+      "region": "Africa",
+      "currency_code": "STN",
+      "default_display_currency": "USD",
+      "phone_country_code": "+239"
+    },
+    {
+      "code": "TW",
+      "name": "Taiwan",
+      "region": "Asia",
+      "currency_code": "TWD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+886"
+    },
+    {
+      "code": "TJ",
+      "name": "Tajikistan",
+      "region": "Asia",
+      "currency_code": "TJS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+992"
+    },
+    {
+      "code": "TZ",
+      "name": "Tanzania",
+      "region": "Africa",
+      "currency_code": "TZS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+255"
+    },
+    {
+      "code": "TH",
+      "name": "Thailand",
+      "region": "Asia",
+      "currency_code": "THB",
+      "default_display_currency": "USD",
+      "phone_country_code": "+66"
+    },
+    {
+      "code": "TL",
+      "name": "Timor-Leste",
+      "region": "Asia",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+670"
+    },
+    {
+      "code": "TG",
+      "name": "Togo",
+      "region": "Africa",
+      "currency_code": "XOF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+228"
+    },
+    {
+      "code": "TK",
+      "name": "Tokelau",
+      "region": "Oceania",
+      "currency_code": "NZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+690"
+    },
+    {
+      "code": "TO",
+      "name": "Tonga",
+      "region": "Oceania",
+      "currency_code": "TOP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+676"
+    },
+    {
+      "code": "TT",
+      "name": "Trinidad and Tobago",
+      "region": "North America",
+      "currency_code": "TTD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "TN",
+      "name": "Tunisia",
+      "region": "Africa",
+      "currency_code": "TND",
+      "default_display_currency": "USD",
+      "phone_country_code": "+216"
+    },
+    {
+      "code": "TM",
+      "name": "Turkmenistan",
+      "region": "Asia",
+      "currency_code": "TMT",
+      "default_display_currency": "USD",
+      "phone_country_code": "+993"
+    },
+    {
+      "code": "TC",
+      "name": "Turks and Caicos Islands",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "TV",
+      "name": "Tuvalu",
+      "region": "Oceania",
+      "currency_code": "AUD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+688"
+    },
+    {
+      "code": "TR",
+      "name": "T\u00fcrkiye",
+      "region": "Asia",
+      "currency_code": "TRY",
+      "default_display_currency": "USD",
+      "phone_country_code": "+90"
+    },
+    {
+      "code": "UG",
+      "name": "Uganda",
+      "region": "Africa",
+      "currency_code": "UGX",
+      "default_display_currency": "USD",
+      "phone_country_code": "+256"
+    },
+    {
+      "code": "UA",
+      "name": "Ukraine",
+      "region": "Europe",
+      "currency_code": "UAH",
+      "default_display_currency": "USD",
+      "phone_country_code": "+380"
+    },
+    {
+      "code": "AE",
+      "name": "United Arab Emirates",
+      "region": "Asia",
+      "currency_code": "AED",
+      "default_display_currency": "USD",
+      "phone_country_code": "+971"
+    },
+    {
+      "code": "GB",
+      "name": "United Kingdom",
+      "region": "Europe",
+      "currency_code": "GBP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+44"
+    },
+    {
+      "code": "US",
+      "name": "United States",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "UM",
+      "name": "United States Minor Outlying Islands",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+268"
+    },
+    {
+      "code": "VI",
+      "name": "United States Virgin Islands",
+      "region": "North America",
+      "currency_code": "USD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+1"
+    },
+    {
+      "code": "UY",
+      "name": "Uruguay",
+      "region": "South America",
+      "currency_code": "UYU",
+      "default_display_currency": "USD",
+      "phone_country_code": "+598"
+    },
+    {
+      "code": "UZ",
+      "name": "Uzbekistan",
+      "region": "Asia",
+      "currency_code": "UZS",
+      "default_display_currency": "USD",
+      "phone_country_code": "+998"
+    },
+    {
+      "code": "VU",
+      "name": "Vanuatu",
+      "region": "Oceania",
+      "currency_code": "VUV",
+      "default_display_currency": "USD",
+      "phone_country_code": "+678"
+    },
+    {
+      "code": "VA",
+      "name": "Vatican City",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+3906698"
+    },
+    {
+      "code": "VE",
+      "name": "Venezuela",
+      "region": "South America",
+      "currency_code": "VES",
+      "default_display_currency": "USD",
+      "phone_country_code": "+58"
+    },
+    {
+      "code": "VN",
+      "name": "Vietnam",
+      "region": "Asia",
+      "currency_code": "VND",
+      "default_display_currency": "USD",
+      "phone_country_code": "+84"
+    },
+    {
+      "code": "WF",
+      "name": "Wallis and Futuna",
+      "region": "Oceania",
+      "currency_code": "XPF",
+      "default_display_currency": "USD",
+      "phone_country_code": "+681"
+    },
+    {
+      "code": "EH",
+      "name": "Western Sahara",
+      "region": "Africa",
+      "currency_code": "DZD",
+      "default_display_currency": "USD",
+      "phone_country_code": "+2125288"
+    },
+    {
+      "code": "YE",
+      "name": "Yemen",
+      "region": "Asia",
+      "currency_code": "YER",
+      "default_display_currency": "USD",
+      "phone_country_code": "+967"
+    },
+    {
+      "code": "ZM",
+      "name": "Zambia",
+      "region": "Africa",
+      "currency_code": "ZMW",
+      "default_display_currency": "USD",
+      "phone_country_code": "+260"
+    },
+    {
+      "code": "ZW",
+      "name": "Zimbabwe",
+      "region": "Africa",
+      "currency_code": "BWP",
+      "default_display_currency": "USD",
+      "phone_country_code": "+263"
+    },
+    {
+      "code": "AX",
+      "name": "\u00c5land Islands",
+      "region": "Europe",
+      "currency_code": "EUR",
+      "default_display_currency": "EUR",
+      "phone_country_code": "+35818"
+    }
+  ]
+}

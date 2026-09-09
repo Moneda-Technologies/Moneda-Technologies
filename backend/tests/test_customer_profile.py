@@ -1,10 +1,11 @@
+from app.customers.countries import countries
 from app.customers.metadata import normalize_customer_profile, phone_is_valid, resolve_customer_currency
 
 
-def test_india_profile_does_not_control_currency_or_tax():
+def test_india_profile_defaults_display_currency_without_enabling_tax():
     changes, error = normalize_customer_profile({"company_name": "India Co", "continent": "Asia", "country_code": "IN"})
     assert error is None
-    assert changes["preferred_currency"] == "EUR"
+    assert changes["preferred_currency"] == "INR"
     assert "tax_profile" not in changes
 
 
@@ -15,10 +16,49 @@ def test_region_update_does_not_rewrite_historical_tax_metadata():
     assert "tax_profile" not in changes
 
 
-def test_country_must_belong_to_continent():
+def test_country_region_mismatch_is_rejected():
     changes, error = normalize_customer_profile({"continent": "Europe", "country_code": "IN"})
     assert changes is None
-    assert "belong" in error
+    assert error == "COUNTRY_CONTINENT_MISMATCH"
+
+
+def test_country_derives_region_when_region_is_omitted():
+    changes, error = normalize_customer_profile({"country_code": "BR"})
+    assert error is None
+    assert changes["continent"] == "South America"
+    assert changes["region"]["continent"] == "South America"
+
+
+def test_country_name_and_code_must_refer_to_same_country():
+    changes, error = normalize_customer_profile({"country_code": "IN", "country_name": "Germany"})
+    assert changes is None
+    assert error == "COUNTRY_INVALID"
+
+
+def test_invalid_country_code_is_rejected():
+    changes, error = normalize_customer_profile({"country_code": "ZZ"})
+    assert changes is None
+    assert error == "COUNTRY_INVALID"
+
+
+def test_country_catalogue_is_complete_and_sorted():
+    rows = countries()
+    assert len(rows) == 250
+    assert [row["name"] for row in rows] == sorted((row["name"] for row in rows), key=str.casefold)
+    lookup = {row["code"]: row for row in rows}
+    required_names = {
+        "India", "Germany", "United States", "United Kingdom", "France", "Italy", "Spain", "Brazil",
+        "Argentina", "Chile", "Mexico", "Canada", "Nigeria", "South Africa", "Egypt", "Saudi Arabia",
+        "United Arab Emirates", "Singapore", "Malaysia", "Indonesia", "Japan", "China", "Australia", "New Zealand",
+    }
+    assert required_names <= {row["name"] for row in rows}
+    assert lookup["IN"] == {
+        "code": "IN", "name": "India", "region": "Asia", "currency_code": "INR",
+        "default_display_currency": "INR", "phone_country_code": "+91",
+    }
+    assert lookup["US"]["region"] == "North America"
+    assert lookup["DE"]["default_display_currency"] == "EUR"
+    assert lookup["BR"]["region"] == "South America"
 
 
 def test_custom_payment_days_are_structured():
@@ -47,6 +87,18 @@ def test_phone_validation_accepts_common_international_formats_and_rejects_obvio
     assert not phone_is_valid("abc123")
     assert not phone_is_valid("+1")
     assert not phone_is_valid("1" * 16)
+
+
+def test_customer_contact_fields_accept_explicit_unknown_marker():
+    changes, error = normalize_customer_profile({
+        "company_name": "Unknown Contacts Ltd", "contact_name": "Buyer", "email": "-", "phone": "-",
+        "country_code": "DE", "payment_terms": "Advance", "address": "Berlin",
+    }, require_complete=True)
+    assert error is None
+    assert changes["email"] == "-"
+    assert changes["phone"] == "-"
+    assert phone_is_valid("-") is False
+    assert phone_is_valid("-", allow_unknown=True) is True
 
 
 def test_legacy_india_country_name_is_supported():

@@ -1,5 +1,6 @@
 import { api, jsonBody, patchBody } from "./client";
 import type { CartItem, CatalogOption, Category, Currency, Customer, DashboardData, PageResult, PriceHistoryEntry, PricingResource, Product, Quotation, SessionPayload } from "../types/domain";
+import type { CountryMeta } from "../config/customer-metadata";
 
 export const authApi = {
   me: () => api<SessionPayload>("/me"),
@@ -49,6 +50,7 @@ export const customerCompanyApi = {
 export const companyApi = customerCompanyApi;
 
 export const customerApi = {
+  countries: () => api<{ countries: CountryMeta[]; total: number }>("/countries"),
   list: (customerId?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}limit=100`),
   get: (id: string) => api<Customer & { related?: Record<string, unknown[]> }>(`/customers/${encodeURIComponent(id)}`),
   create: (value: unknown) => api<Customer>("/customers", jsonBody(value)),

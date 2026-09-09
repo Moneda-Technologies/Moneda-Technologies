@@ -146,7 +146,8 @@ export function signupPage(allowedDomains = ["monedatechnologies.com", "chemo.in
         password,
         confirm_password: confirmPassword,
       });
-      if (onComplete) await onComplete(); else window.location.assign("/customer-selection");
+      if (onComplete) await onComplete();
+      else window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/dashboard" }));
     } catch (error) {
       toast(authError(error, "Account could not be created"), "error");
       if (submit) submit.disabled = false;

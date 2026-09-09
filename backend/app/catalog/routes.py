@@ -8,6 +8,7 @@ from app.api.responses import failure, success
 from app.middleware.access import current_user, customer_id_from, customer_record, enforce_active_customer, login_required, permission_required
 from app.pricing.engine import PricingUnavailable, calculate_line, resolve_mpack_selection, resolve_product_adjustments, validate_blanket_machine_selection
 from app.customers.metadata import resolve_customer_currency
+from app.customers.countries import countries as country_catalogue
 from app.catalog.service import get_active_catalog_product, get_active_catalog_products
 
 
@@ -25,6 +26,13 @@ def _log_mpack_catalog_state(product: dict) -> None:
         product.get("_id"), product.get("pricing_status", "unknown"),
         bool(machine_sizes), len(machine_sizes),
     )
+
+
+@bp.get("/countries")
+@permission_required("customers.view")
+def countries():
+    rows = list(country_catalogue())
+    return success({"countries": rows, "total": len(rows)})
 
 
 @bp.get("/categories")

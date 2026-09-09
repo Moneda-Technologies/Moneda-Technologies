@@ -80,7 +80,7 @@ export function renderShell(): HTMLElement {
   }).join("");
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
-      <div class="brand-block"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button></div>
+      <div class="brand-block"><a class="brand-home" href="/dashboard" data-route="/dashboard" aria-label="${escapeHtml(state.brandName)} dashboard"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"></a><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button></div>
       <nav>${nav}</nav>
       <div class="sidebar-foot"><div class="avatar">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role_display_name)}</span></div><a href="/profile" data-route="/profile" aria-label="Profile" title="Open profile"><i data-lucide="chevron-right"></i></a></div>
     </aside>

@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from typing import Any
 
 from app.pricing.tax import money
 
 
 MASTER_CURRENCY = "EUR"
+SHEET_PRICE_PRECISION = Decimal("0.001")
+
+
+def sheet_money(value: Decimal | str | int | float) -> Decimal:
+    """Keep MPack per-sheet display values precise to three decimals."""
+    return Decimal(str(value)).quantize(SHEET_PRICE_PRECISION, rounding=ROUND_HALF_UP)
 
 
 class PricingUnavailable(ValueError):
@@ -410,6 +416,7 @@ def calculate_line(
         configuration["total_eur"] = float(master_subtotal)
     master_discount_amount = money(master_subtotal * discount / Decimal("100"))
     master_total = money(master_subtotal - master_discount_amount)
+    discounted_unit_master = money(unit_master * (Decimal("100") - discount) / Decimal("100"))
     unit_selected = money(unit_master * rate)
     subtotal = money(master_subtotal * rate)
     discount_amount = money(master_discount_amount * rate)
@@ -434,6 +441,7 @@ def calculate_line(
         "master_price_eur": float(unit_master), "converted_price": float(unit_selected),
         "master_subtotal": float(master_subtotal), "master_discount_amount": float(master_discount_amount),
         "master_total": float(master_total), "master_final_total": float(master_total),
+        "master_discounted_unit_price": float(discounted_unit_master),
         "display_unit_price": float(unit_selected),
         "display_subtotal": float(subtotal), "display_discount_amount": float(discount_amount),
         "display_total": float(discounted), "display_final_total": float(discounted),
@@ -447,6 +455,8 @@ def calculate_line(
     if mpack_selection:
         result["price_per_sheet_eur"] = mpack_selection["price_per_sheet_eur"]
         result["price_per_box_eur"] = mpack_selection["price_per_box_eur"]
+        result["discounted_price_per_sheet_eur"] = float(sheet_money(Decimal(str(mpack_selection["price_per_sheet_eur"])) * (Decimal("100") - discount) / Decimal("100")))
+        result["discounted_price_per_box_eur"] = float(money(Decimal(str(mpack_selection["price_per_box_eur"])) * (Decimal("100") - discount) / Decimal("100")))
         result["sheets_per_box"] = mpack_selection["sheets_per_box"]
         result["price_list"] = product.get("configuration", {}).get("machine_price_list") or {}
     if product.get("pricing", {}).get("pricing_type") in {"per_sqm", "formula"}:

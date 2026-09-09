@@ -18,6 +18,7 @@ def test_separated_catalog_contracts_are_available(authenticated):
     mpack_products = authenticated.get("/api/v1/catalog/mpacks/products").json["data"]
     assert mpack_products["total"] == 1
     assert [row["_id"] for row in mpack_products["items"]] == ["mtech-mpack"]
+    assert mpack_products["items"][0]["description"] == "Calibrated underpacking material."
     assert authenticated.get("/api/v1/catalog/chemicals/categories").status_code == 200
     assert authenticated.get("/api/v1/catalog/chemicals/options").status_code == 200
     assert authenticated.get("/api/v1/catalog/chemicals/products").json["data"]["total"] == 22

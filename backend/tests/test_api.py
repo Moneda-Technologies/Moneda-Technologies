@@ -43,6 +43,51 @@ def test_authentication_required(client):
     assert response.json["success"] is False
 
 
+def test_country_catalogue_endpoint_is_complete(authenticated):
+    response = authenticated.get("/api/v1/countries")
+    assert response.status_code == 200
+    payload = response.json["data"]
+    assert payload["total"] == 250
+    by_code = {row["code"]: row for row in payload["countries"]}
+    assert by_code["IN"]["phone_country_code"] == "+91"
+    assert by_code["GB"]["region"] == "Europe"
+    assert by_code["NG"]["region"] == "Africa"
+
+
+def test_customer_creation_accepts_unknown_contacts_and_normalizes_country(authenticated):
+    response = authenticated.post("/api/v1/customers", json={
+        "company_name": "No Contact Details Ltd", "contact_name": "Purchasing", "email": "-", "phone": "-",
+        "country_code": "IN", "payment_terms": "Advance", "address": "Mumbai",
+    })
+    assert response.status_code == 201
+    customer = response.json["data"]
+    assert customer["email"] == "-"
+    assert customer["phone"] == "-"
+    assert customer["country_name"] == "India"
+    assert customer["continent"] == "Asia"
+    assert customer["preferred_currency"] == "INR"
+
+
+def test_customer_creation_rejects_unknown_country_code(authenticated):
+    response = authenticated.post("/api/v1/customers", json={
+        "company_name": "Invalid Country Ltd", "contact_name": "Purchasing",
+        "email": "buyer@example.com", "phone": "+49 30 123456", "country_code": "ZZ",
+        "payment_terms": "Advance", "address": "Berlin", "preferred_currency": "EUR",
+    })
+    assert response.status_code == 422
+    assert response.json["error"] == "COUNTRY_INVALID"
+
+
+def test_customer_creation_rejects_country_region_mismatch(authenticated):
+    response = authenticated.post("/api/v1/customers", json={
+        "company_name": "Mismatched Region Ltd", "contact_name": "Purchasing",
+        "email": "buyer@example.com", "phone": "+49 30 123456", "country_code": "IN",
+        "continent": "Europe", "payment_terms": "Advance", "address": "Berlin", "preferred_currency": "EUR",
+    })
+    assert response.status_code == 422
+    assert response.json["error"] == "COUNTRY_CONTINENT_MISMATCH"
+
+
 def test_password_login_accepts_username_and_user_id(client):
     response = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "123@Admin"})
     assert response.status_code == 200
@@ -395,6 +440,8 @@ def test_mpack_machine_price_list_is_structured_and_server_authoritative(app, au
     assert line["pricing_unit"] == "box"
     assert line["price_per_sheet_eur"] == 0.221
     assert line["price_per_box_eur"] == 22.06
+    assert line["discounted_price_per_sheet_eur"] == 0.221
+    assert line["discounted_price_per_box_eur"] == 22.06
     assert line["sheets_per_box"] == 100
     assert line["master_subtotal"] == 44.12
     assert line["master_final_total"] == 44.12
@@ -406,6 +453,7 @@ def test_mpack_machine_price_list_is_structured_and_server_authoritative(app, au
         "discount_percent": 0, "display_currency": "EUR", "configuration": configuration,
     })
     assert added.status_code == 201
+    assert added.json["data"]["pricing_preview"]["description"] == "Calibrated underpacking material."
     assert added.json["data"]["configuration"]["price_per_box_eur"] == 22.06
     assert added.json["data"]["configuration"]["total_eur"] == 44.12
 

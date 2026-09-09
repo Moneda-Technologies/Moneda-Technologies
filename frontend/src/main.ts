@@ -45,22 +45,22 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
   }
   document.body.classList.remove("print-preview-mode");
   app.replaceChildren(renderShell());
-  const authEntry = ["/", "/login", "/home"].includes(location.pathname);
+  const authEntry = ["/", "/login", "/home", "/signup"].includes(location.pathname);
   const destination = forceCompanySelection
     ? "/customer-selection"
     : authEntry
-      ? (customer ? "/calculator" : "/customer-selection")
+      ? "/dashboard"
       : location.pathname;
   const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]);
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 
 function renderPublicAuthentication(config: PublicConfig): void {
-  if (location.pathname === "/signup") app.replaceChildren(signupPage(config.signup_email_domains, () => enterWorkspace(true)));
+  if (location.pathname === "/signup") app.replaceChildren(signupPage(config.signup_email_domains, () => enterWorkspace(false)));
   else if (["/forgot-password", "/reset-password"].includes(location.pathname)) app.replaceChildren(passwordResetPage());
   else {
     if (["/", "/home"].includes(location.pathname)) history.replaceState({}, "", "/login");
-    app.replaceChildren(loginPage(config.demo_mode, () => enterWorkspace(true)));
+    app.replaceChildren(loginPage(config.demo_mode, () => enterWorkspace(false)));
   }
 }
 
@@ -112,7 +112,7 @@ window.addEventListener("moneda:auth-required", () => {
   localStorage.removeItem("moneda-selected-customer-company");
   appStore.set({ user: null, customer: null, activeCustomerId: null, customerCompany: null, company: null, cartCount: 0 });
   history.replaceState({}, "", "/login");
-  app.replaceChildren(loginPage(false, () => enterWorkspace(true)));
+  app.replaceChildren(loginPage(false, () => enterWorkspace(false)));
 });
 
 void bootstrap().then(() => refreshIcons());

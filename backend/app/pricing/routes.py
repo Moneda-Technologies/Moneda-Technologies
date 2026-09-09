@@ -49,6 +49,12 @@ def _cart_items(user_id: str, customer_id: str, cart_id: str) -> list[dict]:
         if row.get("cart_id") != cart_id:
             store.update_one("cart_items", {"_id": row["_id"]}, {"cart_id": cart_id})
             row["cart_id"] = cart_id
+        product = get_active_catalog_product(store, row.get("product_id"))
+        if product and row.get("pricing_preview"):
+            row["pricing_preview"] = {
+                **row["pricing_preview"],
+                "description": product.get("description", ""),
+            }
     return rows
 
 

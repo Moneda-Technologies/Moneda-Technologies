@@ -47,7 +47,7 @@ const routes: Record<string, PageFactory> = {
 export async function navigate(path: string, push = true): Promise<void> {
   const query = path.includes("?") ? path.slice(path.indexOf("?")) : "";
   const routePath = path.split("?", 1)[0];
-  let resolved = routePath === "/" || routePath === "/login" ? "/customer-selection" : routePath.replace(/\/$/, "");
+  let resolved = routePath === "/" || routePath === "/login" || routePath === "/home" ? "/dashboard" : routePath.replace(/\/$/, "");
   const selectingCustomer = resolved === CUSTOMER_SELECTION_PATH || resolved === "/company-selection";
   if (selectingCustomer && hasCustomerContext()) {
     await customerCompanyApi.clearSelection().catch(() => undefined);

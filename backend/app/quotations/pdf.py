@@ -143,9 +143,9 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     center = ParagraphStyle("Center", parent=normal, alignment=TA_CENTER)
     quantity_style = ParagraphStyle("Quantity", parent=center, fontSize=7.4, leading=9)
     white = ParagraphStyle("White", parent=normal, textColor=colors.white)
-    white_heading = ParagraphStyle("WhiteHeading", parent=heading, textColor=colors.white)
     yellow_label = ParagraphStyle("YellowLabel", parent=label, textColor=palette["yellow"])
-    white_muted = ParagraphStyle("WhiteMuted", parent=muted, textColor=colors.HexColor("#bdbdbd"))
+    party_heading = ParagraphStyle("PartyHeading", parent=heading, textColor=palette["black"])
+    party_body = ParagraphStyle("PartyBody", parent=muted, textColor=palette["muted"])
     white_center = ParagraphStyle("WhiteCenter", parent=white, alignment=TA_CENTER)
     white_right = ParagraphStyle("WhiteRight", parent=white, alignment=TA_RIGHT)
 
@@ -215,24 +215,24 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     customer = quotation.get("customer_snapshot") or customer_company
     issued_by = [
         Paragraph("FROM", yellow_label),
-        Paragraph(safe(issuer.get("name") or "Moneda Technologies"), white_heading),
+        Paragraph(safe(issuer.get("name") or "Moneda Technologies"), party_heading),
         Paragraph(lines(
             issuer.get("address"), issuer.get("email"), issuer.get("phone"),
             f"Made by: {creator.get('name')}" if creator.get("name") else None,
             f"Creator email: {creator.get('email')}" if creator.get("email") else None,
             f"Creator phone: {creator.get('phone')}" if creator.get("phone") else None,
-        ), ParagraphStyle("WhiteMuted", parent=muted, textColor=colors.HexColor("#bdbdbd"))),
+        ), party_body),
     ]
     prepared_for = [
-        Paragraph("TO", yellow_label), Paragraph(safe(customer_company.get("name") or customer.get("name")), white_heading),
-        Paragraph(lines(f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None, customer.get("address"), customer.get("email"), customer.get("phone")), white_muted),
+        Paragraph("TO", yellow_label), Paragraph(safe(customer_company.get("name") or customer.get("name")), party_heading),
+        Paragraph(lines(f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None, customer.get("address"), customer.get("email"), customer.get("phone")), party_body),
     ]
     parties = Table([[issued_by, prepared_for]], colWidths=[86 * mm, 86 * mm], rowHeights=[34 * mm], splitByRow=0)
     parties.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), palette["black"]),
-        ("BOX", (0, 0), (-1, 0), .5, palette["black"]),
-        # One black panel with a solid Moneda-red divider at the 50% boundary.
-        ("LINEBEFORE", (1, 0), (1, 0), 2.0, palette["red"]),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.white),
+        ("BOX", (0, 0), (-1, 0), .5, palette["line"]),
+        # Matching white panels separated by a single strong black divider.
+        ("LINEBEFORE", (1, 0), (1, 0), 2.0, palette["black"]),
         ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12), ("TOPPADDING", (0, 0), (-1, -1), 11),
     ]))
