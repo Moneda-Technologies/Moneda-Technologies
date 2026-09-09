@@ -81,7 +81,7 @@ function familyCards(families: CatalogOption[]): string {
 
 function machineField(initial: Config): string {
   const initialMachine = String(initial.machine ?? initial.machine_name ?? "");
-  return `<label data-machine-name-field>Machine Name <small data-machine-required-copy>(Optional for Cut Format)</small><input name="machine" data-blanket-machine value="${valueAttr(initialMachine)}" placeholder="Search or select machine name" autocomplete="off"><input type="hidden" name="machine_id" value="${valueAttr(initial.machine_id)}"><div class="machine-search-results" data-blanket-machines role="listbox" hidden></div><small>Required when Format is Bar Format.</small></label>`;
+  return `<label data-machine-name-field>Machine Name <small data-machine-required-copy>(Optional for Cut Format)</small><span class="machine-combobox-field"><input name="machine" data-blanket-machine role="combobox" aria-autocomplete="list" aria-expanded="false" value="${valueAttr(initialMachine)}" placeholder="Search or select machine name" autocomplete="off"><input type="hidden" name="machine_id" value="${valueAttr(initial.machine_id)}"><div class="machine-search-results" data-blanket-machines role="listbox" hidden></div></span><small>Required when Format is Bar Format.</small></label>`;
 }
 
 function blanketFields(product: Product, initial: Config): string {
@@ -348,15 +348,21 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   const machineName = (machine: BlanketMachineOption) => String(machine.name || (
     `${machine.manufacturer ?? ""} - ${machine.machine_model ?? machine.model ?? ""}`
   )).replace(/^\s*[-]\s*|\s*[-]\s*$/g, "").trim();
-  const refreshBlanketMachineOptions = () => {
+  let machineHighlight = -1;
+  const refreshBlanketMachineOptions = (query = "", open = false) => {
     if (!machineList) return;
-    const names = [...new Set([...configuredMachines, ...savedMachines].map(machineName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const normalizedQuery = query.trim().toLowerCase();
+    const names = [...new Set([...configuredMachines, ...savedMachines].map(machineName).filter(Boolean))]
+      .filter((name) => !normalizedQuery || name.toLowerCase().includes(normalizedQuery))
+      .sort((a, b) => a.localeCompare(b));
+    machineHighlight = names.length ? Math.min(Math.max(machineHighlight, 0), names.length - 1) : -1;
     machineList.innerHTML = names.map((name) => {
       const machine = [...configuredMachines, ...savedMachines].find((item) => machineName(item) === name);
       const id = machine?.id ?? machine?._id ?? "";
-      return `<button type="button" class="machine-search-option" role="option" data-machine-id="${escapeHtml(String(id))}" data-machine-name="${escapeHtml(name)}"><strong>${escapeHtml(name)}</strong></button>`;
+      return `<button type="button" class="machine-search-option${names.indexOf(name) === machineHighlight ? " is-highlighted" : ""}" role="option" data-machine-id="${escapeHtml(String(id))}" data-machine-name="${escapeHtml(name)}"><strong>${escapeHtml(name)}</strong></button>`;
     }).join("");
-    machineList.hidden = !names.length;
+    machineList.hidden = !open || !names.length;
+    blanketMachine?.setAttribute("aria-expanded", String(!machineList.hidden));
   };
   const syncMachineIdentity = () => {
     if (!blanketMachine || !machineIdInput) return;
@@ -379,10 +385,25 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   syncMachineIdentity();
   blanketMachine?.addEventListener("input", () => {
     syncMachineIdentity();
-    if (machineList) machineList.hidden = false;
+    refreshBlanketMachineOptions(blanketMachine.value, true);
     calculatePreview();
   });
-  blanketMachine?.addEventListener("focus", () => { if (machineList) machineList.hidden = false; });
+  blanketMachine?.addEventListener("focus", () => refreshBlanketMachineOptions(blanketMachine?.value ?? "", true));
+  blanketMachine?.addEventListener("keydown", (event) => {
+    const options = [...(machineList?.querySelectorAll<HTMLButtonElement>("[data-machine-id]") ?? [])];
+    if (event.key === "Escape") { if (machineList) machineList.hidden = true; blanketMachine?.setAttribute("aria-expanded", "false"); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!options.length) return;
+      machineHighlight = (machineHighlight + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+      options.forEach((option, index) => option.classList.toggle("is-highlighted", index === machineHighlight));
+      return;
+    }
+    if (event.key === "Enter" && machineHighlight >= 0 && options[machineHighlight]) {
+      event.preventDefault();
+      options[machineHighlight].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    }
+  });
   machineList?.addEventListener("mousedown", (event) => {
     const option = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-machine-id]");
     if (!option || !blanketMachine || !machineIdInput) return;
@@ -390,9 +411,22 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     blanketMachine.value = option.dataset.machineName ?? "";
     machineIdInput.value = option.dataset.machineId ?? "";
     machineList.hidden = true;
+    blanketMachine.setAttribute("aria-expanded", "false");
     syncMachineIdentity();
     calculatePreview();
   });
+  const closeMachineDropdown = (event: PointerEvent) => {
+    if (!host.isConnected) {
+      document.removeEventListener("pointerdown", closeMachineDropdown);
+      return;
+    }
+    const container = form.querySelector<HTMLElement>("[data-machine-name-field]");
+    if (container && !container.contains(event.target as Node) && machineList) {
+      machineList.hidden = true;
+      blanketMachine?.setAttribute("aria-expanded", "false");
+    }
+  };
+  document.addEventListener("pointerdown", closeMachineDropdown);
   const commercialNote = form.querySelectorAll<HTMLElement>(".form-section")[1]?.querySelector("p");
   if (commercialNote) commercialNote.textContent = "Discount is applied to the EUR master price; USD/INR are display references only.";
   const preview = host.querySelector<HTMLElement>(".live-price")!;
@@ -506,7 +540,10 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       });
     }
   });
-  configuratorSubscriptions.set(host, unsubscribeCurrency);
+  configuratorSubscriptions.set(host, () => {
+    unsubscribeCurrency();
+    document.removeEventListener("pointerdown", closeMachineDropdown);
+  });
   bindMpackDependencies(form, product);
   form.querySelector<HTMLSelectElement>("[name=format_type]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
   form.querySelector<HTMLInputElement>("[name=use_second_bar]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
