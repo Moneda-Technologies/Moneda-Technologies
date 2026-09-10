@@ -1,4 +1,11 @@
-.app-shell { min-height: 100vh; }
+.app-shell { isolation: isolate; min-height: 100vh; position: relative; }
+.app-watermark { inset: 0; overflow: hidden; pointer-events: none; position: fixed; user-select: none; z-index: 0; }
+.app-watermark[data-enabled="false"] { display: none; }
+.app-watermark-grid { align-content: center; display: grid; gap: 88px 110px; grid-template-columns: repeat(5, 300px); height: 140%; justify-content: center; left: -20%; position: absolute; top: -20%; transform: rotate(-24deg); width: 140%; }
+.app-watermark-tile { color: #171717; display: grid; font-size: .62rem; gap: 4px; line-height: 1.25; opacity: .055; white-space: nowrap; }
+.app-watermark-tile strong { font-size: .72rem; letter-spacing: .16em; }
+.app-watermark-tile span, .app-watermark-tile small { font-size: .6rem; }
+.app-watermark-tile small { letter-spacing: .04em; }
 .sidebar { background: var(--primary-black); color: #fff; display: flex; flex-direction: column; height: 100vh; left: 0; position: fixed; top: 0; transition: width .2s ease, transform .2s ease; width: var(--sidebar-width); z-index: 40; }
 .brand-block { align-items: center; border-bottom: 1px solid #2d2d2d; display: flex; height: var(--topbar-height); justify-content: space-between; padding: 0 15px 0 18px; }
 .brand-home { border-radius: 4px; display: block; line-height: 0; }
@@ -34,7 +41,7 @@
 .sidebar-foot strong { font-size: .71rem; }
 .sidebar-foot span { color: #858585; font-size: .6rem; margin-top: 3px; }
 .sidebar-foot a { color: #6e6e6e; margin-left: auto; }
-.workspace { margin-left: var(--sidebar-width); min-height: 100vh; transition: margin .2s ease; }
+.workspace { margin-left: var(--sidebar-width); min-height: 100vh; position: relative; transition: margin .2s ease; z-index: 1; }
 .topbar { align-items: center; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--border); display: flex; height: var(--topbar-height); justify-content: space-between; padding: 0 28px; position: sticky; top: 0; z-index: 30; }
 .search-trigger { align-items: center; background: #f4f4f2; border: 1px solid #e5e5e2; border-radius: 7px; color: #8b8e88; display: flex; font-size: .72rem; gap: 8px; height: 37px; max-width: 420px; padding: 0 10px; text-align: left; width: 38vw; }
 .search-trigger svg { height: 15px; width: 15px; }

@@ -157,7 +157,7 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     app.extensions["store"] = store
     app.extensions["zoho_oauth"] = zoho_oauth
     app.extensions["email_provider"] = email_provider
-    app.extensions["email_service"] = EmailService(email_provider, app.config)
+    app.extensions["email_service"] = EmailService(email_provider, app.config, store=store)
     app.extensions["whatsapp_provider"] = MockWhatsAppProvider() if app.config["DEMO_MODE"] or app.config["TESTING"] else DisabledWhatsAppProvider()
     app.extensions["exchange_rate_service"] = exchange_service
     app.extensions["otp_service"] = OtpService(store, app.extensions["email_service"])
@@ -192,8 +192,9 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     from app.quotations.routes import bp as quotations_bp
     from app.reports.routes import bp as reports_bp
     from app.integrations.routes import bp as integrations_bp
+    from app.devices.routes import bp as devices_bp
 
-    blueprints = (system_bp, auth_bp, catalog_bp, companies_bp, customers_bp, pricing_bp, quotations_bp, crm_bp, orders_bp, reports_bp, admin_bp, integrations_bp)
+    blueprints = (system_bp, auth_bp, catalog_bp, companies_bp, customers_bp, pricing_bp, quotations_bp, crm_bp, orders_bp, reports_bp, admin_bp, integrations_bp, devices_bp)
     for blueprint in blueprints:
         app.register_blueprint(blueprint)
 
@@ -204,6 +205,7 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
         "companies": "/api/v1/companies", "customers": "/api/v1/customers",
         "pricing": "/api/v1", "quotations": "/api/v1/quotations",
         "crm": "/api/v1", "orders": "/api/v1", "reports": "/api/v1", "admin": "/api/v1", "integrations": "/api/v1",
+        "devices": "/api/v1",
     }
     for blueprint in blueprints:
         app.register_blueprint(blueprint, url_prefix=v1_prefixes[blueprint.name], name=f"{blueprint.name}_v1")
@@ -222,6 +224,17 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
 
     @app.after_request
     def security_headers(response):
+        device_token = getattr(g, "device_cookie_value", None)
+        if device_token:
+            response.set_cookie(
+                app.config.get("DEVICE_COOKIE_NAME", "moneda_device"), device_token,
+                # Keep the credential in an HttpOnly session cookie. The
+                # server-side device record remains persistent and a new
+                # browser session simply creates a fresh approval request.
+                httponly=True,
+                secure=bool(app.config.get("SESSION_COOKIE_SECURE") or request.is_secure),
+                samesite="Lax", path="/",
+            )
         if session.get("user_id") and session.permanent:
             session_cookie_prefix = f"{app.config['SESSION_COOKIE_NAME']}="
             cookie_set = any(value.startswith(session_cookie_prefix) for value in response.headers.getlist("Set-Cookie"))

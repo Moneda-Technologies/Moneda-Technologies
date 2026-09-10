@@ -54,7 +54,92 @@ def _email_failure(exc: EmailDeliveryError):
 @bp.get("/integrations/zoho/status")
 @permission_required("settings.manage")
 def zoho_status():
+    # The email service owns the mutable routing registry. Reuse that instance
+    # so status reflects a just-saved CC/BCC change without a process restart.
+    _oauth().recipient_registry = current_app.extensions["email_service"].recipients
     return success(_oauth().status(refresh_aliases=True), "Zoho Mail integration status")
+
+
+def _routing_service():
+    return current_app.extensions["email_service"].recipients
+
+
+def _routing_superadmin():
+    return str((current_user() or {}).get("role_id") or "") == "superadmin"
+
+
+@bp.get("/integrations/zoho/routing")
+@permission_required("settings.view")
+def zoho_routing():
+    return success(_routing_service().display(), "Zoho customer-facing email routing")
+
+
+@bp.post("/integrations/zoho/routing")
+@permission_required("settings.manage")
+def add_zoho_routing_recipient():
+    if not _routing_superadmin():
+        return failure("Only a Superadmin can change email routing", status=403)
+    payload = request.get_json(silent=True) or {}
+    group = str(payload.get("group") or "").strip().lower()
+    email = str(payload.get("email") or "").strip().lower()
+    if group not in {"cc", "bcc"}:
+        return failure("Routing group must be CC or BCC", status=422)
+    try:
+        email = validate_email(email, check_deliverability=False).normalized.lower()
+    except EmailNotValidError:
+        return failure("Provide a valid recipient email", status=422, error="RECIPIENT_INVALID")
+    opposite = "bcc" if group == "cc" else "cc"
+    if any((row.get("email") or row.get("address")) == email and row.get("enabled") for row in _routing_service().display().get(opposite, [])):
+        return failure("This recipient is already enabled in the other routing group", status=409, error="RECIPIENT_DUPLICATE_ROUTE")
+    try:
+        row = _routing_service().add(group, email, str(payload.get("display_name") or "").strip() or None, str((current_user() or {}).get("_id") or ""))
+    except ValueError as exc:
+        return failure(str(exc), status=409, error="RECIPIENT_DUPLICATE")
+    audit(f"EMAIL_{group.upper()}_ADDED", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "source": "custom"})
+    return success(row, "Recipient added", 201)
+
+
+@bp.patch("/integrations/zoho/routing")
+@permission_required("settings.manage")
+def update_zoho_routing_recipient():
+    if not _routing_superadmin():
+        return failure("Only a Superadmin can change email routing", status=403)
+    payload = request.get_json(silent=True) or {}
+    group = str(payload.get("group") or "").strip().lower()
+    email = str(payload.get("email") or "").strip().lower()
+    reason = str(payload.get("reason") or "").strip()
+    if group not in {"cc", "bcc"} or not email:
+        return failure("Routing group and email are required", status=422)
+    if not reason:
+        return failure("A reason is required", status=422, error="routing_reason_required")
+    try:
+        email = validate_email(email, check_deliverability=False).normalized.lower()
+    except EmailNotValidError:
+        return failure("Provide a valid recipient email", status=422, error="RECIPIENT_INVALID")
+    enabled = bool(payload.get("enabled"))
+    row = _routing_service().update_enabled(group, email, enabled)
+    if not row:
+        return failure("Recipient not found", status=404)
+    audit(f"EMAIL_{group.upper()}_{'ENABLED' if enabled else 'DISABLED'}", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "previous_state": not enabled, "new_state": enabled, "reason": reason})
+    return success(row, "Routing recipient updated")
+
+
+@bp.delete("/integrations/zoho/routing")
+@permission_required("settings.manage")
+def delete_zoho_routing_recipient():
+    if not _routing_superadmin():
+        return failure("Only a Superadmin can change email routing", status=403)
+    payload = request.get_json(silent=True) or {}
+    group = str(payload.get("group") or "").strip().lower()
+    email = str(payload.get("email") or "").strip().lower()
+    reason = str(payload.get("reason") or "").strip()
+    if group not in {"cc", "bcc"} or not email or not reason:
+        return failure("Routing group, email and a reason are required", status=422, error="routing_reason_required")
+    row = _routing_service().remove(group, email)
+    if not row:
+        return failure("Recipient not found or is protected", status=409, error="RECIPIENT_NOT_REMOVABLE")
+    audit(f"EMAIL_{group.upper()}_REMOVED", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "previous_state": row.get("enabled"), "new_state": None, "reason": reason})
+    return success({"removed": True, "email": email, "group": group}, "Recipient removed")
 
 
 @bp.get("/integrations/zoho/connect")

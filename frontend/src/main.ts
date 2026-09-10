@@ -10,6 +10,7 @@ import { navigate } from "./router";
 import { appStore } from "./state/store";
 import type { Company, Customer } from "./types/domain";
 import { clearCustomerContextState, CUSTOMER_SELECTION_PATH } from "./guards/customer-context";
+import { devicePendingPage } from "./pages/device-pending";
 
 interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode: boolean; master_currency: "EUR"; signup_email_domains?: string[] }
 
@@ -21,6 +22,14 @@ skipLink?.addEventListener("click", () => {
 
 async function enterWorkspace(forceCompanySelection = false, existingSession?: Awaited<ReturnType<typeof authApi.me>>): Promise<void> {
   const session = existingSession ?? await authApi.me();
+  if (session.application_access === false || session.device_access?.application_access === false) {
+    document.body.classList.remove("print-preview-mode");
+    app.replaceChildren(devicePendingPage(configForPending(), async () => {
+      const refreshed = await authApi.bootstrapSession();
+      if (refreshed) await enterWorkspace(false, refreshed);
+    }));
+    return;
+  }
   const customers = session.customers ?? (session.customer_companies ?? session.companies) as unknown as Customer[];
   const customerCompanies = customers as unknown as Company[];
   const selectionPage = location.pathname === CUSTOMER_SELECTION_PATH || location.pathname === "/company-selection";
@@ -37,7 +46,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
   const customer = customers.find((item) => item._id === selectedId || item.customer_id === selectedId) ?? null;
   const customerCompany = customer as unknown as Company | null;
   if (customer && session.active_customer_id !== (customer.customer_id ?? customer._id)) await customerCompanyApi.select(customer.customer_id ?? customer._id);
-  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR" });
+  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR", watermarkEnabled: session.watermark_enabled !== false });
   if (location.pathname === "/quotation-preview") {
     document.body.classList.add("print-preview-mode");
     app.replaceChildren(await quotationPreviewPage());
@@ -51,9 +60,12 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     : authEntry
       ? "/dashboard"
       : location.pathname;
-  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]);
+  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
+
+let bootstrapConfig: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR" };
+function configForPending(): PublicConfig { return bootstrapConfig; }
 
 function renderPublicAuthentication(config: PublicConfig): void {
   if (location.pathname === "/signup") app.replaceChildren(signupPage(config.signup_email_domains, () => enterWorkspace(false)));
@@ -73,6 +85,7 @@ async function bootstrap(): Promise<void> {
     return;
   }
   appStore.set({ brandName: config.brand_name, brandLogoPath: config.brand_logo_path });
+  bootstrapConfig = config;
   try {
     const session = await authApi.bootstrapSession();
     if (!session) {
@@ -106,6 +119,13 @@ window.addEventListener("moneda:customer-context-cleared", () => app.replaceChil
 window.addEventListener("moneda:customer-context-required", () => {
   clearCustomerContextState();
   if (location.pathname !== CUSTOMER_SELECTION_PATH) void navigate(CUSTOMER_SELECTION_PATH);
+});
+window.addEventListener("moneda:device-access-required", () => {
+  document.body.classList.remove("print-preview-mode");
+  app.replaceChildren(devicePendingPage(configForPending(), async () => {
+    const refreshed = await authApi.bootstrapSession();
+    if (refreshed) await enterWorkspace(false, refreshed);
+  }));
 });
 window.addEventListener("moneda:auth-required", () => {
   localStorage.removeItem("moneda-active-customer-id");

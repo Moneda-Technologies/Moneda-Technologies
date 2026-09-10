@@ -40,6 +40,7 @@ export async function api<T>(path: string, options: RequestInit = {}, behavior: 
   const envelope = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || !envelope.success) {
     if (response.status === 401 && !PUBLIC_AUTH_PATHS.has(window.location.pathname)) window.dispatchEvent(new CustomEvent("moneda:auth-required"));
+    if (response.status === 403 && (envelope.error === "device_access_pending" || envelope.error === "device_denied" || envelope.error === "device_revoked")) window.dispatchEvent(new CustomEvent("moneda:device-access-required"));
     if (response.status === 403 && /customer|cart|active context/i.test(envelope.message ?? "")) window.dispatchEvent(new CustomEvent("moneda:customer-context-required"));
     const first = envelope.errors?.[0] as { message?: string } | undefined;
     throw new ApiError(first?.message ?? envelope.message ?? "Request failed", response.status, envelope.errors, envelope.diagnostic_id ?? envelope.request_id, envelope.stage);

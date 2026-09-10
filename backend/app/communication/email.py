@@ -74,22 +74,52 @@ class EmailSenderRegistry:
 class CustomerRecipientRegistry:
     """Central customer-facing CC/BCC policy; disabled recipients stay inactive."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        self.cc = [
-            {"address": str(config.get("MAIL_CUSTOMER_CC_BUSINESS") or "business@monedatechnologies.com").strip().lower(), "enabled": True},
-            {"address": str(config.get("MAIL_CUSTOMER_CC_VBHUTA") or "vbhuta@monedatechnologies.com").strip().lower(), "enabled": str(config.get("MAIL_CUSTOMER_CC_VBHUTA_ENABLED", False)).lower() in {"1", "true", "yes", "on"}},
-            {"address": str(config.get("MAIL_CUSTOMER_CC_ADMIN") or "admin@monedatechnologies.com").strip().lower(), "enabled": str(config.get("MAIL_CUSTOMER_CC_ADMIN_ENABLED", False)).lower() in {"1", "true", "yes", "on"}},
-        ]
-        self.bcc = [{
-            "address": str(config.get("MAIL_CUSTOMER_BCC_OPERATIONS") or "operations@chemo.in").strip().lower(),
-            "enabled": str(config.get("MAIL_CUSTOMER_BCC_OPERATIONS_ENABLED", True)).lower() in {"1", "true", "yes", "on"},
-        }]
+    def __init__(self, config: dict[str, Any], store: Any | None = None) -> None:
+        self.store = store
+        configured = {
+            "cc": [
+                {"address": str(config.get("MAIL_CUSTOMER_CC_BUSINESS") or "business@monedatechnologies.com").strip().lower(), "enabled": True, "source": "system", "display_name": "Moneda Technologies"},
+                {"address": str(config.get("MAIL_CUSTOMER_CC_VBHUTA") or "vbhuta@monedatechnologies.com").strip().lower(), "enabled": str(config.get("MAIL_CUSTOMER_CC_VBHUTA_ENABLED", False)).lower() in {"1", "true", "yes", "on"}, "source": "custom"},
+                {"address": str(config.get("MAIL_CUSTOMER_CC_ADMIN") or "admin@monedatechnologies.com").strip().lower(), "enabled": str(config.get("MAIL_CUSTOMER_CC_ADMIN_ENABLED", False)).lower() in {"1", "true", "yes", "on"}, "source": "custom"},
+            ],
+            "bcc": [{"address": str(config.get("MAIL_CUSTOMER_BCC_OPERATIONS") or "operations@chemo.in").strip().lower(), "enabled": str(config.get("MAIL_CUSTOMER_BCC_OPERATIONS_ENABLED", True)).lower() in {"1", "true", "yes", "on"}, "source": "custom"}],
+        }
+        self.cc, self.bcc = self._load_or_migrate(configured)
+
+    def _load_or_migrate(self, configured: dict[str, list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if self.store is None:
+            return configured["cc"], configured["bcc"]
+        rows, _ = self.store.list("email_routing_recipients", limit=1000)
+        if not rows:
+            now = datetime.now(timezone.utc)
+            for group, items in configured.items():
+                for item in items:
+                    address = str(item["address"]).strip().lower()
+                    if not address:
+                        continue
+                    self.store.insert_one("email_routing_recipients", {
+                        "_id": f"routing-{group}-{address.replace('@', '-at-').replace('.', '-')}",
+                        "email": address, "address": address,
+                        "display_name": item.get("display_name"), "group": group,
+                        "enabled": bool(item.get("enabled")), "source": item.get("source", "custom"),
+                        "created_by": "system", "created_at": now,
+                    })
+            rows, _ = self.store.list("email_routing_recipients", limit=1000)
+        result: dict[str, list[dict[str, Any]]] = {"cc": [], "bcc": []}
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            group = str(row.get("group") or "").lower()
+            address = str(row.get("email") or row.get("address") or "").strip().lower()
+            if group not in result or not address or (group, address) in seen:
+                continue
+            seen.add((group, address))
+            result[group].append({"_id": row.get("_id"), "email": address, "address": address, "display_name": row.get("display_name"), "group": group, "enabled": bool(row.get("enabled")), "source": row.get("source") or "custom", "created_by": row.get("created_by"), "created_at": row.get("created_at"), "updated_at": row.get("updated_at")})
+        return result["cc"], result["bcc"]
 
     def resolved(self) -> dict[str, list[str]]:
-        return {
-            "cc": [item["address"] for item in self.cc if item["enabled"]],
-            "bcc": [item["address"] for item in self.bcc if item["enabled"]],
-        }
+        cc = [item["address"] for item in self.cc if item["enabled"]]
+        cc_set = set(cc)
+        return {"cc": cc, "bcc": [item["address"] for item in self.bcc if item["enabled"] and item["address"] not in cc_set]}
 
     @staticmethod
     def _dedupe(values: list[str]) -> list[str]:
@@ -114,6 +144,40 @@ class CustomerRecipientRegistry:
 
     def display(self) -> dict[str, list[dict[str, Any]]]:
         return {"cc": [dict(item) for item in self.cc], "bcc": [dict(item) for item in self.bcc]}
+
+    def _group(self, group: str) -> list[dict[str, Any]]:
+        if group not in {"cc", "bcc"}:
+            raise ValueError("Routing group must be cc or bcc")
+        return self.cc if group == "cc" else self.bcc
+
+    def update_enabled(self, group: str, email: str, enabled: bool) -> dict[str, Any] | None:
+        item = next((row for row in self._group(group) if row["address"] == email), None)
+        if not item:
+            return None
+        item["enabled"] = bool(enabled)
+        if self.store:
+            return self.store.update_one("email_routing_recipients", {"_id": item.get("_id"), "group": group, "email": email}, {"enabled": bool(enabled)}) or item
+        return item
+
+    def add(self, group: str, email: str, display_name: str | None, actor: str) -> dict[str, Any]:
+        items = self._group(group)
+        if any(row["address"] == email for row in items):
+            raise ValueError("That email already exists in this routing group")
+        row = {"email": email, "address": email, "display_name": display_name or None, "group": group, "enabled": True, "source": "custom", "created_by": actor}
+        if self.store:
+            row = self.store.insert_one("email_routing_recipients", {"_id": f"routing-{group}-{email.replace('@', '-at-').replace('.', '-')}", **row})
+        items.append(row)
+        return row
+
+    def remove(self, group: str, email: str) -> dict[str, Any] | None:
+        items = self._group(group)
+        item = next((row for row in items if row["address"] == email), None)
+        if not item or item.get("source") == "system":
+            return None
+        if self.store and not self.store.delete_one("email_routing_recipients", {"_id": item.get("_id"), "group": group, "email": email}):
+            return None
+        items.remove(item)
+        return item
 
 class EmailDeliveryError(RuntimeError):
     def __init__(self, message: str, *, stage: str, diagnostic_id: str,
@@ -140,10 +204,10 @@ class EmailProvider:
 class EmailService(EmailProvider):
     """The only application boundary for transactional email delivery."""
 
-    def __init__(self, provider: EmailProvider, config: dict[str, Any]) -> None:
+    def __init__(self, provider: EmailProvider, config: dict[str, Any], store: Any | None = None) -> None:
         self.provider = provider
         self.senders = EmailSenderRegistry(config)
-        self.recipients = CustomerRecipientRegistry(config)
+        self.recipients = CustomerRecipientRegistry(config, store=store)
 
     def send(self, *, purpose: str = "general", **kwargs: Any) -> dict[str, Any]:
         identity = self.senders.resolve_identity(purpose)
@@ -219,11 +283,12 @@ class EmailService(EmailProvider):
         return self.send(to=to, subject=subject, html=html, cc=routing["cc"], bcc=routing["bcc"], request_id=request_id, purpose="order", customer_facing=True)
 
     def send_test_email(self, *, to: list[str], request_id: str | None = None) -> dict[str, Any]:
+        routing = self.recipients.resolved()
         return self.send(
             to=to, subject="Moneda Technologies Zoho Mail API test",
             html=("<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>"
                   "<p>This message confirms that the Zoho Mail API integration is connected.</p></div>"),
-            request_id=request_id, purpose="general",
+            cc=routing["cc"], bcc=routing["bcc"], request_id=request_id, purpose="general",
         )
 
     # Compatibility names retained for existing order callers.

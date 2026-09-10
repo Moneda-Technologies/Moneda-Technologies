@@ -3,10 +3,10 @@ import { dashboardApi, rateApi } from "../api";
 import { refreshIcons } from "../components/icons";
 import { pageScaffold, statusBadge } from "../components/page";
 import { appStore } from "../state/store";
-import { emptyState, escapeHtml, formatDate, formatMoney, skeleton } from "../utils/dom";
+import { emptyState, escapeHtml, formatDate, formatMoney, getUserLocalGreeting, skeleton } from "../utils/dom";
 
 export async function dashboardPage(): Promise<HTMLElement> {
-  const page = pageScaffold("Workspace", "Good morning", "A clear view of sales activity and the work that needs attention.", '<a class="button button-primary" href="/calculator" data-route="/calculator"><i data-lucide="plus"></i>New quotation</a>');
+  const page = pageScaffold("Workspace", getUserLocalGreeting(), "A clear view of sales activity and the work that needs attention.", '<a class="button button-primary" href="/calculator" data-route="/calculator"><i data-lucide="plus"></i>New quotation</a>');
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(6);
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;

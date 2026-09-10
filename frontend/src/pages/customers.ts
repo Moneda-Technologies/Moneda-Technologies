@@ -5,8 +5,9 @@ import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { PAYMENT_TERMS } from "../config/customer-metadata";
 import type { CountryMeta } from "../config/customer-metadata";
-import type { Customer } from "../types/domain";
+import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
+import { appStore } from "../state/store";
 
 const customerName = (customer: Customer) => customer.company_name ?? customer.name;
 let countryCataloguePromise: Promise<CountryMeta[]> | null = null;
@@ -171,7 +172,19 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
     if (value.payment_terms === "Custom" && !/^[1-9]\d*$/.test(String(value.custom_payment_days ?? ""))) errors.custom_payment_days = "Enter a positive whole number of days";
     content.querySelectorAll<HTMLElement>("[data-error-for]").forEach((node) => { node.textContent = errors[node.dataset.errorFor ?? ""] ?? ""; });
     if (Object.keys(errors).length) return;
-    try { if (existing) await customerApi.update(existing._id, value); else { const created = await customerApi.create(value); if (created._id) await customerCompanyApi.select(created._id); } dialog.close(); toast(existing ? "Customer updated" : "Customer created"); await onSaved(); }
+    try {
+      if (existing) { await customerApi.update(existing._id, value); dialog.close(); toast("Customer updated"); await onSaved(); return; }
+      const created = await customerApi.create(value);
+      dialog.close(); await onSaved();
+      toast("Customer created successfully");
+      if (created._id) {
+        const next = document.createElement("div");
+        next.innerHTML = '<p>Customer created successfully.</p><div class="modal-actions"><button type="button" class="button button-quiet" data-close-success>Stay here</button><button type="button" class="button button-primary" data-select-success>Select this customer</button></div>';
+        const successDialog = openModal("Customer created", next);
+        next.querySelector("[data-close-success]")?.addEventListener("click", () => successDialog.close());
+        next.querySelector("[data-select-success]")?.addEventListener("click", async () => { try { await customerCompanyApi.select(created._id); appStore.set({ customer: created, activeCustomerId: created._id, customerCompany: created as unknown as Company, company: created as unknown as Company, currency: created.preferred_currency ?? "EUR", cartCount: 0 }); localStorage.setItem("moneda-active-customer-id", created._id); successDialog.close(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/calculator" })); } catch (error) { toast(error instanceof Error ? error.message : "Customer could not be selected", "error"); } });
+      }
+    }
     catch (error) { toast(error instanceof Error ? error.message : "Customer could not be saved", "error"); }
   });
   refreshIcons(content);
@@ -179,17 +192,45 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
 
 export async function customersPage(): Promise<HTMLElement> {
   const page = pageScaffold("Relationships", "Customers", "Manage the customer businesses Moneda Technologies quotes and sells to.", '<button class="button button-secondary"><i data-lucide="download"></i>Export</button><button class="button button-primary" id="add-customer"><i data-lucide="building-2"></i>Add Customer</button>');
+  page.classList.add("customer-list-page");
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(6);
+  let statusFilter = "active";
   const load = async () => {
-    const result = await customerApi.list();
+    const result = await customerApi.list(undefined, statusFilter);
     body.innerHTML = `<div class="table-toolbar"><div class="field-search"><i data-lucide="search"></i><input placeholder="Search customers" aria-label="Search customers"></div><div class="segmented"><button class="active">All</button><button>Active</button><button>Archived</button></div><span>${result.pagination?.total ?? result.items.length} records</span></div>${result.items.length ? `<div class="data-table panel"><table><thead><tr><th>Customer company</th><th>Primary contact</th><th>Email / phone</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${result.items.map((customer) => { const name = customerName(customer); const id = customer.customer_id ?? customer._id; return `<tr><td><div class="table-identity"><span>${escapeHtml(name.slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(name)}</strong><small>${escapeHtml(customer.address ?? "")}</small></p></div></td><td>${escapeHtml(customer.contact_name ?? "—")}</td><td><strong>${escapeHtml(customer.email ?? "No email")}</strong><small>${escapeHtml(customer.phone ?? "")}</small></td><td><span class="currency-tag">${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</span></td><td>${statusBadge(customer.status ?? "active")}</td><td><a class="icon-button" href="/customers/${encodeURIComponent(id)}" data-route="/customers/${encodeURIComponent(id)}" aria-label="View customer" title="View customer"><i data-lucide="arrow-up-right"></i></a></td></tr>`; }).join("")}</tbody></table></div>` : emptyState("building-2", "No customers yet", "Add a customer business to prepare a quotation.")}`;
     const currencyHeading = [...body.querySelectorAll("th")].find((node) => node.textContent === "Currency");
     if (currencyHeading) currencyHeading.textContent = "Display";
+    const actionHeading = body.querySelector("th:last-child");
+    if (actionHeading) actionHeading.textContent = "Actions";
     refreshIcons(body);
+    body.querySelectorAll<HTMLButtonElement>(".segmented button").forEach((button) => {
+      const label = button.textContent?.trim().toLowerCase();
+      const nextFilter = label === "all" ? "" : label;
+      if (label === "all" || label === "active" || label === "archived") { button.dataset.customerStatus = nextFilter; button.classList.toggle("active", nextFilter === statusFilter); button.addEventListener("click", () => { statusFilter = nextFilter; void load().catch((error) => { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customers unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; refreshIcons(page); }); }); }
+    });
+    body.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row, index) => {
+      const customer = result.items[index]; const id = customer?._id ?? customer?.customer_id; if (!id) return;
+      const actions = row.lastElementChild; if (!actions) return;
+      const openLink = actions.querySelector<HTMLAnchorElement>("a.icon-button");
+      const actionGroup = document.createElement("div"); actionGroup.className = "customer-row-actions";
+      if (openLink) { openLink.className = "icon-button customer-icon-action customer-open-button"; openLink.setAttribute("aria-label", "Open customer"); openLink.title = "Open customer"; openLink.innerHTML = '<i data-lucide="arrow-up-right"></i>'; actionGroup.append(openLink); }
+      actions.replaceChildren(actionGroup);
+      const archived = String(customer.status ?? "").toLowerCase() === "archived" || statusFilter === "archived";
+      const button = document.createElement("button"); button.className = "icon-button customer-icon-action customer-status-action"; button.type = "button"; button.setAttribute("aria-label", archived ? "Restore customer" : "Archive customer"); button.title = archived ? "Restore customer" : "Archive customer"; button.innerHTML = `<i data-lucide="${archived ? "rotate-ccw" : "archive"}"></i>`;
+      button.addEventListener("click", async () => { try { if (archived) { await customerApi.restore(String(id)); toast("Customer restored"); } else { if (!window.confirm("Archive customer? Historical records remain intact.")) return; await customerApi.remove(String(id), "Archived from customer directory"); toast("Customer archived"); } await load(); } catch (error) { toast(error instanceof Error ? error.message : "Customer action failed", "error"); } });
+      actionGroup.append(button);
+      if (archived && appStore.state.user?.role_id === "superadmin") {
+        const remove = document.createElement("button"); remove.className = "icon-button customer-icon-action customer-icon-danger customer-status-action"; remove.type = "button"; remove.setAttribute("aria-label", "Delete customer"); remove.title = "Delete customer"; remove.innerHTML = '<i data-lucide="trash-2"></i>';
+        remove.addEventListener("click", async () => { if (!window.confirm("Delete customer permanently? This is allowed only when no business records reference it.")) return; const reason = window.prompt("Deletion reason (required):", "")?.trim() ?? ""; if (!reason) { toast("A reason is required", "error"); return; } try { await customerApi.remove(String(id), reason, true); toast("Customer deleted"); await load(); } catch (error) { toast(error instanceof Error ? error.message : "Customer could not be deleted", "error"); } });
+        actionGroup.append(remove);
+      }
+      refreshIcons(actionGroup);
+    });
   };
   try { await load(); } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customers unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   page.querySelector("#add-customer")?.addEventListener("click", () => { void openCustomerEditor(undefined, load); });
+  if (new URLSearchParams(window.location.search).get("action") === "add") { history.replaceState({}, "", "/customers"); window.setTimeout(() => { void openCustomerEditor(undefined, load); }, 0); }
   refreshIcons(page);
   return page;
 }

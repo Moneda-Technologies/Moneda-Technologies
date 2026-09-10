@@ -7,7 +7,7 @@ import { customerDetailPage, customersPage } from "./pages/customers";
 import { dashboardPage } from "./pages/dashboard";
 import { orderDetailPage, ordersPage } from "./pages/orders";
 import { cartPage, quotationDetailPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "./pages/quotations";
-import { reportsPage } from "./pages/reports";
+import { reportDetailPage, reportsPage } from "./pages/reports";
 import { companySelectionPage } from "./pages/company-selection";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
@@ -37,10 +37,19 @@ const routes: Record<string, PageFactory> = {
   "/crm": crmPage,
   "/reminders": remindersWorkspacePage,
   "/reports": reportsPage,
+  "/reports/sales-performance": () => reportDetailPage("sales-performance"),
+  "/reports/quotation-analysis": () => reportDetailPage("quotation-analysis"),
+  "/reports/customer-growth": () => reportDetailPage("customer-growth"),
+  "/reports/product-demand": () => reportDetailPage("product-demand"),
+  "/reports/tax-summary": () => reportDetailPage("tax-summary"),
+  "/reports/currency-exposure": () => reportDetailPage("currency-exposure"),
   "/companies": companiesPage,
   "/users": usersPage,
   "/admin": adminPage,
   "/settings": settingsPage,
+  "/settings/currencies": () => settingsPage("currencies"),
+  "/settings/communication": () => settingsPage("communication"),
+  "/settings/security": () => settingsPage("security"),
   "/profile": profilePage,
 };
 

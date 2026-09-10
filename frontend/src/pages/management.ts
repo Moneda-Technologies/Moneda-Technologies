@@ -1,4 +1,4 @@
-import { adminApi, authApi, companyApi, customerCompanyApi, profileApi } from "../api";
+import { adminApi, authApi, companyApi, customerCompanyApi, profileApi, rateApi } from "../api";
 import { apiEndpoint } from "../api/client";
 import { logout } from "../auth/logout";
 import { refreshIcons } from "../components/icons";
@@ -20,8 +20,71 @@ export async function companiesPage(): Promise<HTMLElement> {
 
 export async function usersPage(): Promise<HTMLElement> {
   const page = pageScaffold("Management", "Users & access", "Assign customer scope and permission-backed roles without email-based exceptions.", '<button class="button button-primary"><i data-lucide="user-plus"></i>Invite user</button>');
+  page.classList.add("users-access-page");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   const canManageCustomerAccess = appStore.can("users.update") && appStore.can("customers.view_all");
+  const openDevices = async (user: Record<string, unknown>) => {
+    const content = document.createElement("div");
+    content.innerHTML = '<div class="skeleton-stack"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>';
+    const dialog = openModal(`${String(user.name ?? "User")} · Trusted devices`, content, "wide");
+    try {
+      const result = await adminApi.userDevices(String(user._id));
+      const historyText = (device: Record<string, unknown>) => {
+        const history = (device.history as Record<string, unknown>[] | undefined) ?? [];
+        const labels: Record<string, string> = { DEVICE_LOGIN_ATTEMPT: "Login attempt", DEVICE_APPROVAL_REQUESTED: "Approval requested", DEVICE_APPROVED: "Device approved", DEVICE_DENIED: "Device denied", DEVICE_REVOKED: "Device revoked", DEVICE_REINSTATED: "Device reinstated", DEVICE_DELETED: "Device deleted" };
+        const dateText = (value: unknown) => { const date = value ? new Date(String(value)) : null; return date && !Number.isNaN(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date) : String(value ?? ""); };
+        return history.slice(-6).reverse().map((entry) => `<small class="device-history-entry">${escapeHtml(labels[String(entry.action ?? "")] || String(entry.action ?? "Event"))} · ${escapeHtml(dateText(entry.timestamp))}${entry.reason ? ` · ${escapeHtml(String(entry.reason))}` : ""}</small>`).join("");
+      };
+      content.innerHTML = result.items.length ? `<div class="device-admin-list">${result.items.map((device) => { const status = String(device.device_status); const browser = String(device.browser || "Browser"); const operatingSystem = String(device.operating_system || "Unknown OS"); const deviceType = String(device.device_type || "Desktop"); const label = `${browser} · ${operatingSystem} · ${deviceType}`; const action = status === "pending" ? `<button class="button button-primary" data-device-action="approve">Approve</button><button class="button button-quiet" data-device-action="reject">Reject</button>` : status === "approved" ? `<button class="button button-quiet" data-device-action="revoke">Revoke</button>` : status === "denied" || status === "revoked" ? `<button class="button button-primary" data-device-action="reinstate">Reinstate</button>` : `<span class="muted">${escapeHtml(status)}</span>`; const statusLabel = status === "pending" && device.reinstated_at ? "Pending approval (reinstated)" : status; return `<article class="device-admin-row"><div class="device-admin-details"><strong>${escapeHtml(label)}</strong><small>Location: ${escapeHtml(String(device.location || "Unavailable"))}</small><small>Added: ${escapeHtml(String(device.registered_at ?? ""))}</small><small>Last activity: ${escapeHtml(String(device.last_seen_at ?? ""))}</small><span class="device-admin-status device-status-${escapeHtml(status)}">Status: ${escapeHtml(statusLabel)}</span>${status === "revoked" ? `<small>Revoked: ${escapeHtml(String(device.revoked_at ?? ""))}${device.revoked_by_name ? ` by ${escapeHtml(String(device.revoked_by_name))}` : ""}</small>${device.revoke_reason ? `<small>Reason: ${escapeHtml(String(device.revoke_reason))}</small>` : ""}` : ""}${status === "denied" ? `${device.denied_by_name ? `<small>Denied by: ${escapeHtml(String(device.denied_by_name))}</small>` : ""}${device.denial_reason ? `<small>Reason: ${escapeHtml(String(device.denial_reason))}</small>` : ""}` : ""}${device.reinstatement_reason ? `<small>Reinstated: ${escapeHtml(String(device.reinstated_at ?? ""))}${device.reinstated_by_name ? ` by ${escapeHtml(String(device.reinstated_by_name))}` : ""} · Reason: ${escapeHtml(String(device.reinstatement_reason))}</small>` : ""}${historyText(device)}</div><div>${action}</div><span hidden data-device-id="${escapeHtml(String(device.device_id ?? ""))}"></span></article>`; }).join("")}</div>` : '<p class="form-hint">No device requests for this user.</p>';
+       const counts = result.items.reduce<{ total: number; approved: number; pending: number; denied: number; revoked: number }>((summary, device) => { const status = String(device.device_status ?? "").toLowerCase(); if (["approved", "pending", "denied", "revoked"].includes(status)) summary[status as "approved" | "pending" | "denied" | "revoked"] += 1; summary.total += 1; return summary; }, { total: 0, approved: 0, pending: 0, denied: 0, revoked: 0 });
+       content.insertAdjacentHTML("afterbegin", `<div class="device-admin-summary"><strong>${counts.total} trusted device${counts.total === 1 ? "" : "s"}</strong><span>${counts.approved} approved · ${counts.pending} pending · ${counts.denied} denied · ${counts.revoked} revoked</span></div><div class="device-admin-filters"><input type="search" data-device-search placeholder="Search browser, OS or location" aria-label="Search trusted devices"><select data-device-status><option value="all">All statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="denied">Denied</option><option value="revoked">Revoked</option></select><select data-device-type><option value="all">All device types</option><option value="Desktop">Desktop</option><option value="Tablet">Tablet</option><option value="Mobile">Mobile</option></select></div>`);
+       const renderedRows = [...content.querySelectorAll<HTMLElement>(".device-admin-row")];
+       result.items.forEach((device, index) => {
+         const row = renderedRows[index];
+         const details = row?.querySelector<HTMLElement>(".device-admin-details");
+         if (!row || !details) return;
+         const location = device.location as Record<string, unknown> | undefined;
+         const locationLabel = String(location?.label || [location?.city, location?.state, location?.country].filter(Boolean).join(", ") || "Approx. location unavailable");
+         details.querySelectorAll("small").forEach((node) => { if (node.textContent?.startsWith("Location:")) node.remove(); });
+         details.insertAdjacentHTML("afterbegin", `<small>Browser: ${escapeHtml(String(device.browser_name || device.browser || "Unknown"))}${device.browser_version ? ` ${escapeHtml(String(device.browser_version))}` : ""}</small><small>OS: ${escapeHtml(String(device.os_name || device.operating_system || "Unknown"))}${device.os_version ? ` ${escapeHtml(String(device.os_version))}` : ""}</small><small>Type: ${escapeHtml(String(device.device_type || "Desktop"))} · Location: ${escapeHtml(locationLabel)} (Approx.)</small>${device.public_ip ? `<small>Public IP: ${escapeHtml(String(device.public_ip))}</small>` : ""}${device.current_session ? '<span class="device-current-session">Current session</span>' : ""}${device.last_login_at ? `<small>Last login: ${escapeHtml(String(device.last_login_at))}${device.last_login_result ? ` · ${escapeHtml(String(device.last_login_result))}` : ""}</small>` : ""}`);
+         row.dataset.deviceSearch = `${device.browser_name || device.browser || ""} ${device.os_name || device.operating_system || ""} ${device.device_type || ""} ${locationLabel}`.toLowerCase();
+         row.dataset.deviceStatus = String(device.device_status || "").toLowerCase(); row.dataset.deviceType = String(device.device_type || "Desktop");
+       });
+       const applyDeviceFilters = () => { const term = (content.querySelector<HTMLInputElement>("[data-device-search]")?.value || "").toLowerCase().trim(); const status = content.querySelector<HTMLSelectElement>("[data-device-status]")?.value || "all"; const type = content.querySelector<HTMLSelectElement>("[data-device-type]")?.value || "all"; renderedRows.forEach((row) => { row.hidden = Boolean((term && !String(row.dataset.deviceSearch).includes(term)) || (status !== "all" && row.dataset.deviceStatus !== status) || (type !== "all" && row.dataset.deviceType !== type)); }); };
+       content.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-device-search], [data-device-status], [data-device-type]").forEach((control) => control.addEventListener("input", applyDeviceFilters));
+       content.querySelectorAll<HTMLSelectElement>("[data-device-status], [data-device-type]").forEach((control) => control.addEventListener("change", applyDeviceFilters));
+      if (!result.items.length) content.innerHTML = '<section class="device-empty-state"><strong>No trusted devices</strong><span>No approved, pending, denied, or revoked devices are currently associated with this account.</span></section>';
+      content.querySelectorAll<HTMLElement>(".device-admin-details").forEach((details) => {
+        const history = [...details.querySelectorAll<HTMLElement>(".device-history-entry")];
+        if (!history.length) return;
+        const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "button button-quiet device-history-toggle"; toggle.textContent = "View history";
+        toggle.addEventListener("click", () => { const show = history[0].style.display !== "block"; history.forEach((entry) => { entry.style.display = show ? "block" : "none"; }); toggle.textContent = show ? "Hide history" : "View history"; });
+        details.append(toggle);
+      });
+      result.items.forEach((device, index) => {
+        if (String(device.device_status) !== "denied") return;
+        const actions = renderedRows[index]?.querySelector<HTMLElement>(":scope > div:nth-of-type(2)");
+        if (!actions) return;
+        const deleteButton = document.createElement("button"); deleteButton.className = "button button-danger"; deleteButton.type = "button"; deleteButton.dataset.deviceAction = "delete"; deleteButton.textContent = "Delete"; actions.append(deleteButton);
+      });
+      content.querySelectorAll<HTMLButtonElement>("[data-device-action]").forEach((button) => button.addEventListener("click", async () => {
+        button.disabled = true;
+        const row = button.closest<HTMLElement>(".device-admin-row");
+        const deviceId = row?.querySelector<HTMLElement>("[data-device-id]")?.dataset.deviceId;
+        if (!deviceId) return;
+        const action = String(button.dataset.deviceAction);
+        const deviceLabel = row?.querySelector("strong")?.textContent || "this device";
+        if (!window.confirm(action === "delete" ? `Delete trusted device?\n\nThis will permanently remove this rejected device from the user's trusted-device history.\n\nDevice: ${deviceLabel}` : action === "reinstate" ? "Reinstate this denied device?" : `${action[0].toUpperCase()}${action.slice(1)} this device?`)) { button.disabled = false; return; }
+        let reason = "";
+        if (action === "reject" || action === "reinstate" || action === "revoke" || action === "delete") {
+          reason = window.prompt(action === "reject" ? "Deny reason (required):" : action === "revoke" ? "Revocation reason (required):" : action === "delete" ? "Reason for deletion (required):" : "Reinstatement reason (required):", "")?.trim() ?? "";
+          if (!reason) { toast("A reason is required", "error"); button.disabled = false; return; }
+        }
+        try { if (action === "approve") await adminApi.approveDevice(String(user._id), deviceId); else if (action === "reject") await adminApi.rejectDevice(String(user._id), deviceId, reason); else if (action === "reinstate") await adminApi.reinstateDevice(String(user._id), deviceId, reason); else if (action === "delete") await adminApi.deleteDevice(String(user._id), deviceId, reason); else await adminApi.revokeDevice(String(user._id), deviceId, reason); toast(action === "reinstate" ? "Device reinstated; approval required" : action === "delete" ? "Denied device deleted" : "Device updated"); dialog.close(); await openDevices(user); } catch (error) { toast(error instanceof Error ? error.message : "Device could not be updated", "error"); button.disabled = false; }
+      }));
+    } catch (error) { content.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Devices unavailable")}</div>`; }
+    refreshIcons(content);
+  };
   const editUser = (user: Record<string, unknown>, roles: Record<string, unknown>[], customers: Record<string, unknown>[], reload: () => Promise<void>) => {
     const content = document.createElement("div");
     const assigned = new Set((user.assigned_customer_ids as unknown[] ?? []).map(String));
@@ -35,9 +98,24 @@ export async function usersPage(): Promise<HTMLElement> {
       const customer = customers.find((item) => String(item._id) === id);
       return customer ? `<span class="customer-access-chip"><span>${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</span><button type="button" data-remove-customer="${escapeHtml(id)}" aria-label="Remove ${escapeHtml(String(customer.name ?? "customer"))}">×</button></span>` : "";
     }).join("");
-    content.innerHTML = `<form class="stack-form admin-user-form"><section class="admin-user-section"><span class="eyebrow">User details</span><div class="form-grid"><label>Full name<input name="name" required value="${escapeHtml(String(user.name ?? ""))}"></label><label>Email<input value="${escapeHtml(String(user.email ?? ""))}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(String(user.phone ?? ""))}"></label></div></section><section class="admin-user-section"><span class="eyebrow">Access</span><div class="form-grid"><label>Role<select name="role_id">${roles.map((role) => `<option value="${escapeHtml(String(role._id))}" ${String(role._id) === String(user.role_id) ? "selected" : ""}>${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label><label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""}><span>Account active</span></label></div></section>${canManageCustomerAccess ? `<section class="admin-user-section customer-access-editor" data-customer-access-section><span class="eyebrow">Customer access</span><p class="form-hint" data-customer-access-note>${globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user."}</p><div class="customer-access-actions"><button type="button" class="button button-quiet" data-select-all>Select all</button><button type="button" class="button button-quiet" data-clear-all>Clear all</button></div><input class="customer-access-search" type="search" placeholder="Search name, code, contact or email" aria-label="Search customers"><div class="customer-access-selected" data-selected-customers>${selectedRows() || '<span class="muted">No customers assigned</span>'}</div><div class="customer-access-options" data-customer-options>${customerOptions() || '<span class="muted">No customers found</span>'}</div></section>` : ""}<small class="field-error" data-admin-user-error></small><button class="button button-primary button-full" type="submit">Save user</button></form>`;
-    const dialog = openModal("Edit user", content, "wide");
-    const renderAssignments = () => {
+     content.innerHTML = `<form class="stack-form admin-user-form"><section class="admin-user-section"><span class="eyebrow">User details</span><div class="form-grid"><label>Full name<input name="name" required value="${escapeHtml(String(user.name ?? ""))}"></label><label>Email<input value="${escapeHtml(String(user.email ?? ""))}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(String(user.phone ?? ""))}"></label></div></section><section class="admin-user-section"><span class="eyebrow">Access</span><div class="form-grid"><label>Role<select name="role_id">${roles.map((role) => `<option value="${escapeHtml(String(role._id))}" ${String(role._id) === String(user.role_id) ? "selected" : ""}>${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label><label>Device policy<select name="device_access_mode"><option value="approved_devices_only" ${user.device_access_mode !== "any_authorized_device" ? "selected" : ""}>Approved devices only</option><option value="any_authorized_device" ${user.device_access_mode === "any_authorized_device" ? "selected" : ""}>Any authorized device</option></select></label><label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""}><span>Account active</span></label></div></section><section class="admin-user-section admin-user-security" data-device-security><span class="eyebrow">Security &amp; devices</span><div class="device-security-summary"><span class="form-hint">Loading device information...</span></div></section>${canManageCustomerAccess ? `<section class="admin-user-section customer-access-editor" data-customer-access-section><span class="eyebrow">Customer access</span><p class="form-hint" data-customer-access-note>${globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user."}</p><div class="customer-access-actions"><button type="button" class="button button-quiet" data-select-all>Select all</button><button type="button" class="button button-quiet" data-clear-all>Clear all</button></div><input class="customer-access-search" type="search" placeholder="Search name, code, contact or email" aria-label="Search customers"><div class="customer-access-selected" data-selected-customers>${selectedRows() || '<span class="muted">No customers assigned</span>'}</div><div class="customer-access-options" data-customer-options>${customerOptions() || '<span class="muted">No customers found</span>'}</div></section>` : ""}<small class="field-error" data-admin-user-error></small><button class="button button-primary button-full" type="submit">Save user</button></form>`;
+     const dialog = openModal("Edit user", content, "wide");
+     void adminApi.userDevices(String(user._id)).then((result) => {
+       const target = content.querySelector<HTMLElement>("[data-device-security]");
+       if (!target) return;
+       const items = result.items;
+       const counts = items.reduce<{ approved: number; pending: number; denied: number; revoked: number }>((summary, device) => { const status = String(device.device_status || device.status || "").toLowerCase(); if (status in summary) summary[status as keyof typeof summary] += 1; return summary; }, { approved: 0, pending: 0, denied: 0, revoked: 0 });
+       if (!items.length) { target.querySelector<HTMLElement>(".device-security-summary")!.innerHTML = '<strong>NO TRUSTED DEVICES</strong><span>This user has not registered a device yet.</span>'; return; }
+       const current = items.find((device) => device.current_session === true);
+       const recent = current || items[0];
+       const location = recent.location as Record<string, unknown> | undefined;
+       const locationLabel = String(location?.label || [location?.city, location?.state, location?.country].filter(Boolean).join(", ") || "Location unavailable");
+       const status = String(recent.device_status || recent.status || "unknown").toLowerCase();
+       const client = `${recent.browser_name || recent.browser || "Unknown browser"}${recent.browser_version ? ` ${recent.browser_version}` : ""} · ${recent.os_name || recent.operating_system || "Unknown OS"}${recent.os_version ? ` ${recent.os_version}` : ""} · ${recent.device_type || "Unknown device"}`;
+       target.querySelector<HTMLElement>(".device-security-summary")!.innerHTML = `<strong>${items.length} trusted device${items.length === 1 ? "" : "s"}</strong><span>${counts.approved} approved · ${counts.pending} pending · ${counts.denied} denied · ${counts.revoked} revoked</span><article class="device-security-card"><b>${current ? "CURRENT DEVICE" : "RECENT DEVICE"}</b><strong>${escapeHtml(client)}</strong><span>${escapeHtml(locationLabel)}</span><small>Approximate network location</small>${recent.last_activity_at || recent.last_seen_at ? `<small>Last activity: ${escapeHtml(String(recent.last_activity_at || recent.last_seen_at))}</small>` : ""}<span class="device-security-status device-status-${escapeHtml(status)}">STATUS: ${escapeHtml(status.toUpperCase())}</span></article><button class="button button-quiet" type="button" data-view-user-devices>View trusted devices</button>`;
+       target.querySelector<HTMLButtonElement>("[data-view-user-devices]")?.addEventListener("click", () => void openDevices(user));
+     }).catch(() => { const target = content.querySelector<HTMLElement>("[data-device-security] .device-security-summary"); if (target) target.innerHTML = '<span class="form-hint">Device information unavailable.</span>'; });
+     const renderAssignments = () => {
       const selected = content.querySelector<HTMLElement>("[data-selected-customers]");
       const options = content.querySelector<HTMLElement>("[data-customer-options]");
       if (selected) selected.innerHTML = selectedRows() || '<span class="muted">No customers assigned</span>';
@@ -54,14 +132,14 @@ export async function usersPage(): Promise<HTMLElement> {
     content.querySelector("[data-clear-all]")?.addEventListener("click", () => { assigned.clear(); renderAssignments(); });
     content.querySelector<HTMLInputElement>(".customer-access-search")?.addEventListener("input", renderAssignments);
     content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", renderAssignments);
-    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: data.get("role_id"), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
+    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: data.get("role_id"), device_access_mode: data.get("device_access_mode"), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
     refreshIcons(content);
   };
   const load = async () => {
     const [users, roles, customerResult] = await Promise.all([adminApi.users(), adminApi.roles(), customerCompanyApi.list()]);
     const customers = customerResult.items as unknown as Record<string, unknown>[];
-    body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Customers</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
-    body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button").forEach((button) => { const user = users.items.find((item) => String(item._id) === button.dataset.id); if (user && (button.classList.contains("edit-user") || canManageCustomerAccess)) button.addEventListener("click", () => editUser(user, roles.items, customers, load)); });
+     body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
+    body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => { const user = users.items.find((item) => String(item._id) === button.dataset.id); if (!user) return; if (button.classList.contains("device-count-button")) button.addEventListener("click", () => void openDevices(user)); else if (button.classList.contains("edit-user") || canManageCustomerAccess) button.addEventListener("click", () => editUser(user, roles.items, customers, load)); });
     refreshIcons(body);
   };
   try { await load(); }
@@ -113,14 +191,19 @@ function pricingRow(product: Product): string {
   */
 }
 
-export async function settingsPage(): Promise<HTMLElement> {
+export async function settingsPage(section: "brand" | "currencies" | "communication" | "security" = "brand"): Promise<HTMLElement> {
   const page = pageScaffold("Management", "System settings", "Govern branding, EUR quotation policy, and communication settings.", '<button class="button button-primary"><i data-lucide="save"></i>Save changes</button>');
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   try {
     const settings = await adminApi.settings();
+    const watermarkEnabled = settings.watermark_enabled !== false;
     let zohoMarkup = "";
+    let routingPolicy: { cc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null }>; bcc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null }> } | null = null;
+    const securityMarkup = appStore.state.user?.role_id === "superadmin"
+      ? `<section class="panel settings-panel watermark-settings"><span class="eyebrow">Security</span><h2>Protected workspace view</h2><p>Show a light, non-interactive watermark on authenticated workspace pages. It never appears in quotation PDFs or emails.</p><label class="setting-toggle"><input type="checkbox" data-watermark-toggle ${watermarkEnabled ? "checked" : ""}><span><strong>Workspace watermark</strong><small>Include the current user and local date/time.</small></span></label><button type="button" class="button button-secondary" data-watermark-save>Save watermark setting</button></section>`
+      : `<section class="panel settings-panel watermark-settings"><span class="eyebrow">Security</span><h2>Protected workspace view</h2><p>Workspace watermark is managed by a Superadmin.</p><div class="setting-toggle is-readonly"><span><strong>Workspace watermark</strong><small>${watermarkEnabled ? "Enabled" : "Disabled"}</small></span></div></section>`;
     if (appStore.can("settings.manage")) {
-      zohoMarkup = `<section class="panel settings-panel"><span class="eyebrow">Communication</span><h2>Zoho Mail</h2><p>Application email uses the server-side Zoho Mail API.</p><div class="notice compact"><i data-lucide="mail-check"></i><div><strong>Loading integration status…</strong></div></div></section>`;
+      zohoMarkup = `<section class="panel settings-panel zoho-integration"><span class="eyebrow">Communication</span><h2>Zoho Mail</h2><p>Application email uses the server-side Zoho Mail API.</p><div class="notice compact"><i data-lucide="mail-check"></i><div><strong>Loading integration status…</strong></div></div></section>`;
       try {
         const status = await adminApi.zohoStatus();
         const state = status.connected ? "Connected" : status.status === "error" ? "Error" : "Not connected";
@@ -141,17 +224,106 @@ export async function settingsPage(): Promise<HTMLElement> {
             ? `<div class="notice error compact"><i data-lucide="circle-alert"></i><div><strong>Sender identities could not be verified</strong><p>Reference: ${escapeHtml(status.sender_validation_error.diagnostic_id)}</p></div></div>`
             : "";
         const policy = status.customer_recipient_policy ?? { cc: [], bcc: [] };
+        routingPolicy = policy;
         const policyRows = (items: Array<{ address: string; enabled: boolean }>) => items.map((item) => `<div class="routing-identity"><span>${escapeHtml(item.address)}</span><strong class="${item.enabled ? "is-active" : "is-disabled"}">${item.enabled ? "✓ Active" : "○ Disabled"}</strong></div>`).join("");
         const routingMarkup = `<div class="email-routing"><h3>Customer-facing quotation/order routing</h3><strong>CC</strong>${policyRows(policy.cc)}<strong>BCC</strong>${policyRows(policy.bcc)}</div>`;
         zohoMarkup = `<section class="panel settings-panel zoho-integration"><span class="eyebrow">Communication</span><h2>Zoho Mail</h2><p>Transactional email is sent only through the server-side Zoho Mail API.</p><div class="integration-status"><span class="status-dot ${status.connected ? "is-live" : status.status === "error" ? "is-error" : ""}"></span><strong>${escapeHtml(state)}</strong><small>Provider: Zoho Mail API</small></div><dl class="integration-details"><div><dt>Account</dt><dd>${escapeHtml(status.account_email || "Unknown")}</dd></div><div><dt>OAuth</dt><dd>${escapeHtml(status.oauth === "connected" ? "Connected" : "Not connected")}</dd></div><div><dt>Account ID</dt><dd>${escapeHtml(status.account_id || "missing")}</dd></div><div><dt>API domain</dt><dd>${escapeHtml(status.api_domain || "missing")} <small>(${escapeHtml(status.api_domain_status)})</small></dd></div><div><dt>Scopes</dt><dd>${status.scopes.map((scope) => escapeHtml(scope)).join("<br>")}</dd></div></dl><div class="email-identities"><h3>Email identities</h3><dl>${senderItems || '<p class="form-hint">Sender identities are not available until Zoho Mail is connected.</p>'}</dl></div>${routingMarkup}${aliasWarning}${errorMarkup}<div class="settings-actions"><button class="button button-secondary" type="button" data-zoho-connect>${status.connected ? "Reconnect Zoho Mail" : "Connect Zoho Mail"}</button>${status.connected ? '<button class="button button-danger" type="button" data-zoho-disconnect>Disconnect</button>' : ""}</div><form class="integration-test-form" data-zoho-test-form><label>Test recipient email<input type="email" name="to" autocomplete="email" placeholder="recipient@example.com" required ${status.connected ? "" : "disabled"}></label><button class="button button-quiet" type="submit" ${status.connected ? "" : "disabled"}><i data-lucide="send"></i>Test Email</button></form><div class="integration-test-result" data-zoho-test-result></div><p class="form-hint">Test email uses the primary mailbox. All aliases share this one OAuth connection; tokens remain server-side.</p></section>`;
         page.dataset.zohoConnected = String(status.connected);
       } catch (_error) { /* settings remains usable when the integration permission is absent */ }
     }
-    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><button class="active"><i data-lucide="palette"></i>Brand & company</button><button><i data-lucide="badge-percent"></i>Taxes</button><button><i data-lucide="euro"></i>Currencies</button><button><i data-lucide="mail"></i>Communication</button><button><i data-lucide="shield-check"></i>Security</button></nav><div class="settings-stack"><section class="panel settings-panel"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(settings.brand_logo_path ?? "/brand/moneda-logo.svg")}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="${escapeHtml(String(settings.brand_logo_path ?? "/brand/moneda-logo.svg"))}"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label><label>Default tax<select><option>${escapeHtml(String(settings.default_tax_rate ?? 0))}%</option></select></label><label>Tax mode<select><option>${escapeHtml(String(settings.default_tax_mode ?? "exclusive"))}</option></select></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${zohoMarkup}</div></div>`;
+    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><a class="${section === "brand" ? "active" : ""}" href="/settings" data-route="/settings"><i data-lucide="palette"></i>Brand & company</a><a class="${section === "currencies" ? "active" : ""}" href="/settings/currencies" data-route="/settings/currencies"><i data-lucide="euro"></i>Currencies</a><a class="${section === "communication" ? "active" : ""}" href="/settings/communication" data-route="/settings/communication"><i data-lucide="mail"></i>Communication</a><a class="${section === "security" ? "active" : ""}" href="/settings/security" data-route="/settings/security"><i data-lucide="shield-check"></i>Security</a></nav><div class="settings-stack"><section class="panel settings-panel" data-settings-section="brand"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(settings.brand_logo_path ?? "/brand/moneda-logo.svg")}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="${escapeHtml(String(settings.brand_logo_path ?? "/brand/moneda-logo.svg"))}"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${securityMarkup}${zohoMarkup}<section class="panel settings-panel" data-settings-section="currencies"><span class="eyebrow">Currencies</span><h2>EUR master pricing</h2><p>All catalogue and quotation values remain in EUR. USD and INR are display/reference currencies only.</p><div class="master-currency-card"><strong>Master currency</strong><b>EUR</b><span>Locked · quotations always EUR</span></div><div class="currency-rates" data-currency-rates><p class="form-hint">Loading latest reference rates…</p></div></section></div></div>`;
     [...body.querySelectorAll<HTMLElement>(".settings-nav button")].find((button) => button.textContent?.trim() === "Taxes")?.remove();
     [...body.querySelectorAll<HTMLElement>(".settings-panel label")].filter((label) => ["Default tax", "Tax mode"].some((text) => label.textContent?.trim().startsWith(text))).forEach((label) => label.remove());
     const policyGrid = body.querySelector<HTMLElement>(".settings-panel .form-grid");
     policyGrid?.insertAdjacentHTML("beforeend", '<label>Quotation currency<input value="EUR" disabled></label><label>Quotation tax<input value="None" disabled></label>');
+    // Keep each settings destination focused: the navigation is a single entry
+    // point, while each route renders only its own configuration section.
+    const brandPanel = body.querySelector<HTMLElement>('[data-settings-section="brand"]');
+    const currencyPanel = body.querySelector<HTMLElement>('[data-settings-section="currencies"]');
+    const securityPanel = body.querySelector<HTMLElement>(".watermark-settings");
+    const communicationPanel = body.querySelector<HTMLElement>(".zoho-integration");
+    [brandPanel, currencyPanel, securityPanel, communicationPanel].forEach((panel) => { if (panel) panel.hidden = true; });
+    ({ brand: brandPanel, currencies: currencyPanel, communication: communicationPanel, security: securityPanel }[section])?.removeAttribute("hidden");
+    if (section === "currencies") {
+      const rates = body.querySelector<HTMLElement>("[data-currency-rates]");
+      currencyPanel?.insertAdjacentHTML("afterbegin", '<fieldset class="currency-preferences"><legend>Display/reference currencies</legend><label><input type="checkbox" checked disabled> EUR</label><label><input type="checkbox" checked disabled> USD</label><label><input type="checkbox" checked disabled> INR</label><small>Display preference is controlled from the workspace header.</small></fieldset>');
+      try {
+        const data = await rateApi.get(false);
+        if (rates) rates.innerHTML = `<div class="currency-rate-grid"><div><span>EUR</span><strong>1.0000</strong></div><div><span>USD</span><strong>${Number(data.rates.USD ?? 0).toFixed(4)}</strong></div><div><span>INR</span><strong>${Number(data.rates.INR ?? 0).toFixed(4)}</strong></div></div><p class="form-hint">Source: ${escapeHtml(data.provider_source ?? data.provider ?? "ECB / Frankfurter")} · Rate date: ${escapeHtml(data.rate_date ?? "latest")} · ${escapeHtml(data.status === "stored_fallback" || data.stale ? "Using last successful rate" : "Latest available")}</p>`;
+      } catch { if (rates) rates.innerHTML = '<p class="form-hint">Reference rates are temporarily unavailable; existing EUR pricing remains usable.</p>'; }
+    }
+    if (section === "security" && securityPanel) {
+      securityPanel.insertAdjacentHTML("beforeend", '<div class="settings-security-links"><section><h3>Trusted devices</h3><p>Review pending, approved, denied and revoked devices in Users & access.</p><a class="button button-quiet" href="/users" data-route="/users">Manage trusted devices</a></section><section><h3>Login notifications</h3><p>Superadmins receive server-generated approval notifications for new-device access.</p></section><section><h3>Audit / security history</h3><p>Destructive actions and security changes are retained in the server audit trail.</p><a class="button button-quiet" href="/users" data-route="/users">Open access history</a></section></div>');
+    }
+    const routingPanel = page.querySelector<HTMLElement>(".email-routing");
+    if (routingPanel && routingPolicy) {
+      const canEditRouting = appStore.state.user?.role_id === "superadmin";
+      const rows = (group: "cc" | "bcc", items: typeof routingPolicy.cc) => items.map((item) => {
+        const email = String(item.email || item.address || "").toLowerCase();
+        const source = item.source === "system" ? "System recipient" : "Custom recipient";
+        return `<div class="routing-identity"><label><input type="checkbox" data-routing-toggle data-routing-group="${group}" data-routing-email="${escapeHtml(email)}" ${item.enabled ? "checked" : ""} ${canEditRouting ? "" : "disabled"}><span><strong>${escapeHtml(String(item.display_name || email))}</strong><small>${escapeHtml(email)} Â· ${source}</small></span></label><strong class="${item.enabled ? "is-active" : "is-disabled"}">${item.enabled ? "Active" : "Disabled"}</strong>${canEditRouting && item.source !== "system" ? `<button type="button" class="icon-button" data-routing-remove data-routing-group="${group}" data-routing-email="${escapeHtml(email)}" aria-label="Remove ${escapeHtml(email)}" title="Remove recipient"><i data-lucide="trash-2"></i></button>` : ""}</div>`;
+      }).join("");
+      routingPanel.innerHTML = `<h3>Customer-facing email routing</h3><p class="form-hint">Automatically included recipients for quotation and order emails.</p><h4>CC recipients</h4><div>${rows("cc", routingPolicy.cc)}</div>${canEditRouting ? '<button type="button" class="button button-quiet" data-routing-add="cc">+ Add CC recipient</button>' : ""}<h4>BCC recipients</h4><div>${rows("bcc", routingPolicy.bcc)}</div>${canEditRouting ? '<button type="button" class="button button-quiet" data-routing-add="bcc">+ Add BCC recipient</button>' : ""}`;
+      routingPanel.querySelectorAll<HTMLInputElement>("[data-routing-toggle]").forEach((toggle) => toggle.addEventListener("change", async () => {
+        const previous = !toggle.checked;
+        const reason = window.prompt("Reason for routing change (required):", "")?.trim() ?? "";
+        if (!reason) { toggle.checked = previous; toast("A reason is required", "error"); return; }
+        toggle.disabled = true;
+        try { await adminApi.updateRouting({ group: toggle.dataset.routingGroup, email: toggle.dataset.routingEmail, enabled: toggle.checked, reason }); toast("Email routing updated"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
+        catch (error) { toggle.checked = previous; toast(error instanceof Error ? error.message : "Email routing update failed", "error"); toggle.disabled = false; }
+      }));
+      routingPanel.querySelectorAll<HTMLButtonElement>("[data-routing-add]").forEach((button) => button.addEventListener("click", () => {
+        const group = button.dataset.routingAdd as "cc" | "bcc";
+        const content = document.createElement("div");
+        content.innerHTML = `<form class="stack-form"><label>Email address<input name="email" type="email" required autocomplete="email"></label><label>Display name (optional)<input name="display_name" autocomplete="organization"></label><small class="field-error" data-routing-form-error></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Add recipient</button></div></form>`;
+        const dialog = openModal(`Add ${group.toUpperCase()} recipient`, content);
+        content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
+        content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
+          event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const submit = form.querySelector<HTMLButtonElement>("[type=submit]")!;
+          submit.disabled = true;
+          try { await adminApi.addRouting({ group, email: data.get("email"), display_name: data.get("display_name") }); dialog.close(); toast("Recipient added"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
+          catch (error) { const node = content.querySelector<HTMLElement>("[data-routing-form-error]"); if (node) node.textContent = error instanceof Error ? error.message : "Recipient could not be added"; submit.disabled = false; }
+        });
+        refreshIcons(content);
+      }));
+      routingPanel.querySelectorAll<HTMLButtonElement>("[data-routing-remove]").forEach((button) => button.addEventListener("click", async () => {
+        const email = button.dataset.routingEmail || ""; if (!window.confirm("Remove recipient?\n\nThis email will no longer receive automatic quotation/order routing emails.")) return;
+        const reason = window.prompt("Reason for removal (required):", "")?.trim() ?? ""; if (!reason) { toast("A reason is required", "error"); return; }
+        button.disabled = true;
+        try { await adminApi.removeRouting({ group: button.dataset.routingGroup, email, reason }); toast("Recipient removed"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
+        catch (error) { toast(error instanceof Error ? error.message : "Recipient removal failed", "error"); button.disabled = false; }
+      }));
+      refreshIcons(routingPanel);
+      const testForm = page.querySelector<HTMLFormElement>("[data-zoho-test-form]");
+      if (testForm) {
+        const cc = routingPolicy.cc.filter((item) => item.enabled).map((item) => item.email || item.address).join(", ") || "None";
+        const bcc = routingPolicy.bcc.filter((item) => item.enabled && !routingPolicy.cc.some((ccItem) => ccItem.enabled && (ccItem.email || ccItem.address) === (item.email || item.address))).map((item) => item.email || item.address).join(", ") || "None";
+        testForm.insertAdjacentHTML("afterend", `<div class="test-routing-preview"><strong>Resolved routing</strong><span>CC: ${escapeHtml(cc)}</span><span>BCC: ${escapeHtml(bcc)}</span></div>`);
+      }
+    }
+    page.querySelector<HTMLButtonElement>("[data-watermark-save]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const toggle = page.querySelector<HTMLInputElement>("[data-watermark-toggle]");
+      if (!toggle) return;
+      const reason = window.prompt("Reason for changing screenshot protection (required):", "")?.trim() ?? "";
+      if (!reason) { toast("A reason is required", "error"); return; }
+      button.disabled = true;
+      try {
+        await adminApi.updateSettings({ watermark_enabled: toggle.checked, reason });
+        appStore.set({ watermarkEnabled: toggle.checked });
+        window.dispatchEvent(new CustomEvent("moneda:watermark-setting", { detail: toggle.checked }));
+        toast("Workspace watermark setting saved");
+      } catch (error) { toast(error instanceof Error ? error.message : "Could not save watermark setting", "error"); }
+      finally { button.disabled = false; }
+    });
+    if (section === "brand" && brandPanel) {
+      const save = page.querySelector<HTMLButtonElement>(".page-actions button");
+      save?.addEventListener("click", async () => {
+        const inputs = brandPanel.querySelectorAll<HTMLInputElement>("input");
+        try { await adminApi.updateSettings({ brand_name: inputs[0]?.value.trim(), brand_logo_path: inputs[1]?.value.trim() }); toast("Brand settings saved"); }
+        catch (error) { toast(error instanceof Error ? error.message : "Could not save brand settings", "error"); }
+      });
+    }
     page.querySelector<HTMLButtonElement>("[data-zoho-connect]")?.addEventListener("click", () => { window.location.href = apiEndpoint("/integrations/zoho/connect"); });
     page.querySelector<HTMLButtonElement>("[data-zoho-disconnect]")?.addEventListener("click", async (event) => {
       if (!window.confirm("Disconnect Zoho Mail? Application email will stop until it is reconnected.")) return;

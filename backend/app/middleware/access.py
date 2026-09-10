@@ -3,9 +3,10 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
-from flask import current_app, g, session
+from flask import current_app, g, request, session
 
 from app.api.responses import failure
+from app.devices.service import enforce_device_access
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -53,13 +54,24 @@ def current_user() -> dict[str, Any] | None:
     return getattr(g, "current_user", None) or load_current_user()
 
 
-def login_required(fn: F) -> F:
-    @wraps(fn)
-    def wrapped(*args: Any, **kwargs: Any):
+def login_required(fn: F | None = None, *, allow_pending: bool = False):
+    def decorator(handler: F) -> F:
+      @wraps(handler)
+      def wrapped(*args: Any, **kwargs: Any):
         if not current_user():
             return failure("Authentication required", status=401)
-        return fn(*args, **kwargs)
-    return wrapped  # type: ignore[return-value]
+        # Logout and the read-only device status endpoint remain available to
+        # an authenticated-but-pending session; all other protected routes are
+        # blocked by the server-side device record.
+        if not allow_pending and not (request.endpoint or "").endswith(("logout", "device_access")):
+            blocked = enforce_device_access(current_user())
+            if blocked is not None:
+                return blocked
+        return handler(*args, **kwargs)
+      return wrapped  # type: ignore[return-value]
+    if fn is None:
+        return decorator
+    return decorator(fn)
 
 
 def permission_required(permission: str) -> Callable[[F], F]:
@@ -69,6 +81,9 @@ def permission_required(permission: str) -> Callable[[F], F]:
             user = current_user()
             if not user:
                 return failure("Authentication required", status=401)
+            blocked = enforce_device_access(user)
+            if blocked is not None:
+                return blocked
             if permission not in user.get("permissions", []):
                 if permission == "quotations.send":
                     current_app.logger.info(
@@ -82,6 +97,24 @@ def permission_required(permission: str) -> Callable[[F], F]:
                     "quotation_send_authorization quotation_id=%s user_authorized=true permission=%s result=PASS",
                     kwargs.get("quotation_id", "unknown"), permission,
                 )
+            return fn(*args, **kwargs)
+        return wrapped  # type: ignore[return-value]
+    return decorator
+
+
+def permission_required_any(*permissions: str) -> Callable[[F], F]:
+    """Authorize a route with any existing equivalent permission."""
+    def decorator(fn: F) -> F:
+        @wraps(fn)
+        def wrapped(*args: Any, **kwargs: Any):
+            user = current_user()
+            if not user:
+                return failure("Authentication required", status=401)
+            blocked = enforce_device_access(user)
+            if blocked is not None:
+                return blocked
+            if not any(permission in user.get("permissions", []) for permission in permissions):
+                return failure("You do not have permission to perform this action", status=403)
             return fn(*args, **kwargs)
         return wrapped  # type: ignore[return-value]
     return decorator

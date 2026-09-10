@@ -110,7 +110,7 @@ class ZohoMailOAuth:
         self.redirect_uri = str(config.get("ZOHO_OAUTH_REDIRECT_URI") or "").strip()
         self.from_address = str(config.get("ZOHO_FROM_ADDRESS") or "business@monedatechnologies.com").strip().lower()
         self.sender_registry = EmailSenderRegistry(config)
-        self.recipient_registry = CustomerRecipientRegistry(config)
+        self.recipient_registry = CustomerRecipientRegistry(config, store=store)
         self._encryption_secret = str(config.get("INTEGRATION_ENCRYPTION_KEY") or config.get("SECRET_KEY") or "").strip()
         self._token_lock = threading.RLock()
         self._access_token: str | None = None

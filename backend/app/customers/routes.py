@@ -5,7 +5,7 @@ import re
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import can_view_all_customers, customer_record, current_user, enforce_customer, permission_required, permitted_customer_query
+from app.middleware.access import can_view_all_customers, customer_record, current_user, enforce_customer, permission_required, permission_required_any, permitted_customer_query
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
@@ -76,12 +76,19 @@ def list_customers():
         rows = [_view(row)] if row else []
     else:
         query = _permitted_query()
+        status = request.args.get("status")
+        if not status:
+            # The directory's All view intentionally includes archived records;
+            # authorization is still enforced by the assignment/global query.
+            query.pop("active", None)
+            query.pop("status", None)
+        if status in {"active", "inactive", "archived"}:
+            query["status"] = status
+            if status == "archived":
+                query.pop("active", None)
         term = request.args.get("search", "").strip()[:100]
         if term:
             query = {"$and": [query, {"$or": [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]}]}
-        status = request.args.get("status")
-        if status in {"active", "inactive", "archived"}:
-            query["status"] = status
         page = max(int(request.args.get("page", 1)), 1)
         limit = min(max(int(request.args.get("limit", 25)), 1), 100)
         found, total = store.list("customers", query, page=page, limit=limit, sort="name", direction=1)
@@ -128,12 +135,14 @@ def create_customer():
 @bp.get("/<customer_id>")
 @permission_required("customers.view")
 def get_customer(customer_id: str):
-    row = customer_record(customer_id)
+    store = current_app.extensions["store"]
+    row = customer_record(customer_id) or store.find_one("customers", {"_id": customer_id})
     if not row:
         return failure("Customer not found", status=404)
-    if not enforce_customer(customer_id):
+    user = current_user() or {}
+    archived_visible = row.get("status") == "archived" and can_view_all_customers(user)
+    if not archived_visible and not enforce_customer(customer_id):
         return failure("Customer access denied", status=403)
-    store = current_app.extensions["store"]
     relationship_query = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
     related = {}
     for collection in ("quotations", "orders", "leads", "opportunities"):
@@ -178,13 +187,48 @@ def update_customer(customer_id: str):
 
 
 @bp.delete("/<customer_id>")
-@permission_required("customers.delete")
+@permission_required_any("customers.archive", "customers.delete")
 def archive_customer(customer_id: str):
     store = current_app.extensions["store"]
-    if not customer_record(customer_id):
+    existing = store.find_one("customers", {"_id": customer_id})
+    if not existing or existing.get("is_issuer"):
         return failure("Customer not found", status=404)
-    if not enforce_customer(customer_id):
+    if not enforce_customer(customer_id) and not (existing.get("status") == "archived" and can_view_all_customers(current_user())):
         return failure("Customer access denied", status=403)
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or request.args.get("reason") or "").strip()[:500]
+    permanent = str(payload.get("permanent", request.args.get("permanent", "false"))).lower() in {"1", "true", "yes"}
+    relationship_query = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    dependent_counts: dict[str, int] = {}
+    for collection in ("quotations", "orders", "leads", "opportunities", "cart_items"):
+        rows, _ = store.list(collection, relationship_query, limit=1)
+        if rows:
+            dependent_counts[collection] = len(store.list(collection, relationship_query, limit=100000)[0])
+    if permanent and dependent_counts:
+        return failure("This customer cannot be permanently deleted because business records reference it. Archive the customer instead.", status=409, error="CUSTOMER_HAS_HISTORY", dependencies=dependent_counts)
+    if permanent:
+        if not reason:
+            return failure("A reason is required to permanently delete a customer", status=422, error="REASON_REQUIRED")
+        audit("CUSTOMER_DELETED", "customer", customer_id, {"reason": reason, "previous_state": existing.get("status", "active"), "dependencies": dependent_counts})
+        store.delete_one("customers", {"_id": customer_id})
+        return success(message="Customer deleted")
+    previous = existing.get("status", "active")
     store.update_one("customers", {"_id": customer_id}, {"status": "archived", "active": False})
-    audit("customer.archive", "customer", customer_id)
+    audit("CUSTOMER_ARCHIVED", "customer", customer_id, {"reason": reason, "previous_state": previous, "new_state": "archived"})
     return success(message="Customer archived")
+
+
+@bp.post("/<customer_id>/restore")
+@permission_required_any("customers.restore", "customers.update")
+def restore_customer(customer_id: str):
+    store = current_app.extensions["store"]
+    existing = store.find_one("customers", {"_id": customer_id})
+    if not existing or existing.get("is_issuer"):
+        return failure("Customer not found", status=404)
+    if not can_view_all_customers(current_user()):
+        return failure("Customer access denied", status=403)
+    if existing.get("status") != "archived" and existing.get("active", True) is not False:
+        return success(_view(existing), "Customer is already active")
+    row = store.update_one("customers", {"_id": customer_id}, {"status": "active", "active": True})
+    audit("CUSTOMER_RESTORED", "customer", customer_id, {"previous_state": "archived", "new_state": "active"})
+    return success(_view(row or existing), "Customer restored")

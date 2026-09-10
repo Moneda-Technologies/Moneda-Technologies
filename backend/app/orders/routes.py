@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
-from app.middleware.access import current_user, enforce_active_customer, enforce_customer, permission_required
+from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, permission_required, permitted_customer_query
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -91,12 +91,22 @@ def _log_order_email_failure(order: dict, message_type: str, exc: EmailDeliveryE
 @permission_required("orders.view")
 def list_orders():
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
-    if not enforce_active_customer(customer_id):
-        return failure("Customer access denied", status=403)
-    query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    store = current_app.extensions["store"]
+    if customer_id:
+        if not enforce_active_customer(customer_id):
+            return failure("Customer access denied", status=403)
+        query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    else:
+        user = current_user() or {}
+        if can_view_all_customers(user):
+            query = {}
+        else:
+            customers, _ = store.list("customers", permitted_customer_query(user), limit=100_000)
+            customer_ids = [str(row["_id"]) for row in customers if row.get("_id") and not row.get("is_issuer")]
+            query = ({"$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
     if request.args.get("status"):
         query["status"] = request.args["status"]
-    rows, total = current_app.extensions["store"].list("orders", query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
+    rows, total = store.list("orders", query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
     return success({"items": rows, "total": total})
 
 

@@ -10,6 +10,7 @@ from app.auth.service import OtpError
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.metadata import phone_is_valid
 from app.middleware.access import current_user, customer_access_summary, customer_record, login_required, permitted_customer_query, selected_customer_id
+from app.devices.service import device_access_status
 from app.repositories.store import ensure_utc, utcnow
 from app.services.audit import audit
 
@@ -62,9 +63,15 @@ def public_config():
 
 
 @bp.get("/me")
-@login_required
+@login_required(allow_pending=True)
 def me():
-    user = {**(current_user() or {})}
+    user_record = current_user() or {}
+    device_status = device_access_status(user_record)
+    if not device_status.get("application_access"):
+        # Bootstrap is intentionally the only authenticated response exposed
+        # to a pending device; never include customers or cached app data.
+        return success({"user": {"_id": user_record.get("_id"), "name": user_record.get("name"), "role_id": user_record.get("role_id")}, "customers": [], "companies": [], "customer_companies": [], "device_access": device_status, "application_access": False})
+    user = {**user_record}
     for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts"):
         user.pop(field, None)
     user.pop("currency_preference", None)
@@ -86,6 +93,11 @@ def me():
         selected = None
     active = customer_record(selected)
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
+    if "watermark_enabled" not in settings:
+        # Backfill the default for deployments whose settings document predates
+        # this feature; the server remains the source of truth.
+        current_app.extensions["store"].update_one("app_settings", {"_id": "system"}, {"watermark_enabled": True})
+        settings["watermark_enabled"] = True
     current_app.logger.info(
         "active_customer_load active_customer_id=%s active_customer_name=%s active_customer_country_code=%s active_customer_display_currency=%s",
         selected or "null", (active or {}).get("name", "unknown"), (active or {}).get("country_code", "unknown"),
@@ -100,8 +112,17 @@ def me():
         "selected_customer_id": selected,
         "selected_customer_company_id": selected,
         "active_company_id": selected,
+        "application_access": True,
+        "device_access": device_status,
+        "watermark_enabled": bool(settings.get("watermark_enabled", True)),
         "issuer": settings.get("issuer", {"name": "Moneda Technologies", "email": "business@monedatechnologies.com"}),
     })
+
+
+@bp.get("/me/device-access")
+@login_required(allow_pending=True)
+def device_access():
+    return success(device_access_status(current_user()))
 
 
 @bp.patch("/me")

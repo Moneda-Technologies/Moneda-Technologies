@@ -5,15 +5,17 @@ import csv
 import io
 import json
 import re
+import secrets
 from typing import Any
 
-from flask import Blueprint, current_app, request
+from flask import Blueprint, current_app, request, session
 
 from app.api.responses import failure, success
 from app.middleware.access import can_view_all_customers, customer_access_ids_for_user, current_user, customer_record, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
+from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins
 
 
 bp = Blueprint("admin", __name__, url_prefix="/api")
@@ -384,7 +386,172 @@ def list_users():
         row["customer_access_global"] = global_access
         row["assigned_customer_ids"] = [] if global_access else assigned_ids
         row["customer_access_count"] = None if global_access else len(assigned_ids)
+        device_rows, _ = store.list("devices", {"user_id": str(row.get("_id"))}, limit=500)
+        row["device_counts"] = {
+            "total": len(device_rows),
+            "approved": sum(1 for device in device_rows if device.get("device_status") == APPROVED),
+            "pending": sum(1 for device in device_rows if device.get("device_status") == PENDING),
+            "denied": sum(1 for device in device_rows if device.get("device_status") == DENIED),
+            "revoked": sum(1 for device in device_rows if device.get("device_status") == REVOKED),
+        }
     return success({"items": rows, "total": total})
+
+
+@bp.get("/admin/users/<user_id>/devices")
+@permission_required("users.view")
+def list_user_devices(user_id: str):
+    store = current_app.extensions["store"]
+    actor = current_user() or {}
+    if str(actor.get("role_id") or "") not in {"admin", "superadmin"}:
+        return failure("Only administrators can inspect trusted devices", status=403)
+    if not store.find_one("users", {"_id": user_id}):
+        return failure("User not found", status=404)
+    audit("DEVICE_DETAILS_VIEWED", "user", user_id, {
+        "actor_user_id": actor.get("_id"), "device_count": store.count("devices", {"user_id": user_id}),
+    })
+    rows, total = store.list("devices", {"user_id": user_id}, limit=500, sort="registered_at", direction=-1)
+    for row in rows:
+        if not row.get("device_ref"):
+            store.update_one("devices", {"_id": row["_id"]}, {"device_ref": f"DVC-{secrets.token_hex(4).upper()}"})
+            row["device_ref"] = store.find_one("devices", {"_id": row["_id"]}).get("device_ref")
+    current_device_id = session.get("device_id") if str(actor.get("_id")) == str(user_id) else None
+    return success({"items": [safe_device(row, current_session=str(row.get("_id")) == str(current_device_id), include_public_ip=True) for row in rows], "total": total})
+
+
+def _change_device_status(user_id: str, device_id: str, target: str, *, reason: str = ""):
+    store = current_app.extensions["store"]
+    actor = current_user() or {}
+    if str(actor.get("role_id")) != "superadmin":
+        return failure("Only Superadmins can manage trusted devices", status=403)
+    if str(actor.get("_id")) == str(user_id) and str(actor.get("role_id")) != "superadmin":
+        return failure("You cannot approve or revoke your own device", status=403)
+    device = store.find_one("devices", {"device_ref": device_id, "user_id": user_id}) or store.find_one("devices", {"_id": device_id, "user_id": user_id})
+    if not device:
+        return failure("Device not found", status=404)
+    reason = str(reason or "").strip()
+    if target in {DENIED, REVOKED, "reinstated"} and not reason:
+        return failure("A reason is required", status=422, error="decision_reason_required")
+    previous_status = str(device.get("device_status") or PENDING)
+    now = utcnow()
+    expected_statuses = {APPROVED: {PENDING}, DENIED: {PENDING}, "reinstated": {DENIED, REVOKED}, REVOKED: {APPROVED}}.get(target)
+    if expected_statuses and previous_status not in expected_statuses:
+        return failure("This device is not in a state that supports that action", status=409, error="invalid_device_transition")
+    resulting_status = PENDING if target == "reinstated" else target
+    event = "DEVICE_REINSTATED" if target == "reinstated" else "DEVICE_APPROVED" if target == APPROVED else "DEVICE_DENIED" if target == DENIED else "DEVICE_REVOKED"
+    changes: dict[str, Any] = {"device_status": resulting_status, "device_history": _append_history(device, _history_entry(
+        event, device, previous_status=previous_status, new_status=resulting_status,
+        actor_user_id=str(actor.get("_id") or ""), reason=reason or None, timestamp=now,
+    ))}
+    if target == APPROVED:
+        changes.update({"approved_at": now, "approved_by": actor.get("_id"), "approved_by_name": actor.get("name") or actor.get("username"), "revoked_at": None, "revoked_by": None})
+        action = "device_approved"
+    elif target == DENIED:
+        changes.update({"denied_at": now, "denied_by": actor.get("_id"), "denied_by_user_id": actor.get("_id"), "denied_by_name": actor.get("name") or actor.get("username"), "denial_reason": reason, "previous_status": previous_status, "new_status": DENIED})
+        action = "device_rejected"
+    elif target == "reinstated":
+        changes.update({"reinstated_at": now, "reinstated_by": actor.get("_id"), "reinstated_by_user_id": actor.get("_id"), "reinstated_by_name": actor.get("name") or actor.get("username"), "reinstatement_reason": reason, "previous_status": previous_status, "new_status": PENDING})
+        action = "device_reinstated"
+    elif target == REVOKED:
+        changes.update({"revoked_at": now, "revoked_by": actor.get("_id"), "revoked_by_user_id": actor.get("_id"), "revoked_by_name": actor.get("name") or actor.get("username"), "revoke_reason": reason, "previous_status": previous_status, "new_status": REVOKED})
+        action = "device_revoked"
+    else:
+        return failure("Invalid device action", status=422)
+    # Match the current status so simultaneous administrator decisions cannot
+    # overwrite one another. This is the same first-decision-wins rule used by
+    # email approval links.
+    updated = store.update_one("devices", {"_id": device["_id"], "user_id": user_id, "device_status": {"$in": list(expected_statuses or {previous_status})}}, changes)
+    if not updated:
+        return failure("This device status has already changed.", status=409, error="decision_already_completed")
+    audit(event, "device", str(device["_id"]), {"user_id": user_id, "actor_user_id": actor.get("_id"), "reason": reason or None, "previous_status": previous_status, "new_status": resulting_status})
+    if target in {DENIED, REVOKED}:
+        audit("DEVICE_SESSION_TERMINATED", "device", str(device["_id"]), {"user_id": user_id, "actor_user_id": actor.get("_id"), "reason": reason or None})
+    user = store.find_one("users", {"_id": user_id}) or {}
+    if target == "reinstated":
+        # A reinstated device is pending again and gets a fresh one-time
+        # approval request; it is never silently trusted.
+        _notify_superadmins(user, updated, reinstated=True)
+        notify_reinstatement(user, updated, actor_name=str(actor.get("name") or actor.get("username") or "Superadmin"), reason=reason)
+    elif target in {APPROVED, DENIED}:
+        notify_device_decision(user, updated, approved=target == APPROVED, reason=reason)
+    elif target == REVOKED:
+        notify_device_revocation(user, updated)
+    return success(safe_device(updated), "Device reinstated; approval required" if target == "reinstated" else "Device updated")
+
+
+@bp.post("/admin/users/<user_id>/devices/<device_id>/approve")
+@permission_required("users.update")
+def approve_device(user_id: str, device_id: str):
+    return _change_device_status(user_id, device_id, APPROVED)
+
+
+@bp.post("/admin/users/<user_id>/devices/<device_id>/reject")
+@permission_required("users.update")
+def reject_device(user_id: str, device_id: str):
+    payload = request.get_json(silent=True) or {}
+    return _change_device_status(user_id, device_id, DENIED, reason=str(payload.get("reason") or ""))
+
+
+@bp.post("/admin/users/<user_id>/devices/<device_id>/reinstate")
+@permission_required("users.update")
+def reinstate_device(user_id: str, device_id: str):
+    payload = request.get_json(silent=True) or {}
+    return _change_device_status(user_id, device_id, "reinstated", reason=str(payload.get("reason") or ""))
+
+
+@bp.post("/admin/users/<user_id>/devices/<device_id>/revoke")
+@permission_required("users.update")
+def revoke_device(user_id: str, device_id: str):
+    payload = request.get_json(silent=True) or {}
+    return _change_device_status(user_id, device_id, REVOKED, reason=str(payload.get("reason") or ""))
+
+
+@bp.post("/admin/users/<user_id>/devices/revoke-all")
+@permission_required("users.update")
+def revoke_all_devices(user_id: str):
+    store = current_app.extensions["store"]
+    actor = current_user() or {}
+    if str(actor.get("_id")) == str(user_id) and str(actor.get("role_id")) != "superadmin":
+        return failure("You cannot revoke your own devices", status=403)
+    rows, _ = store.list("devices", {"user_id": user_id, "device_status": {"$ne": REVOKED}}, limit=500)
+    now = utcnow()
+    user = store.find_one("users", {"_id": user_id}) or {}
+    for row in rows:
+        changes = {"device_status": REVOKED, "revoked_at": now, "revoked_by": actor.get("_id"), "revoked_by_name": actor.get("name") or actor.get("username"), "device_history": _append_history(row, _history_entry("DEVICE_REVOKED", row, previous_status=str(row.get("device_status") or ""), new_status=REVOKED, actor_user_id=str(actor.get("_id") or ""), timestamp=now))}
+        updated = store.update_one("devices", {"_id": row["_id"], "user_id": user_id, "device_status": row.get("device_status")}, changes)
+        if updated:
+            audit("DEVICE_REVOKED", "device", str(row["_id"]), {"user_id": user_id, "actor_user_id": actor.get("_id"), "bulk": True, "previous_status": row.get("device_status"), "new_status": REVOKED})
+            audit("DEVICE_SESSION_TERMINATED", "device", str(row["_id"]), {"user_id": user_id, "actor_user_id": actor.get("_id"), "bulk": True})
+            notify_device_revocation(user, updated)
+    return success({"revoked": len(rows)}, "Devices revoked")
+
+
+@bp.delete("/admin/users/<user_id>/devices/<device_id>")
+@permission_required("users.update")
+def delete_denied_device(user_id: str, device_id: str):
+    actor = current_user() or {}
+    if str(actor.get("role_id")) != "superadmin":
+        return failure("Only Superadmins can delete trusted devices", status=403)
+    store = current_app.extensions["store"]
+    user = store.find_one("users", {"_id": user_id})
+    if not user:
+        return failure("User not found", status=404)
+    device = store.find_one("devices", {"device_ref": device_id, "user_id": user_id}) or store.find_one("devices", {"_id": device_id, "user_id": user_id})
+    if not device:
+        return failure("Device not found", status=404)
+    if str(device.get("device_status") or "").lower() != DENIED:
+        return failure("Only denied devices can be deleted", status=409, error="invalid_device_state")
+    reason = str((request.get_json(silent=True) or {}).get("reason") or "").strip()
+    if not reason:
+        return failure("A reason is required", status=422, error="decision_reason_required")
+    audit("DEVICE_DELETED", "device", str(device.get("_id")), {
+        "target_user_id": user_id, "device_id": device.get("device_ref") or device.get("_id"),
+        "browser": device.get("browser"), "operating_system": device.get("operating_system"),
+        "device_type": device.get("device_type"), "previous_status": DENIED,
+        "actor_user_id": actor.get("_id"), "reason": reason,
+    })
+    if not store.delete_one("devices", {"_id": device.get("_id"), "user_id": user_id, "device_status": DENIED}):
+        return failure("Device could not be deleted", status=409, error="device_delete_conflict")
+    return success({"deleted": True, "device_id": device.get("device_ref") or device.get("_id")}, "Denied device deleted")
 
 
 @bp.post("/admin/users")
@@ -412,8 +579,11 @@ def create_user():
             return failure("Customer assignment is invalid", status=422, error="invalid_customer_assignment")
         if customer_id not in customer_ids:
             customer_ids.append(customer_id)
+    device_access_mode = str(payload.get("device_access_mode") or current_app.config.get("DEVICE_ACCESS_MODE", "approved_devices_only"))
+    if device_access_mode not in {"any_authorized_device", "approved_devices_only"}:
+        return failure("Invalid device access policy", status=422)
     row = store.insert_one("users", {"email": email, "name": name, "phone": payload.get("phone", ""),
-        "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True})
+        "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True, "device_access_mode": device_access_mode})
     for customer_id in customer_ids:
         customer = customer_record(customer_id)
         assigned = list(dict.fromkeys(str(value) for value in (customer or {}).get("assigned_user_ids", []) if value))
@@ -432,8 +602,10 @@ def update_user(user_id: str):
     existing = store.find_one("users", {"_id": user_id})
     if not existing:
         return failure("User not found", status=404)
-    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active"}
+    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "device_access_mode"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
+    if "device_access_mode" in changes and changes["device_access_mode"] not in {"any_authorized_device", "approved_devices_only"}:
+        return failure("Invalid device access policy", status=422)
     actor = current_user() or {}
     if user_id == actor.get("_id") and "role_id" in changes and changes["role_id"] != existing.get("role_id"):
         return failure("You cannot change your own role", status=403)
@@ -521,7 +693,12 @@ def audit_logs():
 @bp.get("/settings")
 @permission_required("settings.view")
 def get_settings():
-    return success(current_app.extensions["store"].find_one("app_settings", {"_id": "system"}))
+    store = current_app.extensions["store"]
+    settings = store.find_one("app_settings", {"_id": "system"}) or {}
+    if "watermark_enabled" not in settings:
+        store.update_one("app_settings", {"_id": "system"}, {"watermark_enabled": True})
+        settings["watermark_enabled"] = True
+    return success(settings)
 
 
 @bp.get("/admin/email/health")
@@ -554,15 +731,20 @@ def email_health():
 @permission_required("settings.manage")
 def update_settings():
     payload = request.get_json(silent=True) or {}
+    existing_settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
     forbidden = {"master_currency", "quotation_prefix"}
     if forbidden.intersection(payload):
         return failure("Master currency and numbering prefix cannot be changed here", status=422)
     allowed = {
         "brand_name", "brand_logo_path",
         "quotation_validity_days", "commercial_conditions", "discount_rules", "surcharge_rules",
-        "payment_terms", "transport_options", "issuer",
+        "payment_terms", "transport_options", "issuer", "watermark_enabled",
     }
     changes = {key: value for key, value in payload.items() if key in allowed}
+    if "watermark_enabled" in changes and (current_user() or {}).get("role_id") != "superadmin":
+        return failure("Only a Superadmin can change the workspace watermark", status=403)
+    if "watermark_enabled" in changes and not isinstance(changes["watermark_enabled"], bool):
+        return failure("watermark_enabled must be a boolean", status=422)
     if "issuer" in changes:
         issuer = changes["issuer"] if isinstance(changes["issuer"], dict) else {}
         changes["issuer"] = {
@@ -572,7 +754,10 @@ def update_settings():
             "bank_information": issuer.get("bank_information"), "tax_information": issuer.get("tax_information"),
         }
     row = current_app.extensions["store"].update_one("app_settings", {"_id": "system"}, changes)
-    audit("settings.update", "settings", "system", {"fields": sorted(changes)})
+    if "watermark_enabled" in changes:
+        audit("SCREENSHOT_PROTECTION_ENABLED" if changes["watermark_enabled"] else "SCREENSHOT_PROTECTION_DISABLED", "settings", "system", {"reason": str(payload.get("reason") or "Superadmin settings change"), "previous_state": existing_settings.get("watermark_enabled", True), "new_state": changes["watermark_enabled"]})
+    else:
+        audit("settings.update", "settings", "system", {"fields": sorted(changes)})
     return success(row, "Settings updated")
 
 

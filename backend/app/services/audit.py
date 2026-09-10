@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from flask import current_app, request, session
+from app.repositories.store import utcnow
 
 
 def audit(action: str, entity: str, entity_id: str | None = None, metadata: dict[str, Any] | None = None) -> None:
@@ -12,8 +13,8 @@ def audit(action: str, entity: str, entity_id: str | None = None, metadata: dict
         "action": action,
         "entity": entity,
         "entity_id": entity_id,
+        "timestamp": utcnow(),
         "ip": request.headers.get("X-Forwarded-For", request.remote_addr),
         "user_agent": request.user_agent.string[:300],
         "metadata": metadata or {},
     })
-

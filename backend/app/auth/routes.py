@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import secrets
+import hashlib
+import hmac
 from datetime import timedelta
 
 from flask import Blueprint, current_app, g, request, session
@@ -21,6 +23,7 @@ from app.auth.service import OtpError, verify_password
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.extensions import limiter
 from app.middleware.access import current_user, login_required
+from app.devices.service import establish_device_session, notify_login_attempt, _device_from_request
 from app.services.audit import audit
 from app.repositories.store import ensure_utc, utcnow
 
@@ -45,8 +48,10 @@ def _email_error_message(exc: EmailDeliveryError) -> str:
     return "Unable to send verification email."
 
 
-def _establish_session(user: dict[str, object], *, method: str, event: str = "session_created") -> None:
+def _establish_session(user: dict[str, object], *, method: str, event: str = "session_created") -> dict[str, object]:
     """Create the one authoritative persistent Flask session for a user."""
+    prior_device = _device_from_request(user)
+    prior_status = str((prior_device or {}).get("device_status") or "")
     session.clear()
     session["user_id"] = user["_id"]
     session["role_id"] = user["role_id"]
@@ -58,6 +63,28 @@ def _establish_session(user: dict[str, object], *, method: str, event: str = "se
     )
     if event != "session_created":
         current_app.logger.info("%s user_id=%s method=%s", event, user["_id"], method)
+    if str(user.get("role_id") or "") == "superadmin":
+        audit("superadmin_login", "user", str(user.get("_id")), {"method": method})
+    device = establish_device_session(user)
+    # This is called only after password/OTP authentication succeeds. The
+    # device status is captured before denied/revoked credentials are rotated,
+    # so Superadmins receive an accurate security event for that attempt.
+    notify_login_attempt(user, prior_device or device, prior_status or str(device.get("device_status") or "pending"))
+    return device
+
+
+def _session_result(device: dict[str, object], selection: str = "company-selection") -> dict[str, object]:
+    if device.get("device_status") != "approved":
+        return {"next_step": "device-approval-pending", "device_status": device.get("device_status"), "application_access": False}
+    return {"next_step": selection, "selection_context": "customer", "application_access": True}
+
+
+def _emergency_key_matches(value: str) -> bool:
+    configured_hash = str(current_app.config.get("SUPERADMIN_EMERGENCY_KEY_HASH") or "").strip().lower()
+    configured_key = str(current_app.config.get("SUPERADMIN_EMERGENCY_KEY") or "")
+    if configured_hash:
+        return hmac.compare_digest(hashlib.sha256(value.encode("utf-8")).hexdigest(), configured_hash)
+    return bool(configured_key) and hmac.compare_digest(value, configured_key)
 
 
 def _signup_validation_failure(exc: ValidationError, request_id: str):
@@ -139,11 +166,31 @@ def password_login():
             current_app.logger.info("auth session established authenticated=%s method=%s", False, "password")
             audit("auth.login_failed", "user", metadata={"method": "password"})
             return failure("Invalid username or password", status=401)
-        _establish_session(user, method="password")
+        device = _establish_session(user, method="password")
         audit("auth.login", "user", str(user["_id"]), {"method": "password"})
-        return success({"next_step": "company-selection", "selection_context": "customer"}, "Signed in successfully")
+        return success(_session_result(device), "Signed in successfully" if device.get("application_access") else "Device approval pending")
     except ValidationError as exc:
         return failure("Validation failed", exc.errors(include_url=False), 422)
+
+
+@bp.post("/superadmin/emergency")
+@limiter.limit("5 per 15 minutes")
+def superadmin_emergency_login():
+    """Optional server-only recovery login, still requiring the real password."""
+    raw = request.get_json(silent=True) or {}
+    identifier = raw.get("identifier") or raw.get("username") or raw.get("user_id")
+    password = str(raw.get("password") or "")
+    emergency_key = str(raw.get("emergency_key") or "")
+    store = current_app.extensions["store"]
+    user = verify_password(store, str(identifier or ""), password) if identifier and password else None
+    enabled = bool(current_app.config.get("SUPERADMIN_EMERGENCY_ACCESS_ENABLED"))
+    if not enabled or not user or str(user.get("role_id")) != "superadmin" or not user.get("active", False) or not _emergency_key_matches(emergency_key):
+        current_app.logger.warning("superadmin_emergency_access result=FAIL authenticated_superadmin=%s enabled=%s", bool(user and user.get("role_id") == "superadmin"), enabled)
+        audit("superadmin_emergency_access_failed", "user", str(user.get("_id")) if user and user.get("role_id") == "superadmin" else None)
+        return failure("Emergency access was not accepted", status=401)
+    device = _establish_session(user, method="superadmin_emergency", event="superadmin_login")
+    audit("superadmin_emergency_access_used", "user", str(user["_id"]))
+    return success(_session_result(device), "Signed in successfully")
 
 
 @bp.post("/request-otp")
@@ -334,7 +381,7 @@ def signup_complete():
         "email": pending["email"], "name": pending["name"], "username": pending["username"],
         "username_normalized": pending["username_normalized"], "password_hash": generate_password_hash(payload.password),
         "role_id": "user", "customer_ids": [], "customer_company_ids": [], "company_ids": [],
-        "active": True, "email_verified": True,
+        "active": True, "email_verified": True, "device_access_mode": current_app.config.get("DEVICE_ACCESS_MODE", "approved_devices_only"),
     }
     try:
         user = store.insert_one("users", document)
@@ -346,7 +393,7 @@ def signup_complete():
         return failure("Account could not be created. Please try again.", status=500, error="signup_completion_failed", error_code="SIGNUP_COMPLETION_FAILED", stage="user_creation", request_id=request_id)
     current_app.logger.info("signup_complete stage=user_creation result=PASS request_id=%s", request_id)
     try:
-        _establish_session(user, method="signup", event="signup_auto_login")
+        device = _establish_session(user, method="signup", event="signup_auto_login")
     except Exception:
         if session.get("user_id") == user["_id"]:
             session.clear()
@@ -365,7 +412,7 @@ def signup_complete():
     audit("user.create", "user", str(user["_id"]))
     current_app.logger.info("signup_complete stage=complete result=PASS request_id=%s authenticated=true", request_id)
     return success(
-        {"next_step": "customer-selection", "selection_context": "customer", "authenticated": True, "user_id": user["_id"]},
+        {**_session_result(device, "customer-selection"), "authenticated": True, "user_id": user["_id"]},
         "Account created successfully",
         201,
     )
@@ -380,9 +427,9 @@ def verify_otp():
         if payload.purpose == "login":
             if not user or not user.get("active", False):
                 return failure("Account is unavailable", status=403)
-            _establish_session(user, method="email_otp")
+            device = _establish_session(user, method="email_otp")
             audit("auth.login", "user", str(user["_id"]), {"method": "email_otp"})
-            return success({"next_step": "company-selection", "selection_context": "customer"}, "Signed in successfully")
+            return success(_session_result(device), "Signed in successfully" if device.get("application_access") else "Device approval pending")
         session[f"verified_{payload.purpose}_email"] = str(payload.email).lower()
         return success({"next_step": "profile" if payload.purpose == "signup" else "new_password"})
     except ValidationError as exc:
@@ -436,8 +483,8 @@ def change_password():
 def demo_login():
     if not current_app.config["DEMO_MODE"]:
         return failure("Demo access is disabled", status=404)
-    _establish_session({"_id": "user-demo-admin", "role_id": "superadmin"}, method="demo")
-    return success({"next_step": "company-selection", "selection_context": "customer"}, "Customer selection ready")
+    device = _establish_session({"_id": "user-demo-admin", "role_id": "superadmin"}, method="demo")
+    return success(_session_result(device), "Customer selection ready")
 
 
 @bp.post("/logout")

@@ -64,6 +64,9 @@ export interface SessionPayload {
   active_customer_id?: string | null;
   selected_customer_id?: string | null;
   issuer?: Issuer;
+  application_access?: boolean;
+  device_access?: { device_status: "pending" | "approved" | "denied" | "revoked"; application_access: boolean; device_id?: string; device_name?: string; registered_at?: string; reinstated_at?: string; reinstatement_reason?: string };
+  watermark_enabled?: boolean;
 }
 
 export interface Issuer {

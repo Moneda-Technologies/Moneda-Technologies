@@ -5,10 +5,11 @@ import type { CountryMeta } from "../config/customer-metadata";
 export const authApi = {
   me: () => api<SessionPayload>("/me"),
   bootstrapSession: () => api<SessionPayload>("/me", {}, { on401: "anonymous" }),
-  login: (identifier: string, password: string) => api<{ next_step: string }>("/auth/login", jsonBody({ identifier, password })),
+  deviceAccess: () => api<NonNullable<SessionPayload["device_access"]>>("/me/device-access"),
+  login: (identifier: string, password: string) => api<{ next_step: string; device_status?: string; application_access?: boolean }>("/auth/login", jsonBody({ identifier, password })),
   demo: () => api<{ next_step: string }>("/auth/demo", jsonBody({})),
   requestOtp: (email: string, purpose: "login" | "signup" | "reset" = "login") => api<null>("/auth/request-otp", jsonBody({ email, purpose })),
-  verifyOtp: (email: string, code: string, purpose: "login" | "signup" | "reset" = "login") => api<{ next_step: string }>("/auth/verify-otp", jsonBody({ email, code, purpose })),
+  verifyOtp: (email: string, code: string, purpose: "login" | "signup" | "reset" = "login") => api<{ next_step: string; device_status?: string; application_access?: boolean }>("/auth/verify-otp", jsonBody({ email, code, purpose })),
   signupStart: (value: { name: string; username: string; email: string; previous_pending_signup_id?: string }) => api<{ pending_signup_id: string; masked_email: string; otp_sent: boolean }>("/auth/signup/start", jsonBody(value)),
   signupVerifyEmail: (pending_signup_id: string, otp: string) => api<{ pending_signup_id: string; email_verified: boolean }>("/auth/signup/verify-email", jsonBody({ pending_signup_id, otp })),
   signupComplete: (value: { pending_signup_id: string; password: string; confirm_password: string }) => api<{ next_step: string; selection_context?: string; authenticated: boolean; user_id: string }>("/auth/signup/complete", jsonBody(value)),
@@ -55,10 +56,12 @@ export const companyApi = customerCompanyApi;
 
 export const customerApi = {
   countries: () => api<{ countries: CountryMeta[]; total: number }>("/countries"),
-  list: (customerId?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}limit=100`),
+  list: (customerId?: string, status?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${status ? `status=${encodeURIComponent(status)}&` : ""}limit=100`),
   get: (id: string) => api<Customer & { related?: Record<string, unknown[]> }>(`/customers/${encodeURIComponent(id)}`),
   create: (value: unknown) => api<Customer>("/customers", jsonBody(value)),
   update: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}`, patchBody(value)),
+  remove: (id: string, reason: string, permanent = false) => api<null>(`/customers/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason, permanent }), headers: { "Content-Type": "application/json" } }),
+  restore: (id: string) => api<Customer>(`/customers/${encodeURIComponent(id)}/restore`, jsonBody({})),
 };
 
 export const quotationApi = {
@@ -75,6 +78,8 @@ export const quotationApi = {
   send: (id: string, value: { subject?: string; message?: string } = {}) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/send`, jsonBody(value)),
   whatsapp: (id: string) => api<{ delivery: { status: string }; log_id: string }>(`/quotations/${encodeURIComponent(id)}/whatsapp`, jsonBody({})),
   convert: (id: string) => api<unknown>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, jsonBody({})),
+  remove: (id: string, reason: string, permanent = true) => api<null>(`/quotations/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason, permanent }), headers: { "Content-Type": "application/json" } }),
+  restore: (id: string) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/restore`, jsonBody({})),
 };
 
 export const cartApi = {
@@ -94,16 +99,28 @@ export const crmApi = {
   completeReminder: (id: string) => api<{ reminder: Record<string, unknown>; next_reminder?: Record<string, unknown> | null }>(`/reminders/${encodeURIComponent(id)}/complete`, jsonBody({})),
 };
 export const orderApi = {
-  list: (customerId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/orders?customer_id=${encodeURIComponent(customerId)}`),
+  list: (customerId?: string) => api<{ items: Record<string, unknown>[]; total: number }>(customerId ? `/orders?customer_id=${encodeURIComponent(customerId)}` : "/orders"),
   get: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`),
   sendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-confirmation`, jsonBody({})),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };
 export const adminApi = {
   users: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/users"),
+  userDevices: (userId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/admin/users/${encodeURIComponent(userId)}/devices`),
+  approveDevice: (userId: string, deviceId: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/approve`, jsonBody({})),
+  rejectDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/reject`, jsonBody({ reason })),
+  reinstateDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/reinstate`, jsonBody({ reason })),
+  revokeDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/revoke`, jsonBody({ reason })),
+  deleteDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
   settings: () => api<Record<string, unknown>>("/settings"),
+  auditLogs: () => api<{ items: Record<string, unknown>[]; total: number; page: number }>("/admin/audit-logs"),
+  updateSettings: (value: unknown) => api<Record<string, unknown>>("/settings", patchBody(value)),
+  routing: () => api<{ cc: Array<Record<string, unknown>>; bcc: Array<Record<string, unknown>> }>("/integrations/zoho/routing"),
+  addRouting: (value: unknown) => api<Record<string, unknown>>("/integrations/zoho/routing", jsonBody(value)),
+  updateRouting: (value: unknown) => api<Record<string, unknown>>("/integrations/zoho/routing", patchBody(value)),
+  removeRouting: (value: unknown) => api<Record<string, unknown>>("/integrations/zoho/routing", { method: "DELETE", body: JSON.stringify(value), headers: { "Content-Type": "application/json" } }),
   zohoStatus: () => api<{
     provider: string; status: "connected" | "not_connected" | "error"; configured: boolean;
     connected: boolean; oauth: "connected" | "not_connected"; account_email: string;

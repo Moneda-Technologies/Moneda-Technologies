@@ -16,6 +16,7 @@ export interface AppState {
   fxRates: Record<string, number> | null;
   cartCount: number;
   notificationCount: number;
+  watermarkEnabled: boolean;
 }
 
 type Listener = (state: AppState) => void;
@@ -35,6 +36,7 @@ const initial: AppState = {
   fxRates: null,
   cartCount: 0,
   notificationCount: 0,
+  watermarkEnabled: true,
 };
 
 class Store {

@@ -6,6 +6,7 @@ import { refreshIcons } from "../components/icons";
 import { toast } from "../components/toast";
 import { hasCustomerContext, customerGuardMessage } from "../guards/customer-context";
 import { logout } from "../auth/logout";
+import { createWatermark, setWatermarkEnabled } from "../components/watermark";
 
 interface NavItem { label: string; path: string; icon: string; permission: string; section?: string }
 type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
@@ -71,6 +72,7 @@ export function renderShell(): HTMLElement {
     : state.customers;
   const root = document.createElement("div");
   root.className = `app-shell ${localStorage.getItem("moneda-sidebar") === "collapsed" ? "sidebar-collapsed" : ""}`;
+  const watermark = createWatermark(state.user, state.watermarkEnabled);
   let currentSection = "";
   const nav = navItems.filter((item) => appStore.can(item.permission)).map((item) => {
     const section = item.section && item.section !== currentSection ? `<div class="nav-section">${item.section}</div>` : "";
@@ -99,6 +101,7 @@ export function renderShell(): HTMLElement {
     </div>
     <div class="mobile-scrim"></div>
     <dialog id="command-palette" class="command-palette"><form method="dialog"><div class="command-input"><i data-lucide="search"></i><input aria-label="Global search" placeholder="Search across Moneda" autocomplete="off"><button aria-label="Close">ESC</button></div><div class="command-results"><p>Start typing to search products, customers, quotations, orders and leads.</p></div></form></dialog>`;
+  root.prepend(watermark);
 
   root.querySelector(".sidebar-toggle")?.addEventListener("click", () => {
     root.classList.toggle("sidebar-collapsed");
@@ -163,6 +166,7 @@ export function renderShell(): HTMLElement {
     if (!root.isConnected) return;
     const badge = root.querySelector<HTMLElement>("[data-cart-count]");
     if (badge) badge.textContent = nextState.cartCount ? String(nextState.cartCount) : "";
+    setWatermarkEnabled(watermark, nextState.watermarkEnabled);
   });
   const fxControl = root.querySelector<HTMLElement>("[data-fx-control]");
   const fxPopover = root.querySelector<HTMLElement>("#fx-popover");
@@ -259,5 +263,8 @@ export function renderShell(): HTMLElement {
 }
 
 export function updateActiveNav(path: string): void {
-  document.querySelectorAll(".nav-link").forEach((node) => node.classList.toggle("active", node.getAttribute("href") === path));
+  document.querySelectorAll(".nav-link").forEach((node) => {
+    const href = node.getAttribute("href") ?? "";
+    node.classList.toggle("active", href === path || (href === "/settings" && path.startsWith("/settings/")));
+  });
 }

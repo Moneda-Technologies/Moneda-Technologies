@@ -55,6 +55,21 @@ class Config:
     SESSION_REFRESH_EACH_REQUEST = True
     AUTH_SESSION_LIFETIME_DAYS = max(1, int(os.getenv("AUTH_SESSION_LIFETIME_DAYS", "30")))
     PERMANENT_SESSION_LIFETIME = timedelta(days=AUTH_SESSION_LIFETIME_DAYS)
+    # New users can require administrator approval for every browser device;
+    # deployments may retain the existing behavior with any_authorized_device.
+    DEVICE_ACCESS_MODE = os.getenv("DEVICE_ACCESS_MODE", "approved_devices_only").strip().lower()
+    DEVICE_COOKIE_NAME = os.getenv("DEVICE_COOKIE_NAME", "moneda_device")
+    DEVICE_COOKIE_MAX_AGE = max(60, int(os.getenv("DEVICE_COOKIE_MAX_AGE", str(60 * 60 * 24 * 365))))
+    # Device location is approximate network geolocation only. Forwarded
+    # headers are honored only when the direct peer is explicitly trusted.
+    TRUSTED_PROXY_IPS = os.getenv("TRUSTED_PROXY_IPS", "")
+    IP_GEO_PROVIDER = os.getenv("IP_GEO_PROVIDER", "ipinfo").strip().lower()
+    IP_GEO_DATABASE_PATH = os.getenv("IP_GEO_DATABASE_PATH", "")
+    IP_GEO_API_KEY = os.getenv("IP_GEO_API_KEY", "")
+    IP_GEO_CACHE_SECONDS = max(0, int(os.getenv("IP_GEO_CACHE_SECONDS", "86400")))
+    SUPERADMIN_EMERGENCY_ACCESS_ENABLED = env_bool("SUPERADMIN_EMERGENCY_ACCESS_ENABLED", False)
+    SUPERADMIN_EMERGENCY_KEY = os.getenv("SUPERADMIN_EMERGENCY_KEY", "")
+    SUPERADMIN_EMERGENCY_KEY_HASH = os.getenv("SUPERADMIN_EMERGENCY_KEY_HASH", "")
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024
     JSON_SORT_KEYS = False
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3005")
@@ -114,3 +129,4 @@ class TestConfig(Config):
     RATELIMIT_STORAGE_URI = "memory://"
     DEV_AUTH_BYPASS = True
     SECRET_KEY = "test-secret-key"
+    DEVICE_ACCESS_MODE = "any_authorized_device"

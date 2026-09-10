@@ -16,12 +16,14 @@ PERMISSIONS = [
     "products.archive", "products.delete", "pricing.view", "pricing.edit", "pricing.update", "pricing.history",
     "pricing.discount.override", "taxes.view", "taxes.manage", "currency.view", "currency.manage",
     "cart.view", "cart.manage", "customers.view", "customers.create", "customers.update",
-    "customers.delete", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
-    "quotations.delete", "quotations.send", "quotations.download", "orders.view", "orders.create",
+    "customers.delete", "customers.archive", "customers.restore", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
+    "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
     "reminders.view", "reminders.manage", "reports.view", "users.view", "users.create",
     "users.update", "users.delete", "roles.view", "roles.manage", "companies.view",
-    "companies.create", "companies.update", "companies.delete", "settings.view",
+    "companies.create", "companies.update", "companies.delete", "settings.view", "settings.currencies.view", "settings.currencies.manage",
+    "settings.communication.view", "settings.communication.manage", "settings.security.view", "settings.security.manage",
+    "security.devices.delete", "security.devices.reinstate", "security.screenshot_protection.manage", "security.login_notifications.manage",
     "settings.manage", "audit_logs.view",
 ]
 
@@ -353,6 +355,24 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": customer_access_migration, "applied_at": utcnow()})
 
+    settings_controls_migration = "settings-controls-v1"
+    if not store.find_one("system_migrations", {"_id": settings_controls_migration}):
+        # Keep the existing role registry authoritative while adding the
+        # narrowly-scoped controls introduced by the settings restructure.
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.update({
+                    "customers.archive", "customers.restore", "quotations.archive", "quotations.restore",
+                    "settings.currencies.view", "settings.currencies.manage", "settings.communication.view",
+                    "settings.communication.manage", "settings.security.view", "settings.security.manage",
+                    "security.devices.delete", "security.devices.reinstate", "security.screenshot_protection.manage",
+                    "security.login_notifications.manage",
+                })
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": settings_controls_migration, "applied_at": utcnow()})
+
     pricing_policy_migration = "eur-only-no-tax-v1"
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
         # This deliberately does not rewrite historical quotations or customer tax fields.
@@ -463,6 +483,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "_id": "system",
             "brand_name": "Moneda Technologies",
             "brand_logo_path": "/brand/moneda-logo.svg",
+            "watermark_enabled": True,
             "issuer": {
                 "name": "Moneda Technologies",
                 "email": "business@monedatechnologies.com",
@@ -505,6 +526,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "applies_to_categories": ["blankets"],
         }
         store.update_one("app_settings", {"_id": "system"}, {
+            "watermark_enabled": bool(settings.get("watermark_enabled", True)),
             "issuer": {
                 **settings.get("issuer", {}),
                 "name": "Moneda Technologies",
@@ -544,6 +566,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             "customer_ids": [company_id, "customer-demo-1", "customer-demo-2"],
             "active": True,
             "demo": True,
+            "device_access_mode": "any_authorized_device",
         }
         if not demo_admin:
             store.insert_one("users", {

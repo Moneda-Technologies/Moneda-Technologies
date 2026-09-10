@@ -107,6 +107,23 @@ def test_password_login_accepts_username_and_user_id(client):
     assert by_username.status_code == 200
 
 
+def test_workspace_watermark_defaults_on_and_is_superadmin_configurable(authenticated):
+    me = authenticated.get("/api/v1/me")
+    assert me.status_code == 200
+    assert me.json["data"]["watermark_enabled"] is True
+
+    disabled = authenticated.patch("/api/v1/settings", json={"watermark_enabled": False})
+    assert disabled.status_code == 200
+    assert disabled.json["data"]["watermark_enabled"] is False
+    assert authenticated.get("/api/v1/me").json["data"]["watermark_enabled"] is False
+
+    invalid = authenticated.patch("/api/v1/settings", json={"watermark_enabled": "false"})
+    assert invalid.status_code == 422
+
+    enabled = authenticated.patch("/api/v1/settings", json={"watermark_enabled": True})
+    assert enabled.status_code == 200
+
+
 def test_password_login_rejects_invalid_credentials(client):
     response = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "wrong"})
     assert response.status_code == 401

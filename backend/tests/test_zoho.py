@@ -70,6 +70,21 @@ def test_oauth_authorization_url_is_server_bound_and_least_privilege():
     assert query["state"] == ["csrf-state"]
 
 
+def test_email_routing_is_persisted_and_audited_for_superadmin(app):
+    client = app.test_client()
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    initial = client.get("/api/v1/integrations/zoho/routing")
+    assert initial.status_code == 200
+    assert any(row["email"] == "business@monedatechnologies.com" for row in initial.json["data"]["cc"])
+    added = client.post("/api/v1/integrations/zoho/routing", json={"group": "cc", "email": "custom@example.com", "display_name": "Custom"})
+    assert added.status_code == 201
+    assert client.post("/api/v1/integrations/zoho/routing", json={"group": "cc", "email": "custom@example.com"}).status_code == 409
+    assert client.patch("/api/v1/integrations/zoho/routing", json={"group": "cc", "email": "custom@example.com", "enabled": False}).status_code == 422
+    assert client.patch("/api/v1/integrations/zoho/routing", json={"group": "cc", "email": "custom@example.com", "enabled": False, "reason": "Temporarily disabled"}).status_code == 200
+    assert client.delete("/api/v1/integrations/zoho/routing", json={"group": "cc", "email": "custom@example.com", "reason": "No longer required"}).status_code == 200
+    assert app.extensions["store"].find_one("email_routing_recipients", {"email": "custom@example.com"}) is None
+
+
 def test_oauth_authorization_url_can_bind_server_side_pkce():
     store = MemoryStore()
     oauth = ZohoMailOAuth(zoho_config(), store)
@@ -237,7 +252,8 @@ def test_central_email_service_routes_all_four_sender_purposes():
     assert provider.messages[1]["bcc"] == ["operations@chemo.in"]
     assert provider.messages[2]["cc"] == ["business@monedatechnologies.com"]
     assert provider.messages[2]["bcc"] == ["operations@chemo.in"]
-    assert provider.messages[3]["cc"] == [] and provider.messages[3]["bcc"] == []
+    assert provider.messages[3]["cc"] == ["business@monedatechnologies.com"]
+    assert provider.messages[3]["bcc"] == ["operations@chemo.in"]
 
 
 def test_provider_refreshes_once_caches_token_and_submits_safe_json(monkeypatch):

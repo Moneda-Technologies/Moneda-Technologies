@@ -42,7 +42,7 @@ function customerCompanyCard(customerCompany: Customer, recent: boolean, selecte
 }
 
 export async function companySelectionPage(): Promise<HTMLElement> {
-  const actions = appStore.can("customers.create") ? '<a class="button button-secondary" href="/customers" data-route="/customers"><i data-lucide="plus"></i>Add Customer</a>' : "";
+  const actions = appStore.can("customers.create") ? '<a class="button button-secondary" href="/customers?action=add" data-route="/customers?action=add"><i data-lucide="plus"></i>Add Customer</a>' : "";
   appStore.set({ customer: null, activeCustomerId: null, customerCompany: null, company: null, cartCount: 0 });
   localStorage.removeItem(SELECTED_KEY);
   localStorage.removeItem("moneda-selected-customer-company");

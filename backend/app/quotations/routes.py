@@ -12,7 +12,7 @@ from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import (
     can_view_all_quotations, current_user, customer_id_from, customer_record, enforce_active_customer,
     enforce_customer, enforce_active_customer_company, permitted_quotation_query, selected_customer_id,
-    permission_required,
+    permission_required, permission_required_any,
 )
 from app.pricing.engine import PricingUnavailable
 from app.quotations.pdf import render_quotation_pdf
@@ -372,6 +372,49 @@ def quotation_communications(quotation_id: str):
         logs.extend(rows)
     logs.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
     return success({"items": logs, "total": len(logs)})
+
+
+@bp.delete("/<quotation_id>")
+@permission_required_any("quotations.archive", "quotations.delete")
+def delete_or_archive_quotation(quotation_id: str):
+    store = current_app.extensions["store"]
+    row = store.find_one("quotations", {"_id": quotation_id})
+    if not row:
+        return failure("Quotation not found", status=404)
+    if not _accessible(row):
+        return failure("Quotation access denied", status=403)
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or request.args.get("reason") or "").strip()[:500]
+    status = str(row.get("status") or "Draft")
+    related, _ = store.list("orders", {"$or": [{"quotation_id": quotation_id}, {"source_quotation_id": quotation_id}]}, limit=1)
+    if related:
+        return failure("This quotation has an associated order and cannot be deleted. Archive it instead.", status=409, error="QUOTATION_HAS_ORDER")
+    if status == "Draft" and str(payload.get("permanent", request.args.get("permanent", "true"))).lower() in {"1", "true", "yes"}:
+        if not reason:
+            return failure("A reason is required to permanently delete a quotation", status=422, error="REASON_REQUIRED")
+        audit("QUOTATION_DELETED", "quotation", quotation_id, {"reason": reason, "previous_state": status})
+        store.delete_one("quotations", {"_id": quotation_id})
+        return success(message="Quotation deleted")
+    previous = status
+    store.update_one("quotations", {"_id": quotation_id}, {"status": "archived", "archived_at": utcnow(), "archived_by": (current_user() or {}).get("_id")})
+    audit("QUOTATION_ARCHIVED", "quotation", quotation_id, {"reason": reason, "previous_state": previous, "new_state": "archived"})
+    return success(message="Quotation archived")
+
+
+@bp.post("/<quotation_id>/restore")
+@permission_required_any("quotations.restore", "quotations.edit")
+def restore_quotation(quotation_id: str):
+    store = current_app.extensions["store"]
+    row = store.find_one("quotations", {"_id": quotation_id})
+    if not row:
+        return failure("Quotation not found", status=404)
+    if not _accessible(row):
+        return failure("Quotation access denied", status=403)
+    if row.get("status") != "archived":
+        return success(row, "Quotation is not archived")
+    restored = store.update_one("quotations", {"_id": quotation_id}, {"status": "Draft", "archived_at": None, "archived_by": None}) or row
+    audit("QUOTATION_RESTORED", "quotation", quotation_id, {"previous_state": "archived", "new_state": "Draft"})
+    return success(restored, "Quotation restored")
 
 
 @bp.post("/<quotation_id>/whatsapp")

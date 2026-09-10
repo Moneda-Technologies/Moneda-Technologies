@@ -11,6 +11,7 @@ import { emptyState, escapeHtml, formatDate, skeleton } from "../utils/dom";
 export async function pricingAdminPage(): Promise<HTMLElement> {
   const canEdit = appStore.can("pricing.edit");
   const page = pageScaffold("Management", "Product & Pricing", "Review the canonical catalogue, edit EUR master prices, and inspect every price change.");
+  page.classList.add("pricing-management-page");
   const body = page.querySelector<HTMLElement>(".page-body")!;
   const state = { family: "all", status: "all", search: "" };
 
