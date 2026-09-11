@@ -1,6 +1,7 @@
 import { cartApi, customerCompanyApi, profileApi, rateApi } from "../api";
 import { api } from "../api/client";
 import { appStore } from "../state/store";
+import { beginCustomerContextChange, customerContextSignal, isCurrentCustomerContextRevision } from "../state/customer-context";
 import { escapeHtml } from "../utils/dom";
 import { refreshIcons } from "../components/icons";
 import { toast } from "../components/toast";
@@ -98,7 +99,15 @@ export function renderShell(): HTMLElement {
     const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
     return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}" aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
   };
-  const nav = `<div class="nav-section">Home</div>${renderDirect(directNav[0])}<div class="nav-section">Sales</div>${renderGroup(navGroups[0])}<div class="nav-section">Users</div>${renderGroup(navGroups[1])}<div class="nav-section">Reports</div>${renderDirect(directNav[1])}<div class="nav-section">CRM</div>${renderDirect(directNav[2])}<div class="nav-section">Settings</div>${renderGroup(navGroups[2])}`;
+  const renderSection = (label: string, content: string) => content ? `<div class="nav-section">${label}</div>${content}` : "";
+  const nav = [
+    renderSection("Home", renderDirect(directNav[0])),
+    renderSection("Sales", renderGroup(navGroups[0])),
+    renderSection("Users", renderGroup(navGroups[1])),
+    renderSection("Reports", renderDirect(directNav[1])),
+    renderSection("CRM", renderDirect(directNav[2])),
+    renderSection("Settings", renderGroup(navGroups[2])),
+  ].join("");
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="sidebar-header"><a class="brand-home" href="/dashboard" data-route="/dashboard" aria-label="${escapeHtml(state.brandName)} dashboard"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"></a></div>
@@ -270,7 +279,10 @@ export function renderShell(): HTMLElement {
     select.disabled = true;
     try {
       if (!selected) {
-        await customerCompanyApi.clearSelection();
+        const transition = beginCustomerContextChange();
+        const signal = customerContextSignal();
+        await customerCompanyApi.clearSelection(signal);
+        if (!isCurrentCustomerContextRevision(transition)) return;
         localStorage.removeItem("moneda-active-customer-id");
         appStore.set({ customer: null, activeCustomerId: null, customerCompany: null, company: null, currency: "EUR", cartCount: 0 });
         root.replaceWith(renderShell());
@@ -278,21 +290,26 @@ export function renderShell(): HTMLElement {
         return;
       }
       if (state.customer && (state.customer.customer_id ?? state.customer._id) !== (selected.customer_id ?? selected._id)) {
-        const currentCustomerId = state.customer.customer_id ?? state.customer._id;
-        const currentCart = await cartApi.get(currentCustomerId, state.currency).catch(() => null);
-        if (currentCart?.items.length) {
+        // The active cart count is already known locally. Avoid a redundant
+        // old-customer GET that can race the server-side context transition.
+        if (state.cartCount > 0) {
           const confirmed = window.confirm(`Switch customer?\n\nYour current cart belongs to ${state.customer.name}. ${selected.name} has a separate cart.\n\nCancel to stay, or OK to switch without deleting either cart.`);
           if (!confirmed) { select.value = state.activeCustomerId ?? ""; return; }
         }
       }
+      const transition = beginCustomerContextChange();
+      const signal = customerContextSignal();
       const selectedId = selected.customer_id ?? selected._id;
-      await customerCompanyApi.select(selectedId);
+      await customerCompanyApi.select(selectedId, signal);
+      if (!isCurrentCustomerContextRevision(transition)) return;
       localStorage.setItem("moneda-active-customer-id", selectedId);
       const nextCurrency = selected.preferred_currency ?? selected.default_currency ?? "EUR";
-      const nextCart = await cartApi.get(selectedId, nextCurrency).catch(() => null);
+      const nextCart = await cartApi.get(selectedId, nextCurrency, signal).catch(() => null);
+      if (!isCurrentCustomerContextRevision(transition)) return;
       appStore.set({ customer: selected, activeCustomerId: selectedId, customerCompany: selected as unknown as import("../types/domain").Company, company: selected as unknown as import("../types/domain").Company, currency: nextCurrency, cartCount: nextCart?.items.length ?? 0 });
       window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname }));
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       select.value = state.activeCustomerId ?? "";
       toast(error instanceof Error ? error.message : "Customer change failed", "error");
     } finally { select.disabled = false; }

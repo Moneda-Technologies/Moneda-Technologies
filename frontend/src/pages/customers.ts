@@ -8,6 +8,7 @@ import type { CountryMeta } from "../config/customer-metadata";
 import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
 import { appStore } from "../state/store";
+import { beginCustomerContextChange, customerContextSignal, isCurrentCustomerContextRevision } from "../state/customer-context";
 
 const customerName = (customer: Customer) => customer.company_name ?? customer.name;
 let countryCataloguePromise: Promise<CountryMeta[]> | null = null;
@@ -182,7 +183,7 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
         next.innerHTML = '<p>Customer created successfully.</p><div class="modal-actions"><button type="button" class="button button-quiet" data-close-success>Stay here</button><button type="button" class="button button-primary" data-select-success>Select this customer</button></div>';
         const successDialog = openModal("Customer created", next);
         next.querySelector("[data-close-success]")?.addEventListener("click", () => successDialog.close());
-        next.querySelector("[data-select-success]")?.addEventListener("click", async () => { try { await customerCompanyApi.select(created._id); appStore.set({ customer: created, activeCustomerId: created._id, customerCompany: created as unknown as Company, company: created as unknown as Company, currency: created.preferred_currency ?? "EUR", cartCount: 0 }); localStorage.setItem("moneda-active-customer-id", created._id); successDialog.close(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/calculator" })); } catch (error) { toast(error instanceof Error ? error.message : "Customer could not be selected", "error"); } });
+        next.querySelector("[data-select-success]")?.addEventListener("click", async () => { const transition = beginCustomerContextChange(); const signal = customerContextSignal(); try { await customerCompanyApi.select(created._id, signal); if (!isCurrentCustomerContextRevision(transition)) return; appStore.set({ customer: created, activeCustomerId: created._id, customerCompany: created as unknown as Company, company: created as unknown as Company, currency: created.preferred_currency ?? "EUR", cartCount: 0 }); localStorage.setItem("moneda-active-customer-id", created._id); successDialog.close(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/calculator" })); } catch (error) { if (error instanceof DOMException && error.name === "AbortError") return; toast(error instanceof Error ? error.message : "Customer could not be selected", "error"); } });
       }
     }
     catch (error) { toast(error instanceof Error ? error.message : "Customer could not be saved", "error"); }

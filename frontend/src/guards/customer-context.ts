@@ -1,4 +1,5 @@
 import { appStore } from "../state/store";
+import { beginCustomerContextChange } from "../state/customer-context";
 
 export const CUSTOMER_SELECTION_PATH = "/customer-selection";
 
@@ -14,6 +15,7 @@ export function hasCustomerContext(): boolean {
 }
 
 export function clearCustomerContextState(): void {
+  beginCustomerContextChange();
   localStorage.removeItem("moneda-active-customer-id");
   localStorage.removeItem("moneda-selected-customer-company");
   localStorage.removeItem("moneda-selected-company");

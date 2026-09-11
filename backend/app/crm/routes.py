@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, request
 from app.api.responses import failure, success
 from app.middleware.access import (
     can_view_all_customers, current_user, customer_id_from, customer_record,
-    enforce_customer, permitted_customer_query, permission_required, selected_customer_id,
+    enforce_customer, permitted_customer_query, permission_required,
 )
 from app.repositories.store import utcnow
 from app.services.audit import audit
@@ -130,7 +130,9 @@ def _list_resource(collection: str, customer_id: str | None, status: str | None 
 def list_leads():
     requested = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     customer_id = None if str(requested or "").lower() in {"", "all", "all_customers"} else str(requested)
-    customer_id = customer_id if requested else selected_customer_id()
+    # CRM is company-wide by default.  The global header customer is a
+    # calculator/quotation context and must not silently narrow CRM results;
+    # callers can still request a specific customer through the filter.
     scope = _crm_scope(customer_id)
     result = None if scope.get("_id") == "__access_denied__" else {}
     if result is not None:
@@ -222,7 +224,8 @@ def update_lead(lead_id: str):
 def list_reminders():
     requested = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     customer_id = None if str(requested or "").lower() in {"", "all", "all_customers"} else str(requested)
-    customer_id = customer_id if requested else selected_customer_id()
+    # Reminders are part of the company-wide CRM view; the header customer is
+    # only a calculator/quotation context unless an explicit filter is sent.
     result = _list_resource("reminders", customer_id, request.args.get("status"))
     return success(result) if result is not None else failure("Customer access denied", status=403)
 

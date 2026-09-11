@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from email.utils import parsedate_to_datetime
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from werkzeug.security import generate_password_hash
@@ -8,6 +9,7 @@ from werkzeug.security import generate_password_hash
 from app.communication.email import EmailDeliveryError
 from app.customers.codes import customer_code
 from app.middleware.access import repair_customer_assignments
+from app.orders.routes import _next_oc_number
 from app.repositories.store import build_store, utcnow
 
 
@@ -963,6 +965,108 @@ def test_converted_order_keeps_quotation_number(authenticated):
     order = converted.json["data"]
     assert order["quotation_id"] == quote["_id"]
     assert order["quotation_number"] == quote["quotation_number"]
+
+
+def _login_as_user(client, user_id: str):
+    with client.session_transaction() as session:
+        session["user_id"] = user_id
+
+
+def test_user_can_convert_own_authorized_quotation(app, client):
+    user = add_test_user(app, "quotation-owner")
+    app.extensions["store"].update_one("users", {"_id": user["_id"]}, {"device_access_mode": "any_authorized_device"})
+    app.extensions["store"].update_one("customers", {"_id": "customer-demo-1"}, {"assigned_user_ids": [user["_id"]]})
+    quote = app.extensions["store"].insert_one("quotations", {
+        "_id": "owner-convert-quote", "quotation_number": "MT-OWNER-001", "status": "Draft",
+        "customer_id": "customer-demo-1", "currency": "EUR", "lines": [],
+        "totals": {"grand_total": 100}, "created_by_user_id": user["_id"], "payment_terms": "Advance",
+    })
+    _login_as_user(client, user["_id"])
+    configuration = client.get(f"/api/v1/quotations/{quote['_id']}/order-configuration")
+    assert configuration.status_code == 200
+    converted = client.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert converted.status_code == 201
+    assert converted.json["data"]["quotation_id"] == quote["_id"]
+    assert app.extensions["store"].count("orders", {"quotation_id": quote["_id"]}) == 1
+
+
+def test_user_cannot_convert_another_users_quotation_outside_scope(app, client):
+    owner = add_test_user(app, "quotation-owner-2")
+    actor = add_test_user(app, "quotation-actor-2")
+    app.extensions["store"].update_one("users", {"_id": owner["_id"]}, {"device_access_mode": "any_authorized_device"})
+    app.extensions["store"].update_one("users", {"_id": actor["_id"]}, {"device_access_mode": "any_authorized_device"})
+    app.extensions["store"].update_one("customers", {"_id": "customer-demo-1"}, {"assigned_user_ids": [owner["_id"]]})
+    quote = app.extensions["store"].insert_one("quotations", {
+        "_id": "foreign-convert-quote", "quotation_number": "MT-FOREIGN-001", "status": "Draft",
+        "customer_id": "customer-demo-1", "currency": "EUR", "lines": [],
+        "totals": {"grand_total": 100}, "created_by_user_id": owner["_id"], "payment_terms": "Advance",
+    })
+    _login_as_user(client, actor["_id"])
+    denied = client.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert denied.status_code == 403
+    assert app.extensions["store"].count("orders", {"quotation_id": quote["_id"]}) == 0
+
+
+def test_order_confirmation_configuration_is_server_authoritative(app, authenticated):
+    store = app.extensions["store"]
+    customer = store.find_one("customers", {"_id": "customer-demo-1"}) or {}
+    quote = store.insert_one("quotations", {
+        "_id": "oc-config-quote", "quotation_number": "MT-OC-TEST-001", "status": "Sent",
+        "customer_id": "customer-demo-1", "currency": "EUR", "lines": [],
+        "totals": {"grand_total": 458.70}, "payment_terms": "Advance",
+        "customer_snapshot": {"company_name": customer.get("name", "Customer"), "email": "customer@example.com"},
+        "created_by_user_id": "user-demo-admin",
+    })
+    store.insert_one("email_logs", {
+        "_id": "oc-config-email", "quotation_id": quote["_id"], "purpose": "quotation",
+        "recipient": "customer@example.com", "cc": ["sales@example.com"], "bcc": ["accounts@example.com"],
+        "created_at": utcnow(),
+    })
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={
+        "oc_number": "CLIENT-CANNOT-OVERRIDE", "order_amount": 1, "payment_terms": "60 Days",
+        "additional_recipients": ["extra@example.com"],
+    })
+    assert response.status_code == 201
+    order = response.json["data"]
+    assert order["order_number"].startswith("MT-OC-") and order["order_number"].endswith("-001")
+    assert order["order_amount"] == 458.70
+    assert order["payment_terms"] == "60 Days"
+    assert order["to"] == ["customer@example.com", "extra@example.com"]
+    assert order["cc"] == ["sales@example.com"]
+    assert order["bcc"] == ["accounts@example.com"]
+
+
+def test_order_confirmation_rejects_more_than_five_additional_recipients(authenticated, app):
+    quote = app.extensions["store"].insert_one("quotations", {
+        "_id": "oc-recipient-limit", "quotation_number": "MT-OC-TEST-002", "status": "Sent",
+        "customer_id": "customer-demo-1", "currency": "EUR", "lines": [],
+        "totals": {"grand_total": 10}, "payment_terms": "Advance",
+        "customer_snapshot": {"email": "customer@example.com"}, "created_by_user_id": "user-demo-admin",
+    })
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={
+        "additional_recipients": [f"extra{index}@example.com" for index in range(6)],
+    })
+    assert response.status_code == 422
+
+
+def test_order_confirmation_rejects_invalid_additional_recipient(authenticated, app):
+    quote = app.extensions["store"].insert_one("quotations", {
+        "_id": "oc-recipient-invalid", "quotation_number": "MT-OC-TEST-003", "status": "Sent",
+        "customer_id": "customer-demo-1", "currency": "EUR", "lines": [],
+        "totals": {"grand_total": 10}, "payment_terms": "Advance",
+        "customer_snapshot": {"email": "customer@example.com"}, "created_by_user_id": "user-demo-admin",
+    })
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={
+        "additional_recipients": ["not-an-email"],
+    })
+    assert response.status_code == 422
+
+
+def test_customer_oc_sequence_is_unique_under_concurrency(app):
+    store = app.extensions["store"]
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        numbers = list(executor.map(lambda _: _next_oc_number(store, "customer-demo-1"), range(8)))
+    assert len(numbers) == len(set(numbers)) == 8
 
 
 def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):

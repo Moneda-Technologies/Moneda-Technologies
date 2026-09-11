@@ -36,6 +36,40 @@ def test_crm_customer_filter_and_lead_creation_do_not_require_header_context(app
     assert created.json["data"]["owner_user_id"] == "user-demo-admin"
 
 
+def test_crm_ignores_header_customer_by_default(app, authenticated):
+    store = app.extensions["store"]
+    store.insert_one("leads", {
+        "_id": "crm-header-customer", "customer_id": "customer-demo-1", "owner_user_id": "user-demo-admin",
+        "title": "Header customer lead", "status": "Lead", "value_eur": 100,
+    })
+    store.insert_one("leads", {
+        "_id": "crm-other-customer", "customer_id": "customer-demo-2", "owner_user_id": "user-demo-admin",
+        "title": "Other customer lead", "status": "Lead", "value_eur": 200,
+    })
+    assert authenticated.post("/api/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
+    response = authenticated.get("/api/v1/leads")
+    assert response.status_code == 200
+    ids = {row["_id"] for row in response.json["data"]["items"]}
+    assert {"crm-header-customer", "crm-other-customer"}.issubset(ids)
+
+
+def test_crm_reminders_ignore_header_customer_by_default(app, authenticated):
+    store = app.extensions["store"]
+    store.insert_one("reminders", {
+        "_id": "crm-reminder-header-customer", "customer_id": "customer-demo-1",
+        "status": "Pending", "notes": "Header customer reminder",
+    })
+    store.insert_one("reminders", {
+        "_id": "crm-reminder-other-customer", "customer_id": "customer-demo-2",
+        "status": "Pending", "notes": "Other customer reminder",
+    })
+    assert authenticated.post("/api/companies/select-customer", json={"customer_id": "customer-demo-1"}).status_code == 200
+    response = authenticated.get("/api/v1/reminders")
+    assert response.status_code == 200
+    ids = {row["_id"] for row in response.json["data"]["items"]}
+    assert {"crm-reminder-header-customer", "crm-reminder-other-customer"}.issubset(ids)
+
+
 def test_user_cannot_change_own_role(app, authenticated):
     response = authenticated.patch("/api/v1/admin/users/user-demo-admin", json={"role_id": "user"})
     assert response.status_code == 403

@@ -51,8 +51,8 @@ export const machineApi = {
 export const customerCompanyApi = {
   list: () => api<{ items: Customer[]; total: number }>("/customers?limit=500"),
   search: (term: string) => api<{ items: Customer[]; total: number }>(`/customers?search=${encodeURIComponent(term)}&limit=500`),
-  select: (customerId: string) => api<{ customer_id: string }>("/companies/select-customer", jsonBody({ customer_id: customerId })),
-  clearSelection: () => api<{ customer_id: null }>("/companies/clear-customer", jsonBody({})),
+  select: (customerId: string, signal?: AbortSignal) => api<{ customer_id: string }>("/companies/select-customer", { ...jsonBody({ customer_id: customerId }), ...(signal ? { signal } : {}) }),
+  clearSelection: (signal?: AbortSignal) => api<{ customer_id: null }>("/companies/clear-customer", { ...jsonBody({}), ...(signal ? { signal } : {}) }),
 };
 /** @deprecated compatibility alias for integrations that still import companyApi. */
 export const companyApi = customerCompanyApi;
@@ -86,7 +86,7 @@ export const quotationApi = {
 };
 
 export const cartApi = {
-  get: (customerId: string, currency: Currency = "EUR") => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; master_currency?: "EUR"; display_currency?: Currency; totals: Record<string, number>; master_totals?: Record<string, number> }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`),
+  get: (customerId: string, currency: Currency = "EUR", signal?: AbortSignal) => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; master_currency?: "EUR"; display_currency?: Currency; totals: Record<string, number>; master_totals?: Record<string, number> }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`, signal ? { signal } : undefined),
   add: (value: unknown) => api<CartItem>("/cart/items", jsonBody(value)),
   update: (id: string, value: unknown) => api<CartItem>(`/cart/items/${encodeURIComponent(id)}`, patchBody(value)),
   remove: (id: string) => api<null>(`/cart/items/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -105,7 +105,10 @@ export const orderApi = {
   list: (customerId?: string) => api<{ items: Record<string, unknown>[]; total: number }>(customerId ? `/orders?customer_id=${encodeURIComponent(customerId)}` : "/orders"),
   get: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`),
   configuration: (id: string) => api<{ quote: Quotation; defaults: Record<string, unknown> }>(`/quotations/${encodeURIComponent(id)}/order-configuration`),
-  convert: (id: string, value: unknown = {}) => api<Record<string, unknown>>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, jsonBody(value)),
+  convert: (id: string, value: unknown = {}, idempotencyKey = crypto.randomUUID()) => api<Record<string, unknown>>(
+    `/quotations/${encodeURIComponent(id)}/convert-to-order`,
+    { ...jsonBody(value), headers: { "Idempotency-Key": idempotencyKey } },
+  ),
   sendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-confirmation`, jsonBody({})),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };

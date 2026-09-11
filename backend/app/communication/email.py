@@ -307,14 +307,20 @@ class EmailService(EmailProvider):
         )
 
     def send_order_confirmation(self, *, to: list[str], subject: str, html: str,
+                                cc: list[str] | None = None, bcc: list[str] | None = None,
                                 request_id: str | None = None) -> dict[str, Any]:
         routing = self.recipients.resolved()
-        return self.send(to=to, subject=subject, html=html, cc=routing["cc"], bcc=routing["bcc"], request_id=request_id, purpose="order", customer_facing=True)
+        merged_cc = list(dict.fromkeys([*routing["cc"], *(cc or [])]))
+        merged_bcc = [value for value in dict.fromkeys([*routing["bcc"], *(bcc or [])]) if value not in set(merged_cc) and value not in set(to)]
+        return self.send(to=to, subject=subject, html=html, cc=merged_cc, bcc=merged_bcc, request_id=request_id, purpose="order", customer_facing=True)
 
     def send_order_status(self, *, to: list[str], subject: str, html: str,
+                          cc: list[str] | None = None, bcc: list[str] | None = None,
                           request_id: str | None = None) -> dict[str, Any]:
         routing = self.recipients.resolved()
-        return self.send(to=to, subject=subject, html=html, cc=routing["cc"], bcc=routing["bcc"], request_id=request_id, purpose="order", customer_facing=True)
+        merged_cc = list(dict.fromkeys([*routing["cc"], *(cc or [])]))
+        merged_bcc = [value for value in dict.fromkeys([*routing["bcc"], *(bcc or [])]) if value not in set(merged_cc) and value not in set(to)]
+        return self.send(to=to, subject=subject, html=html, cc=merged_cc, bcc=merged_bcc, request_id=request_id, purpose="order", customer_facing=True)
 
     def send_test_email(self, *, to: list[str], request_id: str | None = None) -> dict[str, Any]:
         routing = self.recipients.resolved()

@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
 from app.finance.service import activate_incentive, money, recompute_incentive_totals
-from app.middleware.access import can_view_all_customers, current_user, enforce_customer, permission_required, permission_required_any
+from app.middleware.access import can_view_all_customers, current_user, customer_access_ids_for_user, enforce_customer, permission_required, permission_required_any
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -175,26 +175,71 @@ def list_incentives():
     store = _store()
     user = current_user() or {}
     query: dict = {}
-    if not can_view_all_customers(user) and user.get("role_id") not in {"manager_sales_admin"}:
+    global_scope = can_view_all_customers(user) or user.get("role_id") == "manager_sales_admin"
+    allowed_customer_ids: list[str] | None = None
+    if not global_scope:
         query["salesperson_id"] = user.get("_id")
+        allowed_customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
+        query["customer_id"] = {"$in": allowed_customer_ids}
     for key in ("status", "salesperson_id", "customer_id", "order_id"):
         if request.args.get(key):
+            if key == "customer_id" and allowed_customer_ids is not None and request.args[key] not in allowed_customer_ids:
+                return success({"items": [], "total": 0})
             query[key] = request.args[key]
-    rows, total = store.list("incentives", query, limit=min(int(request.args.get("limit", 100)), 500))
+    # Search and payment/date filters are applied to the server-authorized
+    # result set below.  Fetching the bounded management list first avoids
+    # allowing a client-supplied filter to bypass the scope query above.
+    rows, _ = store.list("incentives", query, limit=min(int(request.args.get("limit", 500)), 500))
+    search = str(request.args.get("search") or "").strip().casefold()
+    payment_filter = str(request.args.get("payment_status") or "").strip().casefold()
+    from_date = _parse_date(request.args.get("from_date"), required=False) if request.args.get("from_date") else None
+    to_date = _parse_date(request.args.get("to_date"), required=False) if request.args.get("to_date") else None
+    if to_date:
+        # Date inputs are inclusive from the user's perspective.
+        from datetime import timedelta
+        to_date = to_date + timedelta(days=1)
+    filtered: list[dict] = []
     for index, row in enumerate(rows):
         refreshed = recompute_incentive_totals(store, str(row["_id"]))
         if refreshed:
             rows[index] = refreshed
-    return success({"items": rows, "total": total})
+        row = rows[index]
+        payments, _ = store.list("payments", {"order_id": row.get("order_id")}, limit=100)
+        payment_status = "Confirmed" if any(str(payment.get("status") or "").upper() == "CONFIRMED" for payment in payments) else "Pending"
+        row["payment_status"] = payment_status
+        customer = row.get("customer_snapshot") or {}
+        salesperson = row.get("salesperson_snapshot") or {}
+        haystack = " ".join(str(value or "") for value in (
+            row.get("order_number"), row.get("oc_number"), row.get("order_id"),
+            row.get("customer_id"), customer.get("name"), customer.get("company_name"),
+            salesperson.get("name"), salesperson.get("email"), row.get("salesperson_id"),
+        )).casefold()
+        if search and search not in haystack:
+            continue
+        if payment_filter and payment_filter not in {payment_status.casefold(), "paid" if payment_status == "Confirmed" else "unpaid"}:
+            continue
+        created_at = row.get("created_at")
+        if from_date and (not created_at or created_at < from_date):
+            continue
+        if to_date and (not created_at or created_at >= to_date):
+            continue
+        filtered.append(row)
+    return success({"items": filtered, "total": len(filtered)})
 
 
 @bp.get("/incentives/<incentive_id>")
 @permission_required_any("incentives.view", "incentives.manage")
 def get_incentive(incentive_id: str):
-    row = _store().find_one("incentives", {"_id": incentive_id})
+    store = _store()
+    row = store.find_one("incentives", {"_id": incentive_id})
     if not row:
         return failure("Incentive not found", status=404)
-    return success(recompute_incentive_totals(_store(), incentive_id) or row)
+    user = current_user() or {}
+    global_scope = can_view_all_customers(user) or user.get("role_id") == "manager_sales_admin"
+    if not global_scope:
+        if str(row.get("salesperson_id") or "") != str(user.get("_id") or "") or not enforce_customer(str(row.get("customer_id") or "")):
+            return failure("Incentive not found", status=404)
+    return success(recompute_incentive_totals(store, incentive_id) or row)
 
 
 @bp.post("/incentives/<incentive_id>/pay")

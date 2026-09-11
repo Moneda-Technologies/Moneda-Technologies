@@ -36,6 +36,7 @@ class Store(Protocol):
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool: ...
     def count(self, collection: str, query: dict[str, Any] | None = None) -> int: ...
     def next_counter(self, name: str) -> int: ...
+    def ensure_counter_at_least(self, name: str, value: int) -> None: ...
     def health(self) -> dict[str, Any]: ...
 
 
@@ -145,6 +146,10 @@ class MemoryStore:
         with self._lock:
             self._counters[name] = self._counters.get(name, 0) + 1
             return self._counters[name]
+
+    def ensure_counter_at_least(self, name: str, value: int) -> None:
+        with self._lock:
+            self._counters[name] = max(self._counters.get(name, 0), int(value))
 
     def health(self) -> dict[str, Any]:
         return {
@@ -256,6 +261,11 @@ class MongoStore:
             return_document=ReturnDocument.AFTER,
         )
         return int(row["sequence"])
+
+    def ensure_counter_at_least(self, name: str, value: int) -> None:
+        self.db.quotation_counters.update_one(
+            {"_id": name}, {"$max": {"sequence": int(value)}}, upsert=True,
+        )
 
     def health(self) -> dict[str, Any]:
         try:

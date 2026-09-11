@@ -1,8 +1,9 @@
-import { cartApi, customerCompanyApi } from "../api";
+import { customerCompanyApi } from "../api";
 import { refreshIcons } from "../components/icons";
 import { pageScaffold } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
+import { beginCustomerContextChange, customerContextSignal, isCurrentCustomerContextRevision } from "../state/customer-context";
 import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
 
@@ -17,14 +18,19 @@ function recentIds(): string[] {
 async function selectCustomerCompany(customerCompany: Customer, nextPath = "/products"): Promise<void> {
   const current = appStore.state.customer;
   const customerId = customerCompany.customer_id ?? customerCompany._id;
-  if (current && current._id !== customerCompany._id) {
-    const cart = await cartApi.get(current.customer_id ?? current._id, appStore.state.currency).catch(() => null);
-    if (cart?.items?.length) {
+  if (current && (current.customer_id ?? current._id) !== customerId) {
+    // cartCount is already maintained by the active cart view/switcher. Do
+    // not issue a preflight GET for the old customer: that request is both
+    // redundant and vulnerable to the server context changing underneath it.
+    if (appStore.state.cartCount > 0) {
       const confirmed = window.confirm(`Switch customer?\n\nYour current cart belongs to ${current.name}. ${customerCompany.name} has a separate cart.\n\nCancel to stay, or OK to switch without deleting either cart.`);
       if (!confirmed) return;
     }
   }
-  await customerCompanyApi.select(customerId);
+  const transition = beginCustomerContextChange();
+  const signal = customerContextSignal();
+  await customerCompanyApi.select(customerId, signal);
+  if (!isCurrentCustomerContextRevision(transition)) return;
   const recent = [customerId, ...recentIds().filter((id) => id !== customerId)].slice(0, 4);
   localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
   localStorage.setItem(SELECTED_KEY, customerId);

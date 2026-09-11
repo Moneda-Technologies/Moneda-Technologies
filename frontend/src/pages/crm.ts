@@ -6,7 +6,6 @@ import { toast } from "../components/toast";
 import { appStore } from "../state/store";
 import { emptyState, escapeHtml, formatMoney, skeleton } from "../utils/dom";
 
-const activeCustomer = () => appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
 const stages = ["Lead", "Follow Up", "Order Received", "Won", "Lost", "Closed"];
 
 const customerId = (customer: Record<string, unknown>) => String(customer.customer_id ?? customer._id ?? "");
@@ -49,9 +48,10 @@ function openLeadEditor(preselectedCustomerId: string, reload: () => Promise<voi
 }
 
 export async function crmPage(): Promise<HTMLElement> {
-  const globalCustomer = activeCustomer() as unknown as Record<string, unknown> | null;
   const url = new URLSearchParams(window.location.search);
-  const initialCustomer = url.get("customer_id") ?? (globalCustomer ? customerId(globalCustomer) : "");
+  // CRM is company-wide by default; only an explicit URL/filter selection
+  // scopes it to one customer.
+  const initialCustomer = url.get("customer_id") ?? "";
   const page = pageScaffold("Sales", "CRM Pipeline", "Company-wide sales activity with customer relationships, ownership, value and next actions.", '<button class="button button-primary" id="new-lead"><i data-lucide="plus"></i>New lead</button>');
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(6);
@@ -86,8 +86,7 @@ export async function crmPage(): Promise<HTMLElement> {
 export async function remindersPage(): Promise<HTMLElement> {
   const page = pageScaffold("Sales", "Reminders", "Keep follow-ups visible and close every commercial loop.", '<button class="button button-primary"><i data-lucide="plus"></i>New reminder</button>');
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
-  const customer = activeCustomer() as unknown as Record<string, unknown> | null;
-  try { const data = await crmApi.reminders(customer ? customerId(customer) : undefined); body.innerHTML = data.items.length ? `<div class="data-table panel"><table><thead><tr><th>Reminder</th><th>Related to</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead><tbody>${data.items.map((item) => `<tr><td><strong>${escapeHtml(String(item.notes ?? "Follow up"))}</strong></td><td>${escapeHtml(String(item.customer_id ?? item.lead_id ?? "—"))}</td><td>${escapeHtml(String(item.due_date ?? "—"))}</td><td>${statusBadge(String(item.priority ?? "normal"))}</td><td>${statusBadge(String(item.status ?? "open"))}</td></tr>`).join("")}</tbody></table></div>` : emptyState("bell-ring", "All caught up", "Open and recurring reminders will appear here."); }
+  try { const data = await crmApi.reminders(); body.innerHTML = data.items.length ? `<div class="data-table panel"><table><thead><tr><th>Reminder</th><th>Related to</th><th>Due</th><th>Priority</th><th>Status</th></tr></thead><tbody>${data.items.map((item) => `<tr><td><strong>${escapeHtml(String(item.notes ?? "Follow up"))}</strong></td><td>${escapeHtml(String(item.customer_id ?? item.lead_id ?? "—"))}</td><td>${escapeHtml(String(item.due_date ?? "—"))}</td><td>${statusBadge(String(item.priority ?? "normal"))}</td><td>${statusBadge(String(item.status ?? "open"))}</td></tr>`).join("")}</tbody></table></div>` : emptyState("bell-ring", "All caught up", "Open and recurring reminders will appear here."); }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Reminders unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }
@@ -95,8 +94,7 @@ export async function remindersPage(): Promise<HTMLElement> {
 export async function remindersWorkspacePage(): Promise<HTMLElement> {
   const page = pageScaffold("Sales", "Reminders", "Keep follow-ups visible and close every commercial loop.");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
-  const customer = activeCustomer() as unknown as Record<string, unknown> | null;
-  try { const data = await crmApi.reminders(customer ? customerId(customer) : undefined); body.innerHTML = data.items.length ? `<div class="data-table panel"><table><thead><tr><th>Reminder</th><th>Related to</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>${data.items.map((item) => { const state = String(item.status ?? "Pending"); const open = !["completed", "cancelled"].includes(state.toLowerCase()); return `<tr><td><strong>${escapeHtml(String(item.notes ?? "Follow up"))}</strong></td><td>${escapeHtml(String(item.customer_id ?? item.lead_id ?? "—"))}</td><td>${escapeHtml(String(item.due_date ?? "—"))}</td><td>${statusBadge(String(item.priority ?? "normal"))}</td><td>${statusBadge(state)}</td><td>${open ? `<button class="button button-quiet complete-reminder" data-id="${escapeHtml(String(item._id))}"><i data-lucide="check"></i>Complete</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : emptyState("bell-ring", "All caught up", "Open and recurring reminders will appear here."); body.querySelectorAll<HTMLButtonElement>(".complete-reminder").forEach((button) => button.addEventListener("click", async () => { button.disabled = true; try { const result = await crmApi.completeReminder(button.dataset.id!); toast(result.next_reminder ? "Reminder completed and next follow-up scheduled" : "Reminder completed"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/reminders" })); } catch (error) { toast(error instanceof Error ? error.message : "Reminder could not be completed", "error"); button.disabled = false; } })); }
+  try { const data = await crmApi.reminders(); body.innerHTML = data.items.length ? `<div class="data-table panel"><table><thead><tr><th>Reminder</th><th>Related to</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>${data.items.map((item) => { const state = String(item.status ?? "Pending"); const open = !["completed", "cancelled"].includes(state.toLowerCase()); return `<tr><td><strong>${escapeHtml(String(item.notes ?? "Follow up"))}</strong></td><td>${escapeHtml(String(item.customer_id ?? item.lead_id ?? "—"))}</td><td>${escapeHtml(String(item.due_date ?? "—"))}</td><td>${statusBadge(String(item.priority ?? "normal"))}</td><td>${statusBadge(state)}</td><td>${open ? `<button class="button button-quiet complete-reminder" data-id="${escapeHtml(String(item._id))}"><i data-lucide="check"></i>Complete</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>` : emptyState("bell-ring", "All caught up", "Open and recurring reminders will appear here."); body.querySelectorAll<HTMLButtonElement>(".complete-reminder").forEach((button) => button.addEventListener("click", async () => { button.disabled = true; try { const result = await crmApi.completeReminder(button.dataset.id!); toast(result.next_reminder ? "Reminder completed and next follow-up scheduled" : "Reminder completed"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/reminders" })); } catch (error) { toast(error instanceof Error ? error.message : "Reminder could not be completed", "error"); button.disabled = false; } })); }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Reminders unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }

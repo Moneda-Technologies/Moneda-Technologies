@@ -14,8 +14,10 @@ import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
 import { customerCompanyApi } from "./api";
 import { toast } from "./components/toast";
+import { customerContextSignal } from "./state/customer-context";
 
 type PageFactory = () => Promise<HTMLElement>;
+let navigationRevision = 0;
 
 const routes: Record<string, PageFactory> = {
   "/customer-selection": companySelectionPage,
@@ -58,13 +60,14 @@ const routes: Record<string, PageFactory> = {
 };
 
 export async function navigate(path: string, push = true): Promise<void> {
+  const requestRevision = ++navigationRevision;
   const query = path.includes("?") ? path.slice(path.indexOf("?")) : "";
   const routePath = path.split("?", 1)[0];
   let resolved = routePath === "/" || routePath === "/login" || routePath === "/home" ? "/dashboard" : routePath.replace(/\/$/, "");
   const selectingCustomer = resolved === CUSTOMER_SELECTION_PATH || resolved === "/company-selection";
   if (selectingCustomer && hasCustomerContext()) {
-    await customerCompanyApi.clearSelection().catch(() => undefined);
     clearCustomerContextState();
+    await customerCompanyApi.clearSelection(customerContextSignal()).catch(() => undefined);
     window.dispatchEvent(new CustomEvent("moneda:customer-context-cleared"));
   }
   if (isCustomerProtectedRoute(resolved) && !hasCustomerContext()) {
@@ -80,11 +83,13 @@ export async function navigate(path: string, push = true): Promise<void> {
   try {
     const factory = routes[resolved] ?? (resolved.startsWith("/customers/") ? () => customerDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotation/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotations/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/orders/") ? () => orderDetailPage(resolved.split("/")[2]) : undefined);
     const page = factory ? await factory() : element("section", "page not-found", '<span>404</span><h1>Page not found</h1><p>The requested workspace does not exist.</p><a class="button button-primary" href="/dashboard" data-route="/dashboard">Return to dashboard</a>');
+    if (requestRevision !== navigationRevision) return;
     main.replaceChildren(page);
     main.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "instant" });
     refreshIcons(main);
   } catch (error) {
+    if (requestRevision !== navigationRevision) return;
     main.innerHTML = `<section class="page"><div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Page could not be loaded</strong><p>${error instanceof Error ? error.message : "Please try again."}</p></div></div></section>`;
     refreshIcons(main);
   }

@@ -25,6 +25,11 @@ bp = Blueprint("quotations", __name__, url_prefix="/api/quotations")
 
 def _accessible(quotation: dict) -> bool:
     user = current_user() or {}
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    # Ownership never bypasses the server-side customer scope.  This keeps
+    # quotation visibility consistent with conversion authorization.
+    if not enforce_customer(customer_id):
+        return False
     if can_view_all_quotations(user):
         return True
     owner_ids = {quotation.get("created_by_user_id"), quotation.get("user_id"), quotation.get("prepared_by_user_id"), quotation.get("salesperson_id")}
@@ -33,7 +38,7 @@ def _accessible(quotation: dict) -> bool:
     # Legacy quotations may not have an owner snapshot; retain the existing
     # customer authorization bridge for those records.
     if not any(owner_ids):
-        return enforce_customer(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))
+        return True
     return False
 
 
@@ -347,7 +352,12 @@ def send_quotation(quotation_id: str):
         "quotation_send_email quotation_id=%s provider=zoho_mail_api result=PASS",
         quotation_id,
     )
-    updated = store.update_one("quotations", {"_id": quotation_id}, {"status": "Sent", "email_status": "sent", "history": history})
+    # Persist the exact recipient snapshot used for this quotation send so a
+    # later Order Confirmation conversion can inherit it server-side.
+    updated = store.update_one("quotations", {"_id": quotation_id}, {
+        "status": "Sent", "email_status": "sent", "history": history,
+        "to": [recipient], "cc": routing["cc"], "bcc": routing["bcc"],
+    })
     store.insert_one("email_logs", {"quotation_id": quotation_id, "quotation_number": row.get("quotation_number"), "event": send_event, "recipient": recipient, "cc": routing["cc"], "bcc": routing["bcc"], "subject": subject, "message_type": "quotation", "purpose": "quotation", "from_address": email_service.senders.resolve("quotation"), "to_count": 1, "cc_count": len(routing["cc"]), "bcc_count": len(routing["bcc"]), "sent_by": sent_by, "status": "sent", "submission_status": "sent", "provider_id": result.get("id"), "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"), "channel": "email", "created_at": utcnow()})
     store.insert_one("notifications", {
         "user_id": user.get("_id"), "customer_id": row.get("customer_id") or row.get("customer_company_id") or row.get("company_id"), "type": "quotation_sent",

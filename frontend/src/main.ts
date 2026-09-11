@@ -11,6 +11,7 @@ import { appStore } from "./state/store";
 import type { Company, Customer } from "./types/domain";
 import { clearCustomerContextState, CUSTOMER_SELECTION_PATH } from "./guards/customer-context";
 import { devicePendingPage } from "./pages/device-pending";
+import { beginCustomerContextChange, customerContextSignal } from "./state/customer-context";
 
 interface PublicConfig { brand_name: string; brand_logo_path: string; demo_mode: boolean; master_currency: "EUR"; signup_email_domains?: string[] }
 
@@ -37,14 +38,21 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
   if (mustSelectCustomer) {
     const hadServerContext = Boolean(session.active_customer_id || session.selected_customer_id || session.selected_customer_company_id || session.active_company_id);
     clearCustomerContextState();
-    if (hadServerContext) await customerCompanyApi.clearSelection().catch(() => undefined);
+    if (hadServerContext) await customerCompanyApi.clearSelection(customerContextSignal()).catch(() => undefined);
   }
-  // The Flask session is authoritative. Local storage is only a migration
-  // fallback for sessions that predate the active_customer_id field.
+  // The Flask session is authoritative. Do not restore a customer from local
+  // storage: doing so can resurrect a cleared/stale selection after startup.
   const serverSelectedId = session.active_customer_id ?? session.selected_customer_id ?? session.selected_customer_company_id ?? session.active_company_id ?? null;
-  const selectedId = mustSelectCustomer ? null : (serverSelectedId ?? localStorage.getItem("moneda-active-customer-id") ?? localStorage.getItem("moneda-selected-customer-company") ?? localStorage.getItem("moneda-selected-company") ?? null);
+  const selectedId = mustSelectCustomer ? null : serverSelectedId;
   const customer = customers.find((item) => item._id === selectedId || item.customer_id === selectedId) ?? null;
   const customerCompany = customer as unknown as Company | null;
+  // A legacy session can still point at the issuer/demo company, which is no
+  // longer a selectable customer. Clear that server context instead of
+  // allowing protected cart requests to use an invalid owner.
+  if (serverSelectedId && !customer && !mustSelectCustomer) {
+    beginCustomerContextChange();
+    await customerCompanyApi.clearSelection(customerContextSignal()).catch(() => undefined);
+  }
   if (customer && session.active_customer_id !== (customer.customer_id ?? customer._id)) await customerCompanyApi.select(customer.customer_id ?? customer._id);
   appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR", watermarkEnabled: session.watermark_enabled !== false });
   if (location.pathname === "/quotation-preview") {

@@ -2,20 +2,102 @@ from __future__ import annotations
 
 from datetime import timedelta
 from html import escape
+import re
+from threading import Lock
 
 from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
+from app.customers.codes import available_customer_code
 from app.finance.service import create_incentive_for_order
-from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, permission_required, permitted_customer_query
+from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, login_required, permission_required, permitted_customer_query
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
 
 bp = Blueprint("orders", __name__, url_prefix="/api")
 STATUSES = {"Pending", "Confirmed", "Processing", "Completed", "Cancelled"}
+_CONVERSION_LOCK = Lock()
+PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
+
+
+def _normalise_recipients(values) -> list[str]:
+    """Return valid, lower-cased, de-duplicated addresses from mixed input."""
+    if values is None:
+        return []
+    raw_values = values if isinstance(values, (list, tuple, set)) else [values]
+    result: list[str] = []
+    for raw in raw_values:
+        if isinstance(raw, (list, tuple, set)):
+            for nested in _normalise_recipients(raw):
+                if nested not in result:
+                    result.append(nested)
+            continue
+        for value in str(raw or "").replace(";", ",").split(","):
+            value = value.strip()
+            if not value:
+                continue
+            try:
+                address = validate_email(value, check_deliverability=False).normalized
+            except EmailNotValidError:
+                continue
+            if address not in result:
+                result.append(address)
+    return result
+
+
+def _quotation_recipients(store, quotation: dict) -> tuple[list[str], list[str], list[str]]:
+    """Load recipient snapshots from the quotation and its send record.
+
+    Older quotations do not have recipient fields; their latest quotation
+    email log is the authoritative snapshot for CC/BCC in that case.
+    """
+    quotation_id = quotation.get("_id")
+    customer_email = (quotation.get("customer_snapshot") or {}).get("email")
+    to = _normalise_recipients([quotation.get("to"), quotation.get("recipient"), customer_email])
+    cc = _normalise_recipients(quotation.get("cc"))
+    bcc = _normalise_recipients(quotation.get("bcc"))
+    if quotation_id:
+        logs, _ = store.list("email_logs", {"quotation_id": quotation_id, "purpose": "quotation"}, limit=100, sort="created_at", direction=-1)
+        if logs:
+            latest = logs[0]
+            to = _normalise_recipients([*to, latest.get("recipient"), latest.get("to")])
+            cc = _normalise_recipients([*cc, latest.get("cc")])
+            bcc = _normalise_recipients([*bcc, latest.get("bcc")])
+    # An address must have one delivery role only; To takes precedence.
+    to_set = set(to)
+    cc = [value for value in cc if value not in to_set]
+    cc_set = set(cc)
+    bcc = [value for value in bcc if value not in to_set and value not in cc_set]
+    return to, cc, bcc
+
+
+def _additional_recipients(payload: dict) -> list[str]:
+    values = payload.get("additional_recipients", [])
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError("Additional recipients must be an array")
+    if len(values) > 5:
+        raise ValueError("A maximum of 5 additional recipients is allowed")
+    result: list[str] = []
+    for value in values:
+        address = _normalise_recipients(value)
+        if not address:
+            raise ValueError("Every additional recipient must be a valid email address")
+        result.extend(address)
+    return list(dict.fromkeys(result))[:5]
+
+
+def _validated_payment_terms(value, fallback: str | None) -> str:
+    terms = str(value or fallback or "Advance").strip()
+    if terms in PAYMENT_TERMS:
+        return terms
+    if re.fullmatch(r"Custom:\s*\d+\s+Days", terms):
+        return terms
+    raise ValueError("Invalid payment terms")
 
 
 def _order_recipient(order: dict) -> str:
@@ -30,25 +112,84 @@ def _order_recipient(order: dict) -> str:
 
 
 def _order_recipients(order: dict) -> list[str]:
-    values: list[str] = []
+    values: list[str] = _normalise_recipients([
+        order.get("to"), order.get("additional_recipients"), order.get("cc"), order.get("bcc"),
+    ])
     for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot"):
         value = (order.get(snapshot_name) or {}).get("email")
         if value:
-            try:
-                normalized = validate_email(str(value).strip(), check_deliverability=False).normalized
-                if normalized not in values:
-                    values.append(normalized)
-            except EmailNotValidError:
-                pass
+            values.extend(_normalise_recipients(value))
     sales_email = (order.get("salesperson_snapshot") or {}).get("email")
     if sales_email:
-        try:
-            normalized = validate_email(str(sales_email).strip(), check_deliverability=False).normalized
-            if normalized not in values:
-                values.append(normalized)
-        except EmailNotValidError:
-            pass
-    return values
+        values.extend(_normalise_recipients(sales_email))
+    return list(dict.fromkeys(values))
+
+
+def _order_to_recipients(order: dict) -> list[str]:
+    explicit = _normalise_recipients(order.get("to"))
+    if not explicit:
+        explicit = _normalise_recipients([
+            (order.get(snapshot_name) or {}).get("email")
+            for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot")
+        ])
+    explicit.extend(_normalise_recipients(order.get("additional_recipients")))
+    if not explicit:
+        explicit.extend(_normalise_recipients((order.get("salesperson_snapshot") or {}).get("email")))
+    return list(dict.fromkeys(explicit))
+
+
+def _can_convert_quotation(user: dict, quotation: dict) -> bool:
+    """Authorize conversion without broadening a user's order permissions.
+
+    Users with the existing orders.create permission keep the normal managed
+    conversion path.  A user without that global permission may convert only
+    a quotation they own, and only when the customer is in their server-side
+    customer scope.
+    """
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    if not enforce_customer(customer_id):
+        return False
+    if "orders.create" in user.get("permissions", []):
+        return True
+    user_id = str(user.get("_id") or "")
+    owner_ids = {
+        str(quotation.get(field) or "")
+        for field in ("created_by_user_id", "user_id", "prepared_by_user_id", "salesperson_id")
+        if quotation.get(field)
+    }
+    return bool(user_id and user_id in owner_ids)
+
+
+def _customer_oc_code(store, customer_id: str) -> str:
+    customer = store.find_one("customers", {"_id": customer_id}) or store.find_one("companies", {"_id": customer_id}) or {}
+    code = str(customer.get("customer_code") or "").strip().upper()
+    if not code:
+        code = available_customer_code(store, str(customer.get("name") or customer.get("company_name") or "Customer"), customer_id)
+        if store.find_one("customers", {"_id": customer_id}):
+            store.update_one("customers", {"_id": customer_id}, {"customer_code": code})
+    return re.sub(r"[^A-Z0-9-]", "-", code).strip("-") or "CUSTOMER"
+
+
+def _oc_sequence_state(store, code: str) -> tuple[str, int]:
+    pattern = rf"^MT-OC-{re.escape(code)}-(\d+)$"
+    rows, _ = store.list("orders", {"order_number": {"$regex": pattern}}, limit=100_000)
+    highest_existing = max((int(match.group(1)) for row in rows if (match := re.match(pattern, str(row.get("order_number") or "")))), default=0)
+    counter_name = f"order_oc:{code}"
+    counter = store.find_one("quotation_counters", {"_id": counter_name}) or {}
+    return counter_name, max(highest_existing, int(counter.get("sequence") or 0))
+
+
+def _next_oc_number(store, customer_id: str) -> str:
+    code = _customer_oc_code(store, customer_id)
+    counter_name, current = _oc_sequence_state(store, code)
+    store.ensure_counter_at_least(counter_name, current)
+    return f"MT-OC-{code}-{store.next_counter(counter_name):03d}"
+
+
+def _preview_oc_number(store, customer_id: str) -> str:
+    code = _customer_oc_code(store, customer_id)
+    _, current = _oc_sequence_state(store, code)
+    return f"MT-OC-{code}-{current + 1:03d}"
 
 
 def _order_email_failure(exc: EmailDeliveryError):
@@ -66,9 +207,11 @@ def _order_email_failure(exc: EmailDeliveryError):
 
 
 def _send_order_email(order: dict, message_type: str) -> dict:
-    recipients = _order_recipients(order)
+    recipients = _order_to_recipients(order)
     if not recipients:
         raise ValueError("CUSTOMER_EMAIL_REQUIRED")
+    cc = _normalise_recipients(order.get("cc"))
+    bcc = _normalise_recipients(order.get("bcc"))
     number = escape(str(order.get("order_number") or order.get("_id") or "order"))
     status = escape(str(order.get("status") or "Pending"))
     if message_type == "order_confirmation":
@@ -88,6 +231,7 @@ def _send_order_email(order: dict, message_type: str) -> dict:
         method = current_app.extensions["email_service"].send_order_status
     result = method(
         to=recipients, subject=subject, html=html,
+        cc=cc, bcc=bcc,
         request_id=f"{message_type}-{order.get('_id')}",
     )
     current_app.extensions["store"].insert_one("email_logs", {
@@ -191,34 +335,32 @@ def send_order_status(order_id: str):
 
 
 @bp.get("/quotations/<quotation_id>/order-configuration")
-@permission_required("orders.create")
+@login_required
 def order_configuration(quotation_id: str):
-    quotation = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    store = current_app.extensions["store"]
+    quotation = store.find_one("quotations", {"_id": quotation_id})
     if not quotation:
         return failure("Quotation not found", status=404)
-    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
-    if not enforce_customer(customer_id):
+    if not _can_convert_quotation(current_user() or {}, quotation):
         return failure("Customer access denied", status=403)
-    user = current_app.extensions["store"].find_one("users", {"_id": quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id")}) or {}
+    user = store.find_one("users", {"_id": quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id")}) or {}
     return success({
         "quote": quotation,
-        "defaults": {"payment_terms": quotation.get("payment_terms"), "order_amount": (quotation.get("totals") or {}).get("grand_total"), "salesperson": {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email")}},
+        "defaults": {"oc_number": _preview_oc_number(store, str(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))), "payment_terms": quotation.get("payment_terms"), "order_amount": (quotation.get("totals") or {}).get("grand_total"), "salesperson": {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email")}},
     })
 
 
 @bp.post("/quotations/<quotation_id>/convert-to-order")
-@permission_required("orders.create")
+@login_required
 def convert_quotation(quotation_id: str):
     store = current_app.extensions["store"]
     quotation = store.find_one("quotations", {"_id": quotation_id})
     if not quotation:
         return failure("Quotation not found", status=404)
     quotation_customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
-    # Historical quotations are authorized by quotation ownership/global
-    # permission and do not require the current workspace customer selection.
-    if not enforce_customer(quotation_customer_id):
-        return failure("Customer access denied", status=403)
     user = current_user() or {}
+    if not _can_convert_quotation(user, quotation):
+        return failure("You do not have permission to convert this quotation", status=403)
     payload = request.get_json(silent=True) or {}
     idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or "").strip()[:160]
     if idempotency_key:
@@ -228,7 +370,13 @@ def convert_quotation(quotation_id: str):
     existing = store.find_one("orders", {"quotation_id": quotation_id})
     if existing:
         return failure("Quotation is already linked to an order", status=409)
-    sequence = store.next_counter("order")
+    try:
+        additional_recipients = _additional_recipients(payload)
+        payment_terms = _validated_payment_terms(payload.get("payment_terms"), quotation.get("payment_terms"))
+    except ValueError as exc:
+        return failure(str(exc), status=422, error="INVALID_ORDER_CONFIGURATION")
+    quotation_to, quotation_cc, quotation_bcc = _quotation_recipients(store, quotation)
+    quotation_to = list(dict.fromkeys([*quotation_to, *additional_recipients]))
     now = utcnow()
     salesperson_id = quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id") or user.get("_id")
     salesperson = store.find_one("users", {"_id": salesperson_id}) or {}
@@ -239,7 +387,7 @@ def convert_quotation(quotation_id: str):
     issuer["name"] = "Moneda Technologies"
     issuer["email"] = issuer.get("email") or "business@monedatechnologies.com"
     order_document = {
-        "order_number": str(payload.get("oc_number") or payload.get("order_number") or f"MON_ORD{sequence:05d}").strip()[:80], "quotation_id": quotation_id,
+        "order_number": "", "quotation_id": quotation_id,
         "quotation_number": quotation.get("quotation_number"),
         "lead_id": lead.get("_id") if lead else None,
         "customer_id": quotation_customer_id, "customer_company_id": quotation_customer_id, "company_id": quotation_customer_id,
@@ -250,15 +398,39 @@ def convert_quotation(quotation_id: str):
         "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
-        "totals": quotation["totals"], "order_amount": float(payload.get("order_amount") or (quotation.get("totals") or {}).get("grand_total") or 0),
-        "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payload.get("payment_terms") or quotation.get("payment_terms"),
+        # The quotation's server-calculated grand total is authoritative for
+        # the Order Confirmation and incentive base.  Never trust a client
+        # supplied amount from the conversion form.
+        "totals": quotation["totals"], "order_amount": float((quotation.get("totals") or {}).get("grand_total") or 0),
+        "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payment_terms,
         "oc_date": payload.get("oc_date") or now.date().isoformat(), "document_type": "order_confirmation", "status": "Pending",
-        "notes": payload.get("notes", ""), "cc": payload.get("cc") or [], "bcc": payload.get("bcc") or [],
+        "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
+        "additional_recipients": additional_recipients,
         "history": [{"status": "Pending", "at": now, "by": (current_user() or {}).get("_id")}],
     }
     if idempotency_key:
         order_document["idempotency_key"] = idempotency_key
-    order = store.insert_one("orders", order_document)
+    # Keep the existing preflight check for a friendly 409, then repeat it
+    # while holding a process-local lock so two rapid conversion requests in
+    # this worker cannot both create an Order Confirmation.
+    with _CONVERSION_LOCK:
+        existing = store.find_one("orders", {"quotation_id": quotation_id})
+        if existing:
+            return failure("Quotation is already linked to an order", status=409)
+        try:
+            # Allocate the customer-scoped OC sequence only after the
+            # idempotency check is held under the conversion lock.
+            order_document["order_number"] = _next_oc_number(store, str(quotation_customer_id))
+            order = store.insert_one("orders", order_document)
+        except Exception as exc:
+            # Mongo's unique/index errors (or a concurrent worker) should be
+            # reported as an idempotent conversion conflict, never retried as
+            # a second order creation.
+            if exc.__class__.__name__ == "DuplicateKeyError":
+                existing = store.find_one("orders", {"quotation_id": quotation_id})
+                if existing:
+                    return failure("Quotation is already linked to an order", status=409)
+            raise
     incentive = create_incentive_for_order(store, order, salesperson)
     quotation_history = [*quotation.get("history", []), {"status": "Converted to Order", "at": now, "by": user.get("_id")}]
     store.update_one("quotations", {"_id": quotation_id}, {"status": "Converted to Order", "history": quotation_history})

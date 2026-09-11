@@ -23,7 +23,12 @@ export async function usersPage(): Promise<HTMLElement> {
   const page = pageScaffold("Management", "Users & access", "Assign customer scope and permission-backed roles without email-based exceptions.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
   page.classList.add("users-access-page");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
-  const canManageCustomerAccess = appStore.can("users.update") && appStore.can("customers.view_all");
+  const actorRole = appStore.state.user?.role_id;
+  // The server treats Admin and Superadmin as global customer-scope roles even
+  // when an older session has not yet refreshed the derived permission list.
+  // Keep the users.update check so the UI never advertises mutation access to
+  // an actor who cannot call the protected update endpoint.
+  const canManageCustomerAccess = appStore.can("users.update") && (appStore.can("customers.view_all") || actorRole === "admin" || actorRole === "superadmin");
   const openDevices = async (user: Record<string, unknown>) => {
     const content = document.createElement("div");
     content.innerHTML = '<div class="skeleton-stack"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>';
@@ -86,6 +91,45 @@ export async function usersPage(): Promise<HTMLElement> {
     } catch (error) { content.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Devices unavailable")}</div>`; }
     refreshIcons(content);
   };
+  const openCustomerAccess = (user: Record<string, unknown>, customers: Record<string, unknown>[], reload: () => Promise<void>) => {
+    const name = String(user.name ?? "User");
+    const email = String(user.email ?? "");
+    const content = document.createElement("div");
+    if (user.customer_access_global === true) {
+      content.innerHTML = `<section class="customer-access-readonly"><span class="eyebrow">Customer access</span><h3>ALL CUSTOMERS</h3><p>This user has access to all customers.</p></section>`;
+      openModal(`Customer access Â· ${escapeHtml(name)}`, content, "normal");
+      return;
+    }
+    const assigned = new Set((user.assigned_customer_ids as unknown[] ?? []).map(String));
+    if (!canManageCustomerAccess) {
+      const assignedNames = [...assigned]
+        .map((id) => customers.find((customer) => String(customer._id) === id))
+        .filter(Boolean)
+        .map((customer) => String(customer?.name ?? customer?.company_name ?? "Customer"));
+      content.innerHTML = `<section class="customer-access-readonly"><span class="eyebrow">Customer access</span><h3>${escapeHtml(name)}</h3><p class="form-hint">${escapeHtml(email)}</p><strong>${assigned.size} assigned customer${assigned.size === 1 ? "" : "s"}</strong><p>${assignedNames.length ? escapeHtml(assignedNames.join(", ")) : "No customers assigned."}</p><small class="form-hint">You have read-only access to this scope.</small></section>`;
+      openModal(`Customer access - ${escapeHtml(name)}`, content, "normal");
+      return;
+    }
+    content.innerHTML = `<section class="customer-access-quick"><span class="eyebrow">Customer access</span><h3>${escapeHtml(name)}</h3><p class="form-hint">${escapeHtml(email)}</p><div class="customer-access-modal-heading"><strong>Assigned customers</strong><span data-assigned-count>${assigned.size} selected</span></div><input class="customer-access-search" data-quick-customer-search type="search" placeholder="Search customers..." aria-label="Search customers"><div class="customer-access-options customer-access-modal-options" data-quick-customer-options role="listbox" aria-label="Customers"></div><div class="customer-access-modal-selected"><strong>Selected customers</strong><div class="customer-access-selected" data-quick-selected></div></div><small class="field-error" data-quick-customer-error aria-live="polite"></small><div class="modal-actions"><button type="button" class="button button-quiet" data-quick-customer-cancel>Cancel</button><button type="button" class="button button-primary" data-quick-customer-save>Save assignments</button></div></section>`;
+    const dialog = openModal(`Customer access Â· ${escapeHtml(name)}`, content, "wide");
+    const options = content.querySelector<HTMLElement>("[data-quick-customer-options]");
+    const selected = content.querySelector<HTMLElement>("[data-quick-selected]");
+    const search = content.querySelector<HTMLInputElement>("[data-quick-customer-search]");
+    const render = () => {
+      const term = (search?.value ?? "").trim().toLowerCase();
+      if (options) options.innerHTML = customers.filter((customer) => !term || [customer.name, customer.company_name, customer.customer_code, customer.contact_name, customer.email, customer.country, customer.country_name, (customer.region as Record<string, unknown> | undefined)?.country_name].some((value) => String(value ?? "").toLowerCase().includes(term))).map((customer) => { const id = String(customer._id); const isSelected = assigned.has(id); const country = customer.country_name ?? customer.country ?? (customer.region as Record<string, unknown> | undefined)?.country_name; const currency = customer.preferred_currency ?? customer.default_currency; return `<button type="button" class="customer-access-option${isSelected ? " is-selected" : ""}" data-quick-customer-id="${escapeHtml(id)}" role="option" aria-selected="${isSelected}"><span><b>${isSelected ? "✓ " : "☐ "}${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</b><small>${escapeHtml([country, currency].filter(Boolean).join(" Â· "))}</small></span></button>`; }).join("") || '<span class="muted">No matching customers</span>';
+      if (selected) selected.innerHTML = [...assigned].map((id) => { const customer = customers.find((item) => String(item._id) === id); return customer ? `<span class="customer-access-chip"><span>${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</span><button type="button" data-quick-remove-customer="${escapeHtml(id)}" aria-label="Remove ${escapeHtml(String(customer.name ?? "customer"))}">×</button></span>` : ""; }).join("") || '<span class="muted">No customers assigned</span>';
+      const count = content.querySelector<HTMLElement>("[data-assigned-count]");
+      if (count) count.textContent = `${assigned.size} selected`;
+    };
+    options?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-quick-customer-id]"); if (!button) return; const id = String(button.dataset.quickCustomerId); if (assigned.has(id)) assigned.delete(id); else assigned.add(id); render(); });
+    selected?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-quick-remove-customer]"); if (!button) return; assigned.delete(String(button.dataset.quickRemoveCustomer)); render(); });
+    search?.addEventListener("input", render);
+    content.querySelector<HTMLButtonElement>("[data-quick-customer-cancel]")?.addEventListener("click", () => dialog.close());
+    content.querySelector<HTMLButtonElement>("[data-quick-customer-save]")?.addEventListener("click", async (event) => { const button = event.currentTarget as HTMLButtonElement; button.disabled = true; try { await adminApi.updateUser(String(user._id), { customer_ids: [...assigned] }); dialog.close(); toast("Customer assignments saved"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-quick-customer-error]"); if (node) node.textContent = error instanceof Error ? error.message : "Customer assignments could not be saved"; button.disabled = false; } });
+    render();
+    refreshIcons(content);
+  };
   const editUser = (user: Record<string, unknown>, roles: Record<string, unknown>[], customers: Record<string, unknown>[], reload: () => Promise<void>) => {
     const content = document.createElement("div");
     const assigned = new Set((user.assigned_customer_ids as unknown[] ?? []).map(String));
@@ -94,7 +138,7 @@ export async function usersPage(): Promise<HTMLElement> {
       return ["admin", "superadmin"].includes(roleId) || (role?.permissions as unknown[] | undefined)?.includes("customers.view_all") === true;
     };
     const globalRole = () => roleHasGlobalCustomerAccess(String((content.querySelector('[name="role_id"]') as HTMLSelectElement | null)?.value ?? user.role_id));
-    const customerOptions = (term = "") => customers.filter((customer) => !assigned.has(String(customer._id))).filter((customer) => !term || [customer.name, customer.company_name, customer.customer_code, customer.contact_name, customer.email].some((value) => String(value ?? "").toLowerCase().includes(term))).slice(0, 50).map((customer) => `<button type="button" class="customer-access-option" data-customer-id="${escapeHtml(String(customer._id))}"><span>${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</span><small>${escapeHtml(String(customer.customer_code ?? customer.contact_name ?? customer.email ?? ""))}</small></button>`).join("");
+    const customerOptions = (term = "") => customers.filter((customer) => !assigned.has(String(customer._id))).filter((customer) => !term || [customer.name, customer.company_name, customer.customer_code, customer.contact_name, customer.email, customer.country, customer.country_name, (customer.region as Record<string, unknown> | undefined)?.country_name].some((value) => String(value ?? "").toLowerCase().includes(term))).slice(0, 50).map((customer) => `<button type="button" class="customer-access-option" data-customer-id="${escapeHtml(String(customer._id))}"><span>${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</span><small>${escapeHtml([customer.customer_code, customer.country_name ?? customer.country, customer.preferred_currency ?? customer.default_currency].filter(Boolean).join(" Â· "))}</small></button>`).join("");
     const selectedRows = () => [...assigned].map((id) => {
       const customer = customers.find((item) => String(item._id) === id);
       return customer ? `<span class="customer-access-chip"><span>${escapeHtml(String(customer.name ?? customer.company_name ?? "Customer"))}</span><button type="button" data-remove-customer="${escapeHtml(id)}" aria-label="Remove ${escapeHtml(String(customer.name ?? "customer"))}">×</button></span>` : "";
@@ -107,6 +151,7 @@ export async function usersPage(): Promise<HTMLElement> {
      const incentiveField = canConfigureIncentive ? `<label data-incentive-field ${incentiveRoles.has(initialRoleId) ? "" : 'style="display:none"'}>Incentive Percentage (%)<select name="incentive_percentage">${incentiveOptions.map((rate) => `<option value="${rate}" ${rate === selectedRate ? "selected" : ""}>${rate}%</option>`).join("")}</select><small class="form-hint">Admin, Manager / Sales Admin and User accounts · 0%–6% in 0.5% steps</small></label>` : "";
      content.innerHTML = `<form class="stack-form admin-user-form"><section class="admin-user-section"><span class="eyebrow">User details</span><div class="form-grid"><label>Full name<input name="name" required value="${escapeHtml(String(user.name ?? ""))}"></label><label>Email<input value="${escapeHtml(String(user.email ?? ""))}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(String(user.phone ?? ""))}"></label></div></section><section class="admin-user-section"><span class="eyebrow">Access</span><div class="form-grid"><label>Role<select name="role_id">${roles.map((role) => `<option value="${escapeHtml(String(role._id))}" ${String(role._id) === String(user.role_id) ? "selected" : ""}>${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label><label>Device policy<select name="device_access_mode"><option value="approved_devices_only" ${user.device_access_mode !== "any_authorized_device" ? "selected" : ""}>Approved devices only</option><option value="any_authorized_device" ${user.device_access_mode === "any_authorized_device" ? "selected" : ""}>Any authorized device</option></select></label>${incentiveField}<label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""}><span>Account active</span></label></div></section><section class="admin-user-section admin-user-security" data-device-security><span class="eyebrow">Security &amp; devices</span><div class="device-security-summary"><span class="form-hint">Loading device information...</span></div></section>${canManageCustomerAccess ? `<section class="admin-user-section customer-access-editor" data-customer-access-section><span class="eyebrow">Customer access</span><p class="form-hint" data-customer-access-note>${globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user."}</p><div class="customer-access-actions"><button type="button" class="button button-quiet" data-select-all>Select all</button><button type="button" class="button button-quiet" data-clear-all>Clear all</button></div><input class="customer-access-search" type="search" placeholder="Search name, code, contact or email" aria-label="Search customers"><div class="customer-access-selected" data-selected-customers>${selectedRows() || '<span class="muted">No customers assigned</span>'}</div><div class="customer-access-options" data-customer-options>${customerOptions() || '<span class="muted">No customers found</span>'}</div></section>` : ""}<small class="field-error" data-admin-user-error></small><button class="button button-primary button-full" type="submit">Save user</button></form>`;
      const dialog = openModal("Edit user", content, "wide");
+     dialog.addEventListener("close", () => selectorCleanup?.(), { once: true });
      void adminApi.userDevices(String(user._id)).then((result) => {
        const target = content.querySelector<HTMLElement>("[data-device-security]");
        if (!target) return;
@@ -122,17 +167,60 @@ export async function usersPage(): Promise<HTMLElement> {
        target.querySelector<HTMLElement>(".device-security-summary")!.innerHTML = `<strong>${items.length} trusted device${items.length === 1 ? "" : "s"}</strong><span>${counts.approved} approved · ${counts.pending} pending · ${counts.denied} denied · ${counts.revoked} revoked</span><article class="device-security-card"><b>${current ? "CURRENT DEVICE" : "RECENT DEVICE"}</b><strong>${escapeHtml(client)}</strong><span>${escapeHtml(locationLabel)}</span><small>Approximate network location</small>${recent.last_activity_at || recent.last_seen_at ? `<small>Last activity: ${escapeHtml(String(recent.last_activity_at || recent.last_seen_at))}</small>` : ""}<span class="device-security-status device-status-${escapeHtml(status)}">STATUS: ${escapeHtml(status.toUpperCase())}</span></article><button class="button button-quiet" type="button" data-view-user-devices>View trusted devices</button>`;
        target.querySelector<HTMLButtonElement>("[data-view-user-devices]")?.addEventListener("click", () => void openDevices(user));
      }).catch(() => { const target = content.querySelector<HTMLElement>("[data-device-security] .device-security-summary"); if (target) target.innerHTML = '<span class="form-hint">Device information unavailable.</span>'; });
-     const renderAssignments = () => {
-      const selected = content.querySelector<HTMLElement>("[data-selected-customers]");
-      const options = content.querySelector<HTMLElement>("[data-customer-options]");
-      if (selected) selected.innerHTML = selectedRows() || '<span class="muted">No customers assigned</span>';
-      if (options) {
-        const term = (content.querySelector<HTMLInputElement>(".customer-access-search")?.value ?? "").trim().toLowerCase();
-        options.innerHTML = customerOptions(term) || '<span class="muted">No matching customers</span>';
-      }
-      const note = content.querySelector<HTMLElement>("[data-customer-access-note]");
-      if (note) note.textContent = globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user.";
-    };
+      const renderAssignments = () => {
+       const selected = content.querySelector<HTMLElement>("[data-selected-customers]");
+       const options = content.querySelector<HTMLElement>("[data-customer-options]");
+       const isGlobal = globalRole();
+       if (selected) selected.innerHTML = isGlobal ? '<span class="customer-access-global">ALL CUSTOMERS</span>' : (selectedRows() || '<span class="muted">No customers assigned</span>');
+       if (options) {
+         const term = (content.querySelector<HTMLInputElement>(".customer-access-search")?.value ?? "").trim().toLowerCase();
+         options.innerHTML = customerOptions(term) || '<span class="muted">No matching customers</span>';
+       }
+       const note = content.querySelector<HTMLElement>("[data-customer-access-note]");
+       if (note) note.textContent = isGlobal ? "This role has global access to all customers. Specific assignments are not required." : "Only selected customers are accessible to this user.";
+       const label = content.querySelector<HTMLElement>("[data-customer-selector-label]");
+       if (label) label.textContent = isGlobal ? "All customers" : assigned.size ? `${assigned.size} customer${assigned.size === 1 ? "" : "s"} selected` : "Search or select customers...";
+       const trigger = content.querySelector<HTMLButtonElement>("[data-customer-selector-trigger]");
+       if (trigger) trigger.disabled = isGlobal;
+       content.querySelectorAll<HTMLButtonElement>("[data-select-all], [data-clear-all]").forEach((button) => { button.disabled = isGlobal; });
+      };
+    const customerSection = content.querySelector<HTMLElement>("[data-customer-access-section]");
+    const securitySection = content.querySelector<HTMLElement>("[data-device-security]");
+    const customerSearch = content.querySelector<HTMLInputElement>(".customer-access-search");
+    const customerOptionsNode = content.querySelector<HTMLElement>("[data-customer-options]");
+    let selectorCleanup: (() => void) | undefined;
+    if (customerSection && securitySection && securitySection.parentElement === customerSection.parentElement) securitySection.before(customerSection);
+    if (customerSection && customerSearch && customerOptionsNode) {
+      const selector = document.createElement("div");
+      selector.className = "customer-access-selector";
+      selector.dataset.customerSelector = "true";
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "customer-access-trigger";
+      trigger.dataset.customerSelectorTrigger = "true";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.innerHTML = '<span data-customer-selector-label>Search or select customers...</span><i data-lucide="chevron-down" aria-hidden="true"></i>';
+      const dropdown = document.createElement("div");
+      dropdown.className = "customer-access-dropdown";
+      dropdown.dataset.customerSelectorDropdown = "true";
+      dropdown.hidden = true;
+      customerSearch.dataset.customerAccessSearch = "true";
+      customerOptionsNode.setAttribute("role", "listbox");
+      customerOptionsNode.setAttribute("aria-label", "Available customers");
+      selector.append(trigger, dropdown);
+      dropdown.append(customerSearch, customerOptionsNode);
+      customerSection.append(selector);
+      const closeSelector = () => { dropdown.hidden = true; trigger.setAttribute("aria-expanded", "false"); };
+      const openSelector = () => { dropdown.hidden = false; trigger.setAttribute("aria-expanded", "true"); window.setTimeout(() => customerSearch.focus(), 0); };
+      trigger.addEventListener("click", () => { if (dropdown.hidden) openSelector(); else closeSelector(); });
+      const outsidePointerDown = (event: PointerEvent) => { if (!selector.contains(event.target as Node)) closeSelector(); };
+      const escapeKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !dropdown.hidden) { closeSelector(); trigger.focus(); } };
+      document.addEventListener("pointerdown", outsidePointerDown);
+      content.addEventListener("keydown", escapeKey);
+      selectorCleanup = () => { document.removeEventListener("pointerdown", outsidePointerDown); content.removeEventListener("keydown", escapeKey); };
+      (customerSection as HTMLElement).dataset.customerSelectorReady = "true";
+    }
     content.querySelector("[data-customer-options]")?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-customer-id]"); if (!button) return; assigned.add(String(button.dataset.customerId)); renderAssignments(); });
     content.querySelector("[data-selected-customers]")?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove-customer]"); if (!button) return; assigned.delete(String(button.dataset.removeCustomer)); renderAssignments(); });
     content.querySelector("[data-select-all]")?.addEventListener("click", () => { customers.forEach((customer) => assigned.add(String(customer._id))); renderAssignments(); });
@@ -142,10 +230,11 @@ export async function usersPage(): Promise<HTMLElement> {
       const field = content.querySelector<HTMLElement>("[data-incentive-field]");
       if (field) field.style.display = incentiveRoles.has(roleId) ? "" : "none";
     };
-    content.querySelector<HTMLInputElement>(".customer-access-search")?.addEventListener("input", renderAssignments);
-    content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", () => { renderAssignments(); syncIncentiveField(); });
-    syncIncentiveField();
-    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const selectedRoleId = String(data.get("role_id") ?? ""); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: selectedRoleId, device_access_mode: data.get("device_access_mode"), ...(canConfigureIncentive ? { incentive_percentage: incentiveRoles.has(selectedRoleId) ? data.get("incentive_percentage") || null : null } : {}), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
+     content.querySelector<HTMLInputElement>(".customer-access-search")?.addEventListener("input", renderAssignments);
+     content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", () => { renderAssignments(); syncIncentiveField(); });
+     syncIncentiveField();
+      renderAssignments();
+     content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const selectedRoleId = String(data.get("role_id") ?? ""); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: selectedRoleId, device_access_mode: data.get("device_access_mode"), ...(canConfigureIncentive ? { incentive_percentage: incentiveRoles.has(selectedRoleId) ? data.get("incentive_percentage") || null : null } : {}), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
      refreshIcons(content);
   };
   let availableRoles: Record<string, unknown>[] = [];
@@ -198,7 +287,17 @@ export async function usersPage(): Promise<HTMLElement> {
     availableRoles = roles.items;
     const customers = customerResult.items as unknown as Record<string, unknown>[];
      body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
-    body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => { const user = users.items.find((item) => String(item._id) === button.dataset.id); if (!user) return; if (button.classList.contains("device-count-button")) button.addEventListener("click", () => void openDevices(user)); else if (button.classList.contains("edit-user") || canManageCustomerAccess) button.addEventListener("click", () => editUser(user, roles.items, customers, load)); });
+    body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => {
+      const user = users.items.find((item) => String(item._id) === button.dataset.id);
+      if (!user) return;
+      button.type = "button";
+      if (button.classList.contains("device-count-button")) button.addEventListener("click", () => void openDevices(user));
+      else if (button.classList.contains("customer-count-button")) {
+        button.setAttribute("aria-label", `View customer access for ${String(user.name ?? "user")}`);
+        button.title = "View customer access";
+        button.addEventListener("click", () => openCustomerAccess(user, customers, load));
+      } else button.addEventListener("click", () => editUser(user, roles.items, customers, load));
+    });
     refreshIcons(body);
   };
   try { await load(); }

@@ -32,6 +32,13 @@ def incentive_rate_for_user(user: dict[str, Any] | None) -> float:
 
 def create_incentive_for_order(store: Any, order: dict[str, Any], salesperson: dict[str, Any] | None) -> dict[str, Any]:
     """Create the one immutable rate snapshot associated with an OC."""
+    # Conversion requests can be retried after a network timeout.  The order
+    # identifier is the natural idempotency key for its incentive snapshot;
+    # never create a second incentive for the same Order Confirmation.
+    order_id = order.get("_id")
+    existing = store.find_one("incentives", {"order_id": order_id}) if order_id else None
+    if existing:
+        return existing
     amount = money(order.get("order_amount", (order.get("totals") or {}).get("grand_total")))
     rate = incentive_rate_for_user(salesperson)
     gross = money(amount * rate / 100)
@@ -65,6 +72,10 @@ def activate_incentive(store: Any, order_id: str, confirmed_at) -> dict[str, Any
     incentive = store.find_one("incentives", {"order_id": order_id})
     if not incentive:
         return None
+    # Payment confirmation may be retried.  Activation is a one-way, repeatable
+    # transition and must not rewrite an already activated/paid snapshot.
+    if incentive.get("incentive_activation_date") or incentive.get("payment_confirmation_date"):
+        return incentive
     due = confirmed_at + timedelta(days=30)
     return store.update_one("incentives", {"_id": incentive["_id"]}, {
         "status": "ACTIVE",
