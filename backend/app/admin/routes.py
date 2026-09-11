@@ -9,13 +9,22 @@ import secrets
 from typing import Any
 
 from flask import Blueprint, current_app, request, session
+from werkzeug.security import generate_password_hash
 
 from app.api.responses import failure, success
+from app.auth.policy import (
+    SIGNUP_EMAIL_DOMAIN_MESSAGE,
+    SIGNUP_PASSWORD_POLICY_MESSAGE,
+    is_allowed_signup_email,
+    is_valid_signup_password,
+    normalize_signup_email,
+)
+from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import can_view_all_customers, customer_access_ids_for_user, current_user, customer_record, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
-from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins
+from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 
 
 bp = Blueprint("admin", __name__, url_prefix="/api")
@@ -469,7 +478,10 @@ def _change_device_status(user_id: str, device_id: str, target: str, *, reason: 
     if target == "reinstated":
         # A reinstated device is pending again and gets a fresh one-time
         # approval request; it is never silently trusted.
-        _notify_superadmins(user, updated, reinstated=True)
+        attempt, _ = _create_login_approval(user, updated, now=now)
+        updated = {**updated, **store.find_one("devices", {"_id": updated["_id"]})}
+        updated["login_approval"] = attempt
+        _notify_superadmins(user, updated, reinstated=True, attempt=attempt)
         notify_reinstatement(user, updated, actor_name=str(actor.get("name") or actor.get("username") or "Superadmin"), reason=reason)
     elif target in {APPROVED, DENIED}:
         notify_device_decision(user, updated, approved=target == APPROVED, reason=reason)
@@ -558,16 +570,51 @@ def delete_denied_device(user_id: str, device_id: str):
 @permission_required("users.create")
 def create_user():
     payload = request.get_json(silent=True) or {}
-    email = str(payload.get("email", "")).strip().lower()
+    actor = current_user() or {}
+    if actor.get("role_id") != "superadmin" or actor.get("active") is False:
+        return failure(
+            "Only a Superadmin can invite users.", status=403,
+            error="superadmin_required",
+        )
+
     name = str(payload.get("name", "")).strip()
+    username = str(payload.get("username", "")).strip()
+    username_normalized = username.casefold()
+    raw_email = str(payload.get("email", "")).strip()
+    email = normalize_signup_email(raw_email)
+    password = str(payload.get("password", ""))
+    confirm_password = str(payload.get("confirm_password", ""))
+    role_id = str(payload.get("role_id", "")).strip()
     store = current_app.extensions["store"]
-    if not email or "@" not in email or len(name) < 2:
-        return failure("A valid name and email are required", status=422)
-    if store.find_one("users", {"email": email}):
-        return failure("User already exists", status=409)
-    role_id = payload.get("role_id", "user")
-    if not store.find_one("roles", {"_id": role_id}):
-        return failure("Role not found", status=422)
+
+    if len(name) < 2:
+        return failure("Name must contain at least 2 characters.", status=422, error="invalid_name")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{2,79}", username):
+        return failure(
+            "Username must contain 3 to 80 characters and may use only letters, numbers, periods, underscores, and hyphens.",
+            status=422, error="invalid_username",
+        )
+    if not email:
+        return failure("Enter a valid email address.", status=422, error="invalid_email")
+    if not is_allowed_signup_email(email, current_app.config.get("ALLOWED_SIGNUP_EMAIL_DOMAINS")):
+        return failure(SIGNUP_EMAIL_DOMAIN_MESSAGE, status=422, error="signup_email_domain_not_allowed")
+    if password != confirm_password:
+        return failure("Passwords do not match.", status=422, error="password_mismatch")
+    if not is_valid_signup_password(password):
+        return failure(SIGNUP_PASSWORD_POLICY_MESSAGE, status=422, error="password_policy")
+    role = store.find_one("roles", {"_id": role_id})
+    if not role:
+        return failure("Select a valid role.", status=422, error="invalid_role")
+
+    if store.find_one("users", {"username_normalized": username_normalized}) or store.find_one(
+        "users", {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
+    ):
+        return failure("Username is already in use.", status=409, error="username_in_use")
+    if store.find_one("users", {"email": email}) or store.find_one(
+        "users", {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+    ):
+        return failure("An account already exists for this email address.", status=409, error="email_in_use")
+
     requested_ids = payload.get("customer_ids") or payload.get("customer_company_ids") or payload.get("company_ids", [])
     if not isinstance(requested_ids, list):
         return failure("Customer assignments must be a list", status=422)
@@ -582,17 +629,110 @@ def create_user():
     device_access_mode = str(payload.get("device_access_mode") or current_app.config.get("DEVICE_ACCESS_MODE", "approved_devices_only"))
     if device_access_mode not in {"any_authorized_device", "approved_devices_only"}:
         return failure("Invalid device access policy", status=422)
-    row = store.insert_one("users", {"email": email, "name": name, "phone": payload.get("phone", ""),
-        "role_id": role_id, "customer_ids": customer_ids, "customer_company_ids": customer_ids, "company_ids": customer_ids, "active": True, "device_access_mode": device_access_mode})
+
+    document = {
+        "email": email,
+        "email_verified": True,
+        "name": name,
+        "username": username,
+        "username_normalized": username_normalized,
+        "password_hash": generate_password_hash(password),
+        "phone": "",
+        "role_id": role_id,
+        "customer_ids": customer_ids,
+        "customer_company_ids": customer_ids,
+        "company_ids": customer_ids,
+        "active": True,
+        "device_access_mode": device_access_mode,
+        "invitation_email_status": "pending",
+    }
+    try:
+        row = store.insert_one("users", document)
+    except Exception as exc:
+        if exc.__class__.__name__ == "DuplicateKeyError":
+            return failure(
+                "Username or email is already in use.", status=409,
+                error="account_exists",
+            )
+        current_app.logger.exception("user_invite stage=user_creation result=FAIL")
+        return failure("User account could not be created.", status=500, error="user_creation_failed")
+
     for customer_id in customer_ids:
         customer = customer_record(customer_id)
         assigned = list(dict.fromkeys(str(value) for value in (customer or {}).get("assigned_user_ids", []) if value))
         if row["_id"] not in assigned:
             assigned.append(row["_id"])
             store.update_one("customers", {"_id": customer_id}, {"assigned_user_ids": assigned})
-            audit("customer_assigned_to_user", "customer", customer_id, {"actor_user_id": (current_user() or {}).get("_id"), "target_user_id": row["_id"]})
-    audit("user.create", "user", str(row["_id"]))
-    return success(row, "User invited. They can sign in with email OTP.", 201)
+            audit("customer_assigned_to_user", "customer", customer_id, {"actor_user_id": actor.get("_id"), "target_user_id": row["_id"]})
+
+    diagnostic_id = email_diagnostic_id()
+    email_sent = False
+    email_error_code = None
+    try:
+        current_app.extensions["email_service"].send_user_invitation(
+            to=[email],
+            name=name,
+            username=username,
+            initial_password=password,
+            role_name=str(role.get("display_name") or role_id),
+            login_url=f"{str(current_app.config.get('APP_BASE_URL') or 'http://localhost:3005').rstrip('/')}/login",
+            request_id=diagnostic_id,
+        )
+        email_sent = True
+    except EmailDeliveryError as exc:
+        diagnostic_id = exc.diagnostic_id
+        email_error_code = exc.error_code
+        current_app.logger.error(
+            "[%s] user_invite stage=invitation_email result=FAIL error_code=%s",
+            diagnostic_id, email_error_code,
+        )
+    except Exception:
+        email_error_code = "INVITATION_EMAIL_FAILED"
+        current_app.logger.exception(
+            "[%s] user_invite stage=invitation_email result=FAIL error_code=%s",
+            diagnostic_id, email_error_code,
+        )
+    finally:
+        # Drop the route's reference as soon as hashing and delivery complete.
+        password = ""
+        confirm_password = ""
+
+    invitation_changes = {
+        "invitation_email_status": "sent" if email_sent else "failed",
+        "invitation_email_diagnostic_id": diagnostic_id,
+    }
+    if email_sent:
+        invitation_changes["invitation_email_sent_at"] = utcnow()
+    row = store.update_one("users", {"_id": row["_id"]}, invitation_changes) or row
+    audit("user.invite", "user", str(row["_id"]), {
+        "actor_user_id": actor.get("_id"),
+        "target_user_id": row["_id"],
+        "email": email,
+        "username": username,
+        "role_id": role_id,
+        "customer_ids": customer_ids,
+        "invitation_email_status": invitation_changes["invitation_email_status"],
+        "diagnostic_id": diagnostic_id,
+    })
+
+    public_row = dict(row)
+    public_row.pop("password_hash", None)
+    result = {
+        "user": public_row,
+        "invitation": {
+            "email_sent": email_sent,
+            "status": invitation_changes["invitation_email_status"],
+            "diagnostic_id": diagnostic_id,
+            **({"error_code": email_error_code} if email_error_code else {}),
+        },
+    }
+    if email_sent:
+        return success(result, "User invited successfully.", 201)
+    return success(
+        result,
+        "User account created, but the invitation email could not be sent.",
+        201,
+    )
 
 
 @bp.patch("/admin/users/<user_id>")

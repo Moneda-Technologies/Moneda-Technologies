@@ -20,6 +20,10 @@ PENDING = "pending"
 APPROVED = "approved"
 REVOKED = "revoked"
 DENIED = "denied"
+APPROVAL_PENDING = "pending"
+APPROVAL_APPROVED = "approved"
+APPROVAL_DECLINED = "declined"
+APPROVAL_EXPIRED = "expired"
 
 
 def _history_entry(action: str, device: dict[str, Any], *, previous_status: str | None,
@@ -65,10 +69,10 @@ def _device_name() -> str:
 
 def _device_type() -> str:
     ua = request.user_agent.string.lower()
-    if any(value in ua for value in ("mobile", "iphone", "android")):
-        return "Mobile"
     if "tablet" in ua or "ipad" in ua:
         return "Tablet"
+    if any(value in ua for value in ("mobile", "iphone", "android")):
+        return "Mobile"
     return "Desktop"
 
 
@@ -79,12 +83,35 @@ def _client_details() -> dict[str, str]:
     not fingerprint hardware or persist a device model.
     """
     ua = request.user_agent.string or ""
-    browser = request.user_agent.browser or "Browser"
-    browser_version = request.user_agent.version or ""
-    if not browser_version:
-        match = re.search(r"(?:Chrome|Firefox|Edg|Version|Safari|OPR)[/ ]([\d.]+)", ua, re.I)
-        browser_version = match.group(1) if match else ""
-    platform = request.user_agent.platform or "Unknown"
+    browser = "Unknown browser"
+    browser_version = ""
+    browser_patterns = (
+        ("Edge", r"(?:Edg|Edge)/([\d.]+)"),
+        ("Opera", r"(?:OPR|Opera)/([\d.]+)"),
+        ("Chrome", r"(?:Chrome|CriOS)/([\d.]+)"),
+        ("Firefox", r"(?:Firefox|FxiOS)/([\d.]+)"),
+        ("Safari", r"Version/([\d.]+).*(?:Safari|Mobile)"),
+    )
+    for candidate, pattern in browser_patterns:
+        match = re.search(pattern, ua, re.I)
+        if match:
+            browser, browser_version = candidate, match.group(1)
+            break
+    if browser == "Unknown browser" and request.user_agent.browser:
+        browser = str(request.user_agent.browser).title()
+        browser_version = str(request.user_agent.version or "")
+    platform = "Other"
+    platform_patterns = (
+        ("iOS", r"(?:iPhone|iPad|iPod)"),
+        ("Android", r"Android"),
+        ("Windows", r"Windows NT"),
+        ("macOS", r"Macintosh|Mac OS X"),
+        ("Linux", r"Linux"),
+    )
+    for candidate, pattern in platform_patterns:
+        if re.search(pattern, ua, re.I):
+            platform = candidate
+            break
     os_version = ""
     if platform.lower() == "windows":
         match = re.search(r"Windows NT ([\d.]+)", ua, re.I)
@@ -99,9 +126,35 @@ def _client_details() -> dict[str, str]:
         match = re.search(r"(?:OS|CPU (?:iPhone )?OS) ([\d_]+)", ua, re.I)
         os_version = match.group(1).replace("_", ".") if match else ""
     return {
-        "browser_name": browser.title(), "browser_version": str(browser_version or ""),
-        "os_name": platform.title(), "os_version": os_version,
+        "browser_name": browser, "browser_version": str(browser_version or ""),
+        "os_name": platform, "os_version": os_version,
     }
+
+
+def _create_login_approval(user: dict[str, Any], device: dict[str, Any], *, now=None) -> tuple[dict[str, Any], str]:
+    """Create an isolated, one-time approval transaction for this login."""
+    now = now or utcnow()
+    token = secrets.token_urlsafe(32)
+    expires = now + timedelta(minutes=20)
+    attempt_id = f"LGA-{secrets.token_hex(8).upper()}"
+    attempt = current_app.extensions["store"].insert_one("login_approvals", {
+        "_id": attempt_id,
+        "user_id": str(user.get("_id")),
+        "device_id": device.get("_id"),
+        "token_hash": _token_hash(token),
+        "status": APPROVAL_PENDING,
+        "created_at": now,
+        "expires_at": expires,
+    })
+    current_app.extensions["store"].update_one("devices", {"_id": device["_id"]}, {
+        "approval_request_id": attempt_id,
+        "approval_attempt_id": attempt_id,
+        "approval_token_hash": _token_hash(token),
+        "approval_token_expires_at": expires,
+        "approval_state": APPROVAL_PENDING,
+    })
+    attempt["token"] = token
+    return attempt, token
 
 
 def _device_from_request(user: dict[str, Any]) -> dict[str, Any] | None:
@@ -161,6 +214,7 @@ def ensure_login_device(user: dict[str, Any]) -> dict[str, Any]:
             store.update_one("devices", {"_id": existing["_id"]}, {
                 "last_seen_at": now, "last_activity_at": now, "last_ip": public_ip, "public_ip": public_ip,
                 "user_agent": request.user_agent.string[:300],
+                "browser": client["browser_name"], "operating_system": client["os_name"],
                 **client, **location, "location": location, "last_login_at": now,
                 "last_login_result": str(existing.get("device_status") or PENDING),
             })
@@ -173,15 +227,23 @@ def ensure_login_device(user: dict[str, Any]) -> dict[str, Any]:
         store.update_one("devices", {"_id": existing["_id"]}, {
             "last_seen_at": now, "device_history": device["device_history"],
         })
-        if device.get("device_status") == PENDING and token_expires and token_expires <= now:
-            _notify_superadmins(user, device)
+        if device.get("device_status") == PENDING:
+            # Every authenticated pending login gets its own server-side
+            # transaction.  This prevents one browser attempt from replacing
+            # or authorizing a different attempt.
+            attempt, _ = _create_login_approval(user, device, now=now)
+            device = {**device, **current_app.extensions["store"].find_one("devices", {"_id": device["_id"]})}
+            device["login_approval"] = attempt
+            _notify_superadmins(user, device, attempt=attempt)
     else:
         status = APPROVED if policy_for(user) == "any_authorized_device" else PENDING
         device = store.insert_one("devices", {
-            "user_id": user_id, "token_hash": token_hash, "device_ref": f"DVC-{secrets.token_hex(4).upper()}", "device_name": _device_name(),
+            "user_id": user_id, "token_hash": token_hash, "device_ref": f"DVC-{secrets.token_hex(4).upper()}",
+            "device_name": f"{client['browser_name']} on {client['os_name']}",
             "device_status": status, "registered_at": now, "last_seen_at": now,
+            "approval_state": APPROVAL_APPROVED if status == APPROVED else APPROVAL_PENDING,
             "last_ip": public_ip, "public_ip": public_ip, "user_agent": request.user_agent.string[:300],
-            "browser": request.user_agent.browser, "operating_system": request.user_agent.platform,
+            "browser": client["browser_name"], "operating_system": client["os_name"],
             "device_type": _device_type(), "last_activity_at": now,
             **client, "last_login_at": now, "last_login_result": status,
             "approval_required": status == PENDING,
@@ -194,7 +256,10 @@ def ensure_login_device(user: dict[str, Any]) -> dict[str, Any]:
             audit("device_approval_requested", "device", str(device["_id"]), {"user_id": user_id})
             device["device_history"].append(_history_entry("DEVICE_APPROVAL_REQUESTED", device, previous_status=status, new_status=PENDING))
             store.update_one("devices", {"_id": device["_id"]}, {"device_history": device["device_history"]})
-            _notify_superadmins(user, device)
+            attempt, _ = _create_login_approval(user, device, now=now)
+            device = {**device, **current_app.extensions["store"].find_one("devices", {"_id": device["_id"]})}
+            device["login_approval"] = attempt
+            _notify_superadmins(user, device, attempt=attempt)
     return device
 
 
@@ -203,10 +268,13 @@ def establish_device_session(user: dict[str, Any]) -> dict[str, Any]:
     status = str(device.get("device_status") or PENDING)
     session["device_id"] = device["_id"]
     session["device_status"] = status
+    attempt = device.get("login_approval") or {}
+    if attempt.get("_id"):
+        session["login_approval_id"] = attempt["_id"]
     session["device_access_mode"] = policy_for(user)
     if str(user.get("role_id") or "") == "superadmin":
         audit("superadmin_device_gate_exempted", "user", str(user.get("_id")), {"device_id": str(device.get("_id"))})
-    return {"device_status": status, "application_access": status == APPROVED}
+    return {"device_status": status, "application_access": status == APPROVED, "login_approval_id": attempt.get("_id")}
 
 
 def current_device(user: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -226,6 +294,8 @@ def device_access_status(user: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "device_status": status, "application_access": status == APPROVED,
         "approval_request_id": (device or {}).get("approval_request_id"),
+        "approval_state": (device or {}).get("approval_state"),
+        "login_approval_id": session.get("login_approval_id"),
         "device_name": (device or {}).get("device_name"),
         "registered_at": (device or {}).get("registered_at"),
         "reinstated_at": (device or {}).get("reinstated_at"),
@@ -270,6 +340,7 @@ def safe_device(row: dict[str, Any], *, current_session: bool = False, include_p
         "denied_at", "denied_by_name", "denial_reason", "last_seen_at", "last_login_at", "last_login_result",
         "browser", "operating_system", "device_type", "revoked_at", "revoked_by_name", "revoke_reason",
         "reinstated_at", "reinstated_by_name", "reinstatement_reason", "previous_status", "new_status",
+        "approval_state", "approval_token_expires_at",
     )}, "browser_name": browser_name, "browser_version": row.get("browser_version") or "",
         "os_name": os_name, "os_version": row.get("os_version") or "", "approval_required": row.get("approval_required", row.get("device_status") == PENDING),
         "location": location, "city": location.get("city"), "state": location.get("state"),
@@ -298,8 +369,8 @@ def _insert_notifications(user_ids: list[str], *, notification_type: str, title:
 
 
 def _location_label(device: dict[str, Any] | None = None) -> str:
-    # IP geolocation is not enabled; never claim a location that has not been
-    # reliably resolved by a trusted server-side integration.
+    # Location is approximate and resolved server-side from a validated public
+    # IP. Never claim a location that has not been returned by the provider.
     location = (device or {}).get("location")
     if isinstance(location, dict):
         label = ", ".join(str(location.get(key)) for key in ("city", "state", "country") if location.get(key))
@@ -344,6 +415,21 @@ def notify_login_attempt(user: dict[str, Any], device: dict[str, Any], status: s
     admin_rows, _ = current_app.extensions["store"].list("users", {"role_id": "superadmin", "active": True}, limit=500)
     _insert_notifications([str(row.get("_id")) for row in admin_rows], notification_type="device_login_attempt", title="User login detected", message=f"{user.get('name') or 'User'} · {device.get('browser') or 'Browser'} · {device.get('operating_system') or 'Unknown OS'} · {device.get('device_type') or 'Desktop'} · {status_labels.get(status, status)}", device=device)
     if not recipients:
+        return
+    # A pending device already has a canonical approval email with the full
+    # device context and Accept/Decline controls. Sending the generic login
+    # alert as well creates two emails for the same login attempt. Keep the
+    # audit and in-app notification above, but reserve email for the approval
+    # workflow. Approved/denied/revoked logins retain the normal alert.
+    approval_required = status == PENDING and bool(
+        device.get("login_approval") or device.get("login_approval_id") or
+        device.get("approval_attempt_id") or device.get("approval_request_id")
+    )
+    if approval_required:
+        current_app.logger.info(
+            "device login notification email skipped reason=approval_email_canonical device_id=%s",
+            device_id,
+        )
         return
     from html import escape
     browser = escape(str(device.get("browser") or "Browser"))
@@ -421,28 +507,42 @@ def notify_device_revocation(user: dict[str, Any], device: dict[str, Any]) -> No
         _send_security_email(recipients=[email], subject=subject, html=f"<h2>Your Moneda device was revoked</h2><p>{details}</p><p>Sign in again to request approval for this device.</p>", request_id=f"DVCUSERREVOKE-{secrets.token_hex(5).upper()}")
 
 
-def _notify_superadmins(user: dict[str, Any], device: dict[str, Any], *, reinstated: bool = False) -> None:
-    """Create one expiring decision token and notify all active Superadmins."""
+def _notify_superadmins(user: dict[str, Any], device: dict[str, Any], *, reinstated: bool = False,
+                        attempt: dict[str, Any] | None = None) -> None:
+    """Notify active Superadmins with one-time Accept/Decline links."""
     store = current_app.extensions["store"]
-    token = secrets.token_urlsafe(32)
-    expires = utcnow() + timedelta(hours=24)
-    request_id = f"DVC-{secrets.token_hex(4).upper()}"
-    approval_changes = {
-        "approval_request_id": request_id, "approval_token_hash": _token_hash(token),
-        "approval_token_expires_at": expires,
-    }
-    # device_ref is the stable public identifier used by the admin UI. Only
-    # backfill it for legacy records; each approval request gets its own ID.
-    if not device.get("device_ref"):
-        approval_changes["device_ref"] = request_id
-    updated = store.update_one("devices", {"_id": device["_id"], "device_status": PENDING}, approval_changes) or device
+    attempt = attempt or device.get("login_approval") or {}
+    token = str(attempt.get("token") or "")
+    if not token:
+        return
+    request_id = str(attempt.get("_id") or device.get("approval_request_id") or f"DVC-{secrets.token_hex(4).upper()}")
+    updated = device
     base = str(current_app.config.get("APP_BASE_URL") or "http://localhost:3005").rstrip("/")
     from urllib.parse import quote
+    # Keep the established public route for existing mail clients; the same
+    # handler is also available at /api/v1/auth/login-approval/<token>.
     action_url = f"{base}/api/v1/device-approval/{quote(token, safe='')}"
     admins, _ = store.list("users", {"role_id": "superadmin", "active": True}, limit=500)
     recipients = [str(row.get("email") or "").strip().lower() for row in admins if row.get("email")]
     if not recipients:
         return
+    # Approval links are one-time capabilities, so their notification must be
+    # idempotent as well. Claim this attempt before sending; duplicate calls
+    # (retries, double submits, or repeated handlers) will not send another
+    # email for the same login approval. A failed send releases the claim so a
+    # later retry can deliver it.
+    attempt_id = str(attempt.get("_id") or "")
+    if attempt_id:
+        claimed = store.update_one(
+            "login_approvals",
+            {"_id": attempt_id, "status": APPROVAL_PENDING, "approval_email_sent_at": {"$exists": False}},
+            {"approval_email_sent_at": utcnow()},
+        )
+        if not claimed:
+            current_app.logger.info(
+                "device approval notification skipped reason=already_sent request_id=%s", request_id,
+            )
+            return
     from html import escape
     browser = escape(str(updated.get("browser") or "Browser"))
     operating_system = escape(str(updated.get("operating_system") or "Unknown"))
@@ -459,12 +559,15 @@ def _notify_superadmins(user: dict[str, Any], device: dict[str, Any], *, reinsta
              f"<strong>Original registration:</strong> {escape(str(updated.get('registered_at') or utcnow()))}<br>"
             + (f"<strong>Reinstated by:</strong> {escape(str(updated.get('reinstated_by_name') or 'Moneda administrator'))}<br><strong>Reinstatement reason:</strong> {escape(str(updated.get('reinstatement_reason') or ''))}<br>" if reinstated else "")
             + "<strong>Current status:</strong> Pending approval</p>"
-            f"<p><a href='{action_url}?action=approve'>Approve device</a> &nbsp; <a href='{action_url}?action=deny'>Deny device</a></p>"
-            f"<p>Request ID: {escape(request_id)}</p></div>")
+            f"<p><a href='{action_url}?action=approve' style='display:inline-block;padding:12px 18px;background:#16865b;color:#fff;text-decoration:none;border-radius:6px;font-weight:700'>Accept Login</a> &nbsp; "
+            f"<a href='{action_url}?action=deny' style='display:inline-block;padding:12px 18px;background:#b42318;color:#fff;text-decoration:none;border-radius:6px;font-weight:700'>Decline Login</a></p></div>")
     try:
         current_app.extensions["email_service"].send(
-            purpose="general", to=recipients, subject="New Moneda device approval required",
+            purpose="general", to=recipients,
+            subject=("Device reinstated - approval required" if reinstated else "New Moneda device approval required"),
             html=body, request_id=request_id,
         )
     except Exception:
+        if attempt_id:
+            store.unset_many("login_approvals", {"_id": attempt_id}, ["approval_email_sent_at"])
         current_app.logger.exception("device approval notification failed request_id=%s", request_id)

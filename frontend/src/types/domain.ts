@@ -216,7 +216,7 @@ export interface PriceLine {
   display_final_total?: number;
   master_unit_price: number;
   base_unit_price_master: number;
-  adjustments: Array<{ type: string; label: string; amount_master: number; quantity?: number }>;
+  adjustments: Array<{ type: string; label: string; amount_master: number; quantity?: number; article_no?: string; product_id?: string }>;
   area_sqm?: number;
   price_per_sheet_eur?: number;
   price_per_box_eur?: number;

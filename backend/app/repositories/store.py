@@ -203,6 +203,9 @@ class MongoStore:
         self.db.oauth_states.create_index("transaction_hash", unique=True, sparse=True)
         self.db.devices.create_index([("user_id", ASCENDING), ("token_hash", ASCENDING)], unique=True)
         self.db.devices.create_index([("user_id", ASCENDING), ("device_status", ASCENDING)])
+        self.db.login_approvals.create_index("expires_at", expireAfterSeconds=0)
+        self.db.login_approvals.create_index("token_hash", unique=True)
+        self.db.login_approvals.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
 
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]:

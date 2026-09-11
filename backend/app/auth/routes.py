@@ -68,8 +68,10 @@ def _establish_session(user: dict[str, object], *, method: str, event: str = "se
     device = establish_device_session(user)
     # This is called only after password/OTP authentication succeeds. The
     # device status is captured before denied/revoked credentials are rotated,
-    # so Superadmins receive an accurate security event for that attempt.
-    notify_login_attempt(user, prior_device or device, prior_status or str(device.get("device_status") or "pending"))
+    # so Superadmins receive an accurate security event for that attempt. Pass
+    # the current device record so a pending approval can be recognized and
+    # does not also receive the generic login email.
+    notify_login_attempt(user, device, prior_status or str(device.get("device_status") or "pending"))
     return device
 
 

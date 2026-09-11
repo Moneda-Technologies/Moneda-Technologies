@@ -43,6 +43,17 @@ interface BlanketMachineOption {
   models?: Array<{ id?: string; name?: string; model?: string }>;
 }
 
+interface BlanketBarOption {
+  id: string;
+  article_no?: string;
+  name: string;
+  sku?: string;
+  price?: number | null;
+  unit?: string;
+  material?: string;
+  pricing_status?: string;
+}
+
 function blanketMachineOptions(raw: unknown): BlanketMachineOption[] {
   if (Array.isArray(raw)) return raw as BlanketMachineOption[];
   if (!raw || typeof raw !== "object") return [];
@@ -83,6 +94,58 @@ function configurationField(label: string, control: string, helper = "", attrs =
   return `<label class="configuration-field"${attrs ? ` ${attrs}` : ""}><span class="field-label">${label}</span><span class="field-control">${control}</span><small class="field-helper">${helper}</small></label>`;
 }
 
+function barOptionLabel(bar: BlanketBarOption): string {
+  return `${bar.name}${bar.article_no ? ` · Art. ${bar.article_no}` : ""}`;
+}
+
+function normalizeBlanketBars(rows: Array<{ _id: string; article_no?: string; name: string; sku?: string; material?: string; pricing?: { price?: number | null; unit?: string }; pricing_status?: string }>): BlanketBarOption[] {
+  return rows.map((bar) => ({
+    id: bar._id,
+    article_no: bar.article_no,
+    name: bar.name,
+    sku: bar.sku,
+    material: bar.material,
+    price: bar.pricing?.price,
+    unit: bar.pricing?.unit ?? "bar",
+    pricing_status: bar.pricing_status ?? (bar.pricing?.price == null ? "pending" : "configured"),
+  }));
+}
+
+function withBlanketBars(product: Product, bars: BlanketBarOption[] | null): Product {
+  // A successful empty response is authoritative too: clear any stale
+  // product-embedded options instead of silently falling back to one bar.
+  // `null` is reserved for a failed request, where the product data can
+  // remain available as an offline fallback.
+  if (product.category_id !== "blankets" || bars === null) return product;
+  return { ...product, configuration: { ...product.configuration, bar_options: bars } };
+}
+
+function barSelectionControl(name: string, value: unknown, fallback: string, bars: BlanketBarOption[]): string {
+  const selectedId = String(value ?? fallback ?? "");
+  const selectedBar = bars.find((bar) => String(bar.id) === selectedId);
+  const selectedLabel = selectedBar ? barOptionLabel(selectedBar) : "";
+  const menuId = `bar-options-${name.replace(/[^a-z0-9_-]/gi, "-")}`;
+  const hasGrouping = bars.some((bar) => Boolean(bar.material));
+  const grouped = hasGrouping
+    ? bars.reduce<Record<string, BlanketBarOption[]>>((groups, bar) => {
+      const key = String(bar.material || "Other");
+      (groups[key] ||= []).push(bar);
+      return groups;
+    }, {})
+    : { "": bars };
+  const options = Object.entries(grouped).map(([group, items]) => `${group ? `<div class="bar-option-group-label" role="presentation">${escapeHtml(group)}</div>` : ""}${items.map((bar) => {
+    const label = barOptionLabel(bar);
+    const disabled = bar.pricing_status !== "configured";
+    const price = Number(bar.price);
+    const priceText = Number.isFinite(price) && price > 0
+      ? `EUR master · ${formatMoney(price, "EUR")} / ${bar.unit || "bar"}`
+      : disabled ? "Price unavailable" : "";
+    const secondary = [bar.sku ? `SKU: ${bar.sku}` : "", priceText].filter(Boolean).join(" · ");
+    return `<button type="button" class="bar-option${disabled ? " is-disabled" : ""}" role="option" data-bar-option data-value="${escapeHtml(bar.id)}" data-label="${escapeHtml(label)}" data-search="${escapeHtml([label, bar.sku, bar.material].filter(Boolean).join(" "))}"${disabled ? " disabled aria-disabled=\"true\"" : ""}><span class="bar-option-copy"><strong>${escapeHtml(label)}</strong>${secondary ? `<small>${escapeHtml(secondary)}</small>` : ""}</span><i data-lucide="check" aria-hidden="true"></i></button>`;
+  }).join("")}`).join("");
+  return `<span class="bar-combobox-field" data-bar-combobox data-bar-field="${escapeHtml(name)}"><span class="bar-combobox-control"><input type="text" data-bar-input role="combobox" aria-autocomplete="list" aria-controls="${menuId}" aria-expanded="false" value="${escapeHtml(selectedLabel)}" placeholder="Search or select bar / article" autocomplete="off"><i data-lucide="chevron-down" aria-hidden="true"></i></span><input type="hidden" name="${escapeHtml(name)}" data-bar-value value="${escapeHtml(selectedId)}"><div id="${menuId}" class="bar-search-results" data-bar-results role="listbox" hidden>${options}<p class="bar-option-empty" data-bar-empty hidden>No bar options available</p></div></span>`;
+}
+
 function machineField(initial: Config): string {
   const initialMachine = String(initial.machine ?? initial.machine_name ?? "");
   const control = `<span class="machine-combobox-field"><input name="machine" data-blanket-machine role="combobox" aria-autocomplete="list" aria-expanded="false" value="${valueAttr(initialMachine)}" placeholder="Search or select machine name" autocomplete="off"><input type="hidden" name="machine_id" value="${valueAttr(initial.machine_id)}"><div class="machine-search-results" data-blanket-machines role="listbox" hidden></div></span>`;
@@ -97,17 +160,16 @@ function blanketFields(product: Product, initial: Config): string {
     ...(product.configuration.supports_cut_format !== false ? ["cut_format"] : []),
     ...(product.configuration.supports_bar_format !== false ? ["bar_format"] : []),
   ];
-  const bars = (product.configuration.bar_options as Array<{ id: string; article_no: string; name: string; pricing_status: string }> | undefined) ?? [];
+  const bars = (product.configuration.bar_options as BlanketBarOption[] | undefined) ?? [];
   const defaults = (product.configuration.default_bar_ids as string[] | undefined) ?? ["aluminium", "aluminium"];
   const initialFormat = formats.includes(String(initial.format_type)) ? String(initial.format_type) : String(formats[0] ?? "cut_format");
   const initialUseSecondBar = initial.use_second_bar === true || Boolean(initial.bar_2_id && initial.bar_1_id && initial.bar_2_id !== initial.bar_1_id);
-  const barOptions = (value: unknown, fallback: string) => bars.map((bar) => `<option value="${escapeHtml(bar.id)}" ${selected(value ?? fallback, bar.id)} ${bar.pricing_status !== "configured" ? "disabled" : ""}>${escapeHtml(bar.name)} · Art. ${escapeHtml(bar.article_no)}${bar.pricing_status !== "configured" ? " · On request" : ""}</option>`).join("");
   const dimensionUnit = configurationField("Dimension Unit", `<select name="dimension_unit"><option value="mm" ${selected(initial.dimension_unit ?? "mm", "mm")}>Millimetres</option><option value="inch" ${selected(initial.dimension_unit, "inch")}>Inches</option><option value="m" ${selected(initial.dimension_unit, "m")}>Metres</option></select>`);
   const thickness = configurationField("Thickness", `<select name="thickness_mm" required>${thicknesses.map((value) => `<option value="${value}" ${selected(initial.thickness_mm ?? thicknesses[0], value)}>${value.toFixed(2)} mm</option>`).join("")}</select>`);
   const length = configurationField("Length", `<input name="length" type="number" min="0.001" step="any" value="${valueAttr(initial.length)}" placeholder="Enter length" required>`);
   const width = configurationField("Width", `<input name="width" type="number" min="0.001" step="any" value="${valueAttr(initial.width)}" placeholder="Enter or select width" list="standard-widths" required><datalist id="standard-widths">${widths.map((value) => `<option value="${value}"></option>`).join("")}</datalist>`, widths.length ? `Standard: ${widths.join(", ")} mm` : "Custom width");
   const format = configurationField("Format", `<select name="format_type" required>${formats.map((value) => `<option value="${value}" ${selected(initialFormat, value)}>${value === "bar_format" ? "Bar Format" : "Cut Format"}</option>`).join("")}</select>`);
-  const barFields = `<div class="form-grid bar-fields" ${initialFormat === "bar_format" ? "" : "hidden"}><label>Bar 1<select name="bar_1_id" ${initialFormat === "bar_format" ? "required" : ""}>${barOptions(initial.bar_1_id, defaults[0])}</select></label><label class="check-row different-second-bar"><input name="use_second_bar" type="checkbox" ${initialUseSecondBar ? "checked" : ""}><span>Different second bar</span></label><label class="second-bar-field" ${initialUseSecondBar ? "" : "hidden"}>Bar 2<select name="bar_2_id" ${initialUseSecondBar ? "required" : ""}>${barOptions(initial.bar_2_id, defaults[1])}</select></label></div>`;
+  const barFields = `<div class="form-grid bar-fields" ${initialFormat === "bar_format" ? "" : "hidden"}><label class="bar-selection-field"><span class="field-label">Bar 1</span><span class="field-control">${barSelectionControl("bar_1_id", initial.bar_1_id, defaults[0], bars)}</span></label><label class="check-row different-second-bar"><input name="use_second_bar" type="checkbox" ${initialUseSecondBar ? "checked" : ""}><span>Different second bar</span></label><label class="bar-selection-field second-bar-field" ${initialUseSecondBar ? "" : "hidden"}><span class="field-label">Bar 2</span><span class="field-control">${barSelectionControl("bar_2_id", initial.bar_2_id, defaults[1], bars)}</span></label></div>`;
   return `<div class="configuration-grid">${machineField(initial)}${dimensionUnit}${thickness}${length}${width}${format}</div>${barFields}`;
 }
 
@@ -256,21 +318,43 @@ function pricingMarkup(line: PriceLine, _rate: { provider: string; provider_sour
     ? `<div class="live-price-reference"><span>${escapeHtml(displayCurrency)} reference</span><strong>${displayTotal === undefined ? "Unavailable" : formatMoney(displayTotal, displayCurrency)}</strong></div>`
     : "";
   const configuration = line.configuration ?? {};
+  const isBlanket = line.commercial_unit === "pc";
+  const isBarFormat = isBlanket && configuration.format_type === "bar_format";
+  const barAdjustments = line.adjustments.filter((item) => item.type === "barring");
+  const dimensionRows = isBarFormat
+    ? `${configuration.length !== undefined ? `<div><span>Length</span><strong>${escapeHtml(String(configuration.length))} ${escapeHtml(String(configuration.dimension_unit ?? "mm"))}</strong></div>` : ""}${configuration.width !== undefined ? `<div><span>Width</span><strong>${escapeHtml(String(configuration.width))} ${escapeHtml(String(configuration.dimension_unit ?? "mm"))}</strong></div>` : ""}`
+    : "";
+  const barType = barAdjustments.length
+    ? (() => {
+      const parts = barAdjustments.map((item) => ({
+        name: String(item.label || "Bar").replace(/\s+bar\s*$/i, "").trim(),
+        quantity: Number(item.quantity ?? 1),
+      }));
+      const sameType = parts.length === 1 && parts[0].quantity > 1;
+      return sameType ? `${parts[0].name} bar ×${parts[0].quantity}` : parts.map((part) => part.name).join(" + ");
+    })()
+    : "—";
+  const barPrice = barAdjustments.reduce((sum, item) => sum + Number(item.amount_master || 0), 0);
+  const barRows = isBarFormat && barAdjustments.length
+    ? `<div><span>Bar Type</span><strong>${escapeHtml(barType)}</strong></div><div><span>Bar price</span><strong>${formatMoney(barPrice, "EUR")}</strong></div>`
+    : "";
   const mpackRows = line.price_per_box_eur !== undefined
     ?
     `<p class="configuration-summary-title">Selected configuration</p><div class="live-price-rows configuration-summary-rows"><div><span>Manufacturer</span><strong>${escapeHtml(String(configuration.manufacturer ?? "—"))}</strong></div><div><span>Machine model</span><strong>${escapeHtml(String(configuration.machine_model ?? "—"))}</strong></div><div><span>Size</span><strong>${Number(configuration.width_mm)} × ${Number(configuration.length_mm)} mm</strong></div><div><span>Thickness</span><strong>${Number(configuration.thickness_mm).toFixed(3)} mm (${Number(configuration.thickness_micron)} µ)</strong></div></div><div class="live-price-rows pricing-hierarchy"><div class="pricing-primary-row"><span>Price per sheet</span><strong>${formatSheetPrice(line.price_per_sheet_eur ?? 0)}</strong></div>${hasDiscount ? `<div class="pricing-discount-row"><span>Discount</span><strong>${discountPercent}%</strong></div><div class="pricing-discounted-row"><span>Discounted price per sheet</span><strong>${line.discounted_price_per_sheet_eur === undefined ? "—" : formatSheetPrice(line.discounted_price_per_sheet_eur)}</strong></div>` : ""}<div><span>Sheets per box</span><strong>${line.sheets_per_box ?? "—"}</strong></div><div><span>Price per box</span><strong>${formatMoney(line.price_per_box_eur, "EUR")}</strong></div><div><span>Quantity</span><strong>${line.requested_quantity ?? line.quantity} Box</strong></div></div>`
     : "";
-  const isBlanket = line.commercial_unit === "pc";
   const blanketRows = isBlanket
     ? `<div class="live-price-rows pricing-hierarchy">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}<div class="pricing-primary-row"><span>Price per Pc</span><strong>${formatMoney(line.master_unit_price, "EUR")}</strong></div>${hasDiscount ? `<div class="pricing-discount-row"><span>Discount</span><strong>${discountPercent}%</strong></div><div class="pricing-discounted-row"><span>Discounted price per Pc</span><strong>${line.master_discounted_unit_price === undefined ? "—" : formatMoney(line.master_discounted_unit_price, "EUR")}</strong></div>` : ""}<div><span>Quantity</span><strong>${line.requested_quantity ?? line.quantity} Pc</strong></div></div>`
     : "";
   const validity = line.price_list?.valid_from && line.price_list?.valid_until
     ? `<p class="rate-caption">Price list: ${priceListDate(line.price_list.valid_from)} – ${priceListDate(line.price_list.valid_until)}</p>`
     : "";
+  const barBreakdownMarkup = isBarFormat
+    ? `<div class="live-price-rows pricing-breakdown-rows">${dimensionRows}${barRows}</div>`
+    : "";
   const standardRows = !mpackRows && !isBlanket
     ? `<div class="live-price-rows">${line.area_sqm !== undefined ? `<div><span>Area</span><strong>${line.area_sqm.toFixed(4)} m²</strong></div>` : ""}${adjustmentRows}<div><span>Subtotal</span><strong>${formatMoney(masterSubtotal, "EUR")}</strong></div>${hasDiscount ? `<div class="pricing-discount-row"><span>Discount ${discountPercent}%</span><strong>- ${formatMoney(masterDiscount, "EUR")}</strong></div>` : ""}</div>`
     : "";
-  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>${mpackRows ? "Configuration & Pricing" : "Pricing Summary"}</span></div>${mpackRows}${blanketRows}${standardRows}<div class="live-price-total"><span>Total</span><strong>${formatMoney(masterTotalEur, "EUR")}</strong></div>${reference}${validity}`;
+  return `<div class="live-price-head"><span><i data-lucide="shield-check"></i>${mpackRows ? "Configuration & Pricing" : "Pricing Summary"}</span></div>${mpackRows}${barBreakdownMarkup}${blanketRows}${standardRows}<div class="live-price-total"><span>Total</span><strong>${formatMoney(masterTotalEur, "EUR")}</strong></div>${reference}${validity}`;
 }
 
 function discountOptions(product: Product, initialDiscount = 0): string {
@@ -469,10 +553,12 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     const barFormat = form.querySelector<HTMLSelectElement>("[name=format_type]")?.value === "bar_format";
     if (barFields) barFields.hidden = !barFormat;
     const useSecond = form.querySelector<HTMLInputElement>("[name=use_second_bar]")?.checked === true;
-    barFields?.querySelectorAll<HTMLSelectElement>("select").forEach((select) => {
-      const second = select.name === "bar_2_id";
-      select.required = barFormat && (!second || useSecond);
-      select.disabled = !barFormat || (second && !useSecond);
+    barFields?.querySelectorAll<HTMLInputElement>("[data-bar-input]").forEach((input) => {
+      const second = input.closest<HTMLElement>("[data-bar-combobox]")?.dataset.barField === "bar_2_id";
+      input.required = barFormat && (!second || useSecond);
+      input.disabled = !barFormat || (second && !useSecond);
+      const valueInput = input.closest<HTMLElement>("[data-bar-combobox]")?.querySelector<HTMLInputElement>("[data-bar-value]");
+      if (valueInput) valueInput.disabled = input.disabled;
     });
     const secondBar = form.querySelector<HTMLElement>(".second-bar-field");
     if (secondBar) secondBar.hidden = !barFormat || !useSecond;
@@ -548,6 +634,94 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       } finally { if (sequence === previewSequence) { preview.classList.remove("loading"); syncSubmitAvailability(); } }
     }, 220);
   };
+  const barComboboxes = [...form.querySelectorAll<HTMLElement>("[data-bar-combobox]")];
+  const bindBarCombobox = (combo: HTMLElement) => {
+    const input = combo.querySelector<HTMLInputElement>("[data-bar-input]");
+    const valueInput = combo.querySelector<HTMLInputElement>("[data-bar-value]");
+    const menu = combo.querySelector<HTMLElement>("[data-bar-results]");
+    if (!input || !valueInput || !menu) return;
+    const optionButtons = () => [...menu.querySelectorAll<HTMLButtonElement>("[data-bar-option]")];
+    let highlight = -1;
+    const setValidity = () => {
+      const selectedOption = optionButtons().find((option) => option.dataset.value === valueInput.value && !option.disabled);
+      input.setCustomValidity(input.required && !selectedOption ? "Select a bar option from the list." : "");
+    };
+    const render = (open: boolean) => {
+      // The input keeps the selected label visible.  Treat that label as an
+      // empty query when opening the combobox so all active bars remain
+      // available; only text the user has typed should filter the list.
+      const selectedOption = optionButtons().find((option) => option.dataset.value === valueInput.value);
+      const rawQuery = input.value.trim().toLowerCase();
+      const selectedLabel = selectedOption?.dataset.label?.trim().toLowerCase();
+      const query = selectedLabel && rawQuery === selectedLabel ? "" : rawQuery;
+      const matching = optionButtons().filter((option) => !query || `${option.dataset.search ?? ""} ${option.dataset.label ?? ""}`.toLowerCase().includes(query));
+      const selectable = matching.filter((option) => !option.disabled);
+      optionButtons().forEach((option) => {
+        const matches = matching.includes(option);
+        option.hidden = !matches;
+        option.setAttribute("aria-selected", String(option.dataset.value === valueInput.value));
+        option.querySelector<HTMLElement>("[data-lucide=check]")?.toggleAttribute("hidden", option.dataset.value !== valueInput.value);
+      });
+      const empty = menu.querySelector<HTMLElement>("[data-bar-empty]");
+      if (empty) {
+        empty.textContent = matching.length ? "" : (query ? "No matching bar options" : "No bar options available");
+        empty.hidden = matching.length > 0;
+      }
+      highlight = selectable.length ? Math.min(Math.max(highlight, 0), selectable.length - 1) : -1;
+      selectable.forEach((option, index) => option.classList.toggle("is-highlighted", index === highlight));
+      menu.hidden = !open;
+      input.setAttribute("aria-expanded", String(!menu.hidden));
+    };
+    const select = (option: HTMLButtonElement) => {
+      input.value = option.dataset.label ?? "";
+      valueInput.value = option.dataset.value ?? "";
+      setValidity();
+      render(false);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    input.addEventListener("focus", () => render(true));
+    input.addEventListener("input", () => {
+      const exact = optionButtons().find((option) => option.dataset.label?.toLowerCase() === input.value.trim().toLowerCase() && !option.disabled);
+      if (!exact || exact.dataset.value !== valueInput.value) valueInput.value = "";
+      setValidity();
+      highlight = 0;
+      render(true);
+    });
+    input.addEventListener("keydown", (event) => {
+      const visible = optionButtons().filter((option) => !option.hidden && !option.disabled);
+      if (event.key === "Escape") { menu.hidden = true; input.setAttribute("aria-expanded", "false"); return; }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!visible.length) return;
+        highlight = (highlight + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length;
+        visible.forEach((option, index) => option.classList.toggle("is-highlighted", index === highlight));
+        return;
+      }
+      if (event.key === "Enter") {
+        const option = visible[highlight] ?? visible[0];
+        if (option) { event.preventDefault(); select(option); }
+      }
+    });
+    menu.addEventListener("mousedown", (event) => {
+      const option = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-bar-option]");
+      if (!option || option.disabled) return;
+      event.preventDefault();
+      select(option);
+    });
+    setValidity();
+    render(false);
+  };
+  barComboboxes.forEach(bindBarCombobox);
+  const closeBarDropdowns = (event: PointerEvent) => {
+    barComboboxes.forEach((combo) => {
+      if (combo.contains(event.target as Node)) return;
+      const menu = combo.querySelector<HTMLElement>("[data-bar-results]");
+      const input = combo.querySelector<HTMLInputElement>("[data-bar-input]");
+      if (menu) menu.hidden = true;
+      input?.setAttribute("aria-expanded", "false");
+    });
+  };
+  document.addEventListener("pointerdown", closeBarDropdowns);
   let lastDisplayCurrency = appStore.state.currency;
   let displayCurrencySequence = 0;
   const renderLocalDisplay = (currency: Currency, rates: Record<string, number> | null) => {
@@ -578,6 +752,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   configuratorSubscriptions.set(host, () => {
     unsubscribeCurrency();
     document.removeEventListener("pointerdown", closeMachineDropdown);
+    document.removeEventListener("pointerdown", closeBarDropdowns);
   });
   bindMpackDependencies(form, product);
   form.querySelector<HTMLSelectElement>("[name=format_type]")?.addEventListener("change", () => { toggleBars(); calculatePreview(); });
@@ -639,21 +814,34 @@ function bindProductCombobox(input: HTMLInputElement, products: Product[] | (() 
   results.hidden = true;
   field.append(results);
   let selectedId = initialProduct?._id ?? null;
+  let searchQuery = "";
   const rows = () => typeof products === "function" ? products() : products;
+  const selectedProduct = () => rows().find((item) => item._id === selectedId) ?? initialProduct;
+  const restoreSelectedDisplay = () => {
+    const product = selectedProduct();
+    input.value = product ? productChoice(product) : "";
+  };
   const render = () => {
-    const term = input.value.trim().toLowerCase();
+    const term = searchQuery.trim().toLowerCase();
     const visible = rows().filter((item) => !term || [item.name, item.article_no, item.sku, item.description].some((value) => String(value ?? "").toLowerCase().includes(term))).slice(0, 50);
     results.innerHTML = visible.map((item) => `<button type="button" class="product-search-option" role="option" data-product-id="${escapeHtml(item._id)}"><strong>${escapeHtml(item.name)}</strong><small>Art. ${escapeHtml(item.article_no ?? item.sku)}</small><span>${escapeHtml(item.description ?? "")}</span></button>`).join("");
     results.hidden = !visible.length;
   };
   input.addEventListener("input", () => {
+    searchQuery = input.value;
     if (selectedId && input.value !== productChoice(rows().find((item) => item._id === selectedId) ?? initialProduct ?? ({} as Product))) {
       selectedId = null;
       onClear?.();
     }
     render();
   });
-  input.addEventListener("focus", render);
+  input.addEventListener("focus", () => {
+    // The selected product is display state, not a search term. Start every
+    // new search with an empty query while preserving selectedId.
+    searchQuery = "";
+    input.value = "";
+    render();
+  });
   results.addEventListener("mousedown", (event) => {
     const option = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-product-id]");
     if (!option) return;
@@ -661,27 +849,37 @@ function bindProductCombobox(input: HTMLInputElement, products: Product[] | (() 
     const product = rows().find((item) => item._id === option.dataset.productId);
     if (!product) return;
     selectedId = product._id;
+    searchQuery = "";
     input.value = productChoice(product);
     results.hidden = true;
     onSelect(product);
   });
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { results.hidden = true; return; }
+    if (event.key === "Escape") { searchQuery = ""; restoreSelectedDisplay(); results.hidden = true; return; }
     if (event.key === "Enter" && !selectedId) { event.preventDefault(); }
   });
-  document.addEventListener("mousedown", (event) => { if (!field.contains(event.target as Node)) results.hidden = true; });
+  document.addEventListener("mousedown", (event) => {
+    if (field.contains(event.target as Node)) return;
+    searchQuery = "";
+    restoreSelectedDisplay();
+    results.hidden = true;
+  });
 }
 
 export async function openCartItemEditor(item: CartItem, onSaved: () => void | Promise<void>): Promise<void> {
   const current = await catalogApi.product(item.product_id);
+  const blanketBars = current.category_id === "blankets"
+    ? await catalogApi.blanketBars().then((result) => normalizeBlanketBars(result.items)).catch(() => null)
+    : null;
+  const hydratedCurrent = withBlanketBars(current, blanketBars);
   const products = await loadFamilyProducts(current.category_id);
   const mpackOnly = current.category_id === "mpacks";
   const wrapper = document.createElement("div");
   wrapper.innerHTML = `<div class="stack-form">${mpackOnly ? `<div class="selected-product-fixed"><strong>Mtech Mpack</strong><span>Art. MTECH-MPACK</span></div>` : `<label>Product<input class="product-combobox" value="${valueAttr(productChoice(current))}" autocomplete="off" placeholder="Search or select product"></label>`}<div class="edit-configurator-host"></div></div>`;
   const dialog = openModal("Edit Product", wrapper, "wide");
   const host = wrapper.querySelector<HTMLElement>(".edit-configurator-host")!;
-  const render = (product: Product) => renderConfigurator(host, product, { mode: "edit", initial: item, onSaved: async () => { dialog.close(); await onSaved(); } });
-  render(current);
+  const render = (product: Product) => renderConfigurator(host, withBlanketBars(product, blanketBars), { mode: "edit", initial: item, onSaved: async () => { dialog.close(); await onSaved(); } });
+  render(hydratedCurrent);
   if (!mpackOnly) bindProductCombobox(wrapper.querySelector<HTMLInputElement>(".product-combobox")!, products, render, () => {
     host.innerHTML = '<div class="selection-summary"><i data-lucide="mouse-pointer-2"></i><span>Select a product to continue.</span></div>';
     refreshIcons(host);
@@ -704,6 +902,9 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
       refreshIcons(page); return page;
     }
     let products = await loadFamilyProducts(selectedFamily);
+    const blanketBars = selectedFamily === "blankets"
+      ? await catalogApi.blanketBars().then((result) => normalizeBlanketBars(result.items)).catch(() => null)
+      : null;
     const blanketCategories = selectedFamily === "blankets" ? await catalogApi.blanketCategories() : [];
     const chemicalCategories = selectedFamily === "chemicals" ? Array.from(new Map(products.map((product) => [String(product.configuration.sub_category_id), String(product.configuration.sub_category)])).entries()).map(([id, name]) => ({ id, name })) : [];
     const subcategories = selectedFamily === "blankets"
@@ -731,8 +932,9 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
       body.querySelector<HTMLElement>(".product-count")!.textContent = String(available.length); refreshIcons(host);
     });
     const renderSelection = (product: Product) => {
+      const hydratedProduct = withBlanketBars(product, blanketBars);
       host.innerHTML = `<article class="selected-product-card"><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p><small>${escapeHtml(String(product.configuration.thickness_mm ?? product.configuration.thickness ?? ""))}${product.configuration.thickness_mm ? " mm" : ""} · EUR master pricing</small></div><button type="button" class="button button-dark" data-configure-product><i data-lucide="settings-2"></i>Configure Product</button></article>`;
-      host.querySelector<HTMLButtonElement>("[data-configure-product]")?.addEventListener("click", () => renderConfigurator(host, product, { mode: "add" }));
+      host.querySelector<HTMLButtonElement>("[data-configure-product]")?.addEventListener("click", () => renderConfigurator(host, hydratedProduct, { mode: "add" }));
       refreshIcons(host);
     };
     bindProductCombobox(input, () => available, renderSelection, () => {

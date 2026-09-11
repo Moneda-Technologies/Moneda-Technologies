@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 import logging
 import secrets
 from typing import Any
@@ -259,6 +260,39 @@ class EmailService(EmailProvider):
         return self.send(
             to=to, subject="Moneda Technologies - Email change verification code",
             html=html, request_id=request_id, purpose="otp",
+        )
+
+    def send_user_invitation(self, *, to: list[str], name: str, username: str,
+                             initial_password: str, role_name: str, login_url: str,
+                             request_id: str | None = None) -> dict[str, Any]:
+        """Send credentials supplied for a newly created account.
+
+        ``initial_password`` is deliberately accepted only at this delivery
+        boundary. Callers must not persist or log it, and this service never
+        stores it in an application collection.
+        """
+        body = (
+            "<div style='font-family:Arial,sans-serif;color:#171717;line-height:1.55'>"
+            "<h2 style='margin:0 0 16px'>Moneda Technologies</h2>"
+            f"<p>Hello {escape(name)},</p>"
+            "<p>You have been invited to join Moneda Technologies. "
+            "Your account has been created by a Superadmin.</p>"
+            "<p><strong>Your login details</strong></p>"
+            f"<p>User ID: <strong>{escape(username)}</strong><br>"
+            f"Password: <strong>{escape(initial_password)}</strong><br>"
+            f"Role: <strong>{escape(role_name)}</strong></p>"
+            f"<p><a href='{escape(login_url, quote=True)}'>Log in to Moneda</a><br>"
+            f"{escape(login_url)}</p>"
+            "<p>You can now log in using these credentials.</p>"
+            "<p>Regards,<br>Moneda Technologies</p>"
+            "</div>"
+        )
+        return self.send(
+            to=to,
+            subject="You've been invited to Moneda Technologies",
+            html=body,
+            request_id=request_id,
+            purpose="general",
         )
 
     def send_quotation(self, *, to: list[str], subject: str, html: str,

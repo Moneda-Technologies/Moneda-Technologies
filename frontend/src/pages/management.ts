@@ -19,7 +19,8 @@ export async function companiesPage(): Promise<HTMLElement> {
 }
 
 export async function usersPage(): Promise<HTMLElement> {
-  const page = pageScaffold("Management", "Users & access", "Assign customer scope and permission-backed roles without email-based exceptions.", '<button class="button button-primary"><i data-lucide="user-plus"></i>Invite user</button>');
+  const canInviteUsers = appStore.state.user?.role_id === "superadmin";
+  const page = pageScaffold("Management", "Users & access", "Assign customer scope and permission-backed roles without email-based exceptions.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
   page.classList.add("users-access-page");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   const canManageCustomerAccess = appStore.can("users.update") && appStore.can("customers.view_all");
@@ -133,10 +134,56 @@ export async function usersPage(): Promise<HTMLElement> {
     content.querySelector<HTMLInputElement>(".customer-access-search")?.addEventListener("input", renderAssignments);
     content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", renderAssignments);
     content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: data.get("role_id"), device_access_mode: data.get("device_access_mode"), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
+     refreshIcons(content);
+  };
+  let availableRoles: Record<string, unknown>[] = [];
+  const inviteUser = (roles: Record<string, unknown>[], reload: () => Promise<void>) => {
+    const content = document.createElement("div");
+    content.innerHTML = `<form class="stack-form admin-user-form invite-user-form"><section class="admin-user-section"><span class="eyebrow">Account details</span><div class="form-grid"><label>Name<input name="name" maxlength="100" autocomplete="name" required></label><label>Username / User ID<input name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,79}" autocomplete="username" required></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email" required></label><label>Role<select name="role_id" required><option value="">Select role</option>${roles.map((role) => `<option value="${escapeHtml(String(role._id))}">${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label></div></section><section class="admin-user-section"><span class="eyebrow">Initial password</span><p class="form-hint">Use at least 8 characters with 1 uppercase letter, 1 lowercase letter, and 1 number.</p><div class="form-grid"><label>Password<input name="password" type="password" minlength="8" maxlength="200" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}" autocomplete="new-password" required></label><label>Confirm Password<input name="confirm_password" type="password" minlength="8" maxlength="200" autocomplete="new-password" required></label></div></section><small class="field-error" data-invite-error aria-live="polite"></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel-invite>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Create &amp; invite</button></div></form>`;
+    enhancePasswordFields(content);
+    const dialog = openModal("Invite user", content, "wide");
+    content.querySelector<HTMLButtonElement>("[data-cancel-invite]")?.addEventListener("click", () => dialog.close());
+    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget as HTMLFormElement;
+      const errorNode = content.querySelector<HTMLElement>("[data-invite-error]");
+      const passwordInput = form.elements.namedItem("password") as HTMLInputElement;
+      const confirmationInput = form.elements.namedItem("confirm_password") as HTMLInputElement;
+      confirmationInput.setCustomValidity(passwordInput.value === confirmationInput.value ? "" : "Passwords do not match.");
+      if (!form.reportValidity()) {
+        if (errorNode) errorNode.textContent = confirmationInput.validationMessage === "Passwords do not match." ? "Passwords do not match." : "Check the highlighted fields and try again.";
+        return;
+      }
+      const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      submit.disabled = true;
+      if (errorNode) errorNode.textContent = "";
+      const data = new FormData(form);
+      try {
+        const result = await adminApi.createUser({
+          name: String(data.get("name") ?? "").trim(),
+          username: String(data.get("username") ?? "").trim(),
+          email: String(data.get("email") ?? "").trim(),
+          password: passwordInput.value,
+          confirm_password: confirmationInput.value,
+          role_id: data.get("role_id"),
+          customer_ids: [],
+        });
+        passwordInput.value = "";
+        confirmationInput.value = "";
+        dialog.close();
+        await reload();
+        if (result.invitation.email_sent) toast("User invited successfully.");
+        else toast(`User account created, but the invitation email could not be sent. Reference: ${result.invitation.diagnostic_id}`, "error");
+      } catch (error) {
+        if (errorNode) errorNode.textContent = error instanceof Error ? error.message : "User could not be invited.";
+        submit.disabled = false;
+      }
+    });
     refreshIcons(content);
   };
   const load = async () => {
     const [users, roles, customerResult] = await Promise.all([adminApi.users(), adminApi.roles(), customerCompanyApi.list()]);
+    availableRoles = roles.items;
     const customers = customerResult.items as unknown as Record<string, unknown>[];
      body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
     body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => { const user = users.items.find((item) => String(item._id) === button.dataset.id); if (!user) return; if (button.classList.contains("device-count-button")) button.addEventListener("click", () => void openDevices(user)); else if (button.classList.contains("edit-user") || canManageCustomerAccess) button.addEventListener("click", () => editUser(user, roles.items, customers, load)); });
@@ -144,6 +191,7 @@ export async function usersPage(): Promise<HTMLElement> {
   };
   try { await load(); }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Users unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
+  page.querySelector<HTMLButtonElement>("#invite-user")?.addEventListener("click", () => inviteUser(availableRoles, load));
   refreshIcons(page); return page;
 }
 

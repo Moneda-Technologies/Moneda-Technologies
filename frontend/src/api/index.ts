@@ -32,6 +32,7 @@ export const catalogApi = {
   categories: () => api<Category[]>("/categories"),
   families: () => api<CatalogOption[]>("/catalog/families"),
   blanketCategories: () => api<CatalogOption[]>("/catalog/blankets/categories"),
+  blanketBars: () => api<{ items: Array<{ _id: string; article_no?: string; name: string; sku?: string; material?: string; pricing?: { price?: number | null; unit?: string }; pricing_status?: string }>; total: number }>("/catalog/blankets/bars"),
   blanketProducts: (category = "") => api<{ items: Product[]; total: number }>(`/catalog/blankets/products${category ? `?category=${encodeURIComponent(category)}` : ""}`),
   blanketProduct: (id: string) => api<Product>(`/catalog/blankets/products/${encodeURIComponent(id)}`),
   products: (query = "") => api<PageResult<Product>>(`/products?limit=100&${query}`),
@@ -106,6 +107,7 @@ export const orderApi = {
 };
 export const adminApi = {
   users: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/users"),
+  createUser: (value: unknown) => api<{ user: Record<string, unknown>; invitation: { email_sent: boolean; status: "sent" | "failed"; diagnostic_id: string; error_code?: string } }>("/admin/users", jsonBody(value)),
   userDevices: (userId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/admin/users/${encodeURIComponent(userId)}/devices`),
   approveDevice: (userId: string, deviceId: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/approve`, jsonBody({})),
   rejectDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/reject`, jsonBody({ reason })),

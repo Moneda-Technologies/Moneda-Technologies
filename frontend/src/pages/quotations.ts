@@ -95,7 +95,7 @@ function configurationSummary(item: CartItem | { configuration: Record<string, u
   if (configuration.format_type) parts.push(configuration.format_type === "bar_format" ? "Bar Format" : "Cut Format");
   if (configuration.requested_litres) parts.push(`${configuration.requested_litres} L requested`);
   const adjustments = item.pricing_preview?.adjustments ?? [];
-  adjustments.forEach((row) => parts.push(`${row.label}${row.quantity ? ` × ${row.quantity}` : ""}`));
+  adjustments.forEach((row) => parts.push(`${row.label}${row.article_no ? ` · Art. ${row.article_no}` : ""}${row.quantity ? ` × ${row.quantity}` : ""}`));
   return parts.join(" · ") || "Standard configuration";
 }
 

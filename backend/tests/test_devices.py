@@ -1,6 +1,8 @@
 from werkzeug.security import generate_password_hash
 import re
 
+from app.devices.service import _notify_superadmins
+
 
 def _pending_app(app):
     app.config["DEVICE_ACCESS_MODE"] = "approved_devices_only"
@@ -75,6 +77,9 @@ def test_new_pending_device_notifies_superadmins_and_first_email_decision_wins(a
     store = _pending_app(app)
     client = app.test_client()
     client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
+    security_messages = app.extensions["email_provider"].messages
+    assert [item["subject"] for item in security_messages] == ["New Moneda device approval required"]
+    assert not any(item["subject"] == "User login detected" for item in security_messages)
     message = next(item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required")
     assert "device-user@monedatechnologies.com" in message["html"]
     token = re.search(r"/device-approval/([^?'\"]+)", message["html"]).group(1)
@@ -85,6 +90,45 @@ def test_new_pending_device_notifies_superadmins_and_first_email_decision_wins(a
     second = client.post(f"/api/v1/device-approval/{token}", json={"action": "deny"})
     assert second.status_code == 409
     assert store.find_one("devices", {"user_id": "device-user"})["device_status"] == "approved"
+
+
+def test_approval_email_is_idempotent_for_one_login_attempt(app):
+    store = _pending_app(app)
+    client = app.test_client()
+    assert client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"}).status_code == 200
+    device = store.find_one("devices", {"user_id": "device-user"})
+    attempt = store.find_one("login_approvals", {"user_id": "device-user", "status": "pending"})
+    assert device and attempt
+    assert attempt.get("approval_email_sent_at")
+    before = len([item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required"])
+    # A duplicate handler invocation for the same attempt must not enqueue a
+    # second approval email. The token is deliberately not reused here; the
+    # idempotency guard is keyed by the server-side attempt id.
+    with app.app_context():
+        _notify_superadmins({"_id": "device-user", "name": "Device User", "email": "device-user@monedatechnologies.com"}, device, attempt={"_id": attempt["_id"], "token": "not-sent"})
+    after = len([item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required"])
+    assert after == before == 1
+
+
+def test_login_approval_email_has_working_one_time_links_and_isolated_attempts(app):
+    store = _pending_app(app)
+    client = app.test_client()
+    first = client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
+    assert first.status_code == 200
+    first_message = next(item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required")
+    assert "Accept Login" in first_message["html"] and "Decline Login" in first_message["html"]
+    first_token = re.search(r"/device-approval/([^?'\"]+)", first_message["html"]).group(1)
+    # A second authenticated attempt gets a different server-side transaction.
+    second = client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
+    assert second.status_code == 200
+    messages = [item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required"]
+    second_token = re.search(r"/device-approval/([^?'\"]+)", messages[-1]["html"]).group(1)
+    assert first_token != second_token
+    assert store.count("login_approvals", {"user_id": "device-user", "status": "pending"}) == 2
+    accepted = app.test_client().get(f"/api/v1/device-approval/{first_token}?action=approve")
+    assert accepted.status_code == 200
+    assert store.count("login_approvals", {"user_id": "device-user", "status": "approved"}) == 1
+    assert app.test_client().get(f"/api/v1/device-approval/{first_token}?action=deny").status_code == 409
 
 
 def test_denial_requires_reason_and_reinstate_returns_to_pending_with_history(app):
