@@ -19,6 +19,8 @@ PERMISSIONS = [
     "customers.delete", "customers.archive", "customers.restore", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
     "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
+    "payments.view", "payments.create", "payments.confirm", "payments.manage",
+    "incentives.view", "incentives.manage", "credit_notes.view", "credit_notes.create", "credit_notes.manage",
     "reminders.view", "reminders.manage", "reports.view", "users.view", "users.create",
     "users.update", "users.delete", "roles.view", "roles.manage", "companies.view",
     "companies.create", "companies.update", "companies.delete", "settings.view", "settings.currencies.view", "settings.currencies.manage",
@@ -33,14 +35,16 @@ ROLE_PERMISSIONS = {
     "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage"}],
     "manager_sales_admin": [
         permission for permission in PERMISSIONS
-        if permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
-        and permission not in {"products.delete", "customers.delete", "quotations.delete", "quotations.view_all", "pricing.edit", "pricing.update"}
+        if (permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
+            and permission not in {"products.delete", "customers.delete", "quotations.delete", "quotations.view_all", "pricing.edit", "pricing.update"})
+        or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view"}
     ],
     "user": [
         "dashboard.view", "calculator.view", "products.view", "pricing.view", "currency.view",
         "cart.view", "cart.manage", "companies.view", "customers.view", "customers.create",
         "customers.update", "quotations.view", "quotations.create", "quotations.edit",
         "quotations.download", "quotations.send", "orders.view", "crm.view", "reminders.view",
+        "payments.view", "payments.create", "incentives.view", "credit_notes.view",
     ],
 }
 
@@ -377,6 +381,32 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
         # This deliberately does not rewrite historical quotations or customer tax fields.
         store.insert_one("system_migrations", {"_id": pricing_policy_migration, "applied_at": utcnow()})
+
+    incentive_percentage_migration = "incentive-percentage-v4-zero-rate"
+    if not store.find_one("system_migrations", {"_id": incentive_percentage_migration}):
+        # Incentives are applicable to Admin, Manager / Sales Admin and User
+        # users. Existing eligible users without a configured rate receive the
+        # documented 0% default; Superadmins and all other roles are explicitly
+        # non-applicable and retain no percentage.
+        eligible_roles = {"admin", "manager_sales_admin", "user"}
+        users, _ = store.list("users", limit=100_000)
+        for user in users:
+            role_id = str(user.get("role_id") or "")
+            if role_id not in eligible_roles:
+                if user.get("incentive_percentage") is not None:
+                    store.update_one("users", {"_id": user["_id"]}, {"incentive_percentage": None})
+                continue
+            raw_configured = user.get("incentive_percentage")
+            if raw_configured in (None, ""):
+                store.update_one("users", {"_id": user["_id"]}, {"incentive_percentage": 0.0})
+                continue
+            try:
+                configured = float(raw_configured)
+            except (TypeError, ValueError):
+                configured = -1.0
+            if configured not in {index / 2 for index in range(0, 13)}:
+                store.update_one("users", {"_id": user["_id"]}, {"incentive_percentage": 0.0})
+        store.insert_one("system_migrations", {"_id": incentive_percentage_migration, "applied_at": utcnow()})
 
     catalog = _catalog_seed(data_directory)
     families = catalog["families"]

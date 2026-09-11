@@ -14,7 +14,7 @@ function recentIds(): string[] {
   catch { return []; }
 }
 
-async function selectCustomerCompany(customerCompany: Customer): Promise<void> {
+async function selectCustomerCompany(customerCompany: Customer, nextPath = "/products"): Promise<void> {
   const current = appStore.state.customer;
   const customerId = customerCompany.customer_id ?? customerCompany._id;
   if (current && current._id !== customerCompany._id) {
@@ -32,7 +32,7 @@ async function selectCustomerCompany(customerCompany: Customer): Promise<void> {
   window.dispatchEvent(new CustomEvent("moneda:customer-selected", { detail: customerId }));
   window.dispatchEvent(new CustomEvent("moneda:customer-company-selected", { detail: customerId }));
   window.dispatchEvent(new CustomEvent("moneda:company-selected", { detail: customerId }));
-  window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/calculator" }));
+  window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: nextPath }));
 }
 
 function customerCompanyCard(customerCompany: Customer, recent: boolean, selected: boolean): string {
@@ -41,12 +41,15 @@ function customerCompanyCard(customerCompany: Customer, recent: boolean, selecte
   return `<button class="company-select-card ${selected ? "selected" : ""}" data-company="${escapeHtml(id)}" role="option" aria-selected="${selected}"><span class="company-logo-mini">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><span class="company-select-copy"><small>${recent ? "Recently used customer" : "Available customer"}</small><strong>${escapeHtml(name)}</strong><span>${escapeHtml(customerCompany.contact_name ?? customerCompany.email ?? customerCompany.country ?? "Customer details pending")}</span></span><span class="company-currency">${escapeHtml(customerCompany.preferred_currency ?? customerCompany.default_currency ?? "EUR")}</span><i data-lucide="arrow-right"></i></button>`;
 }
 
-export async function companySelectionPage(): Promise<HTMLElement> {
+export async function companySelectionPage(configOptions: { preserveCurrent?: boolean; nextPath?: string } = {}): Promise<HTMLElement> {
+  const nextPath = configOptions.nextPath ?? "/products";
   const actions = appStore.can("customers.create") ? '<a class="button button-secondary" href="/customers?action=add" data-route="/customers?action=add"><i data-lucide="plus"></i>Add Customer</a>' : "";
-  appStore.set({ customer: null, activeCustomerId: null, customerCompany: null, company: null, cartCount: 0 });
-  localStorage.removeItem(SELECTED_KEY);
-  localStorage.removeItem("moneda-selected-customer-company");
-  localStorage.removeItem("moneda-selected-company");
+  if (!configOptions.preserveCurrent) {
+    appStore.set({ customer: null, activeCustomerId: null, customerCompany: null, company: null, cartCount: 0 });
+    localStorage.removeItem(SELECTED_KEY);
+    localStorage.removeItem("moneda-selected-customer-company");
+    localStorage.removeItem("moneda-selected-company");
+  }
   const page = pageScaffold("Quotation workspace", "Select Customer", "Choose who this quotation is for before configuring Moneda Technologies products.", actions);
   page.classList.add("company-selection-page");
   const body = page.querySelector<HTMLElement>(".page-body")!;
@@ -62,18 +65,19 @@ export async function companySelectionPage(): Promise<HTMLElement> {
       if (bi >= 0) return 1;
       return (a.company_name ?? a.name).localeCompare(b.company_name ?? b.name);
     });
+    const currentCustomerId = configOptions.preserveCurrent ? (appStore.state.customer?.customer_id ?? appStore.state.customer?._id) : null;
     body.innerHTML = `<section class="company-picker panel"><div class="workspace-steps"><span class="active"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span><b>2</b>Products</span><i data-lucide="chevron-right"></i><span><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="company-search"><i data-lucide="search"></i><input id="company-search" aria-label="Search customers" placeholder="Search customers..." autocomplete="off"><kbd>Arrow keys</kbd><kbd>Enter</kbd></div><div class="company-picker-meta"><span><strong id="company-result-count">${customerCompanies.length}</strong> available customers</span><span>Customer access is enforced by the API</span></div><div id="company-options" class="company-options" role="listbox"></div></section>`;
     const options = body.querySelector<HTMLElement>("#company-options")!;
     const input = body.querySelector<HTMLInputElement>("#company-search")!;
     let visible = customerCompanies;
-    let activeIndex = -1;
+    let activeIndex = currentCustomerId ? customerCompanies.findIndex((customer) => (customer.customer_id ?? customer._id) === currentCustomerId) : -1;
 
     const render = () => {
       options.innerHTML = visible.length ? visible.map((customerCompany, index) => customerCompanyCard(customerCompany, recent.includes(customerCompany.customer_id ?? customerCompany._id), index === activeIndex)).join("") : emptyState("building-2", "No customers found", "Try a different customer name.");
       body.querySelector<HTMLElement>("#company-result-count")!.textContent = String(visible.length);
       options.querySelectorAll<HTMLButtonElement>("[data-company]").forEach((button) => button.addEventListener("click", () => {
         const customerCompany = visible.find((item) => (item.customer_id ?? item._id) === button.dataset.company);
-        if (customerCompany) void selectCustomerCompany(customerCompany).catch((error) => toast(error instanceof Error ? error.message : "Customer could not be selected", "error"));
+        if (customerCompany) void selectCustomerCompany(customerCompany, nextPath).catch((error) => toast(error instanceof Error ? error.message : "Customer could not be selected", "error"));
       }));
       refreshIcons(options);
     };
@@ -87,7 +91,7 @@ export async function companySelectionPage(): Promise<HTMLElement> {
       if (!visible.length) return;
       if (event.key === "ArrowDown") { event.preventDefault(); activeIndex = (activeIndex + 1) % visible.length; render(); }
       if (event.key === "ArrowUp") { event.preventDefault(); activeIndex = (activeIndex - 1 + visible.length) % visible.length; render(); }
-      if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); void selectCustomerCompany(visible[activeIndex]).catch((error) => toast(error instanceof Error ? error.message : "Customer could not be selected", "error")); }
+      if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); void selectCustomerCompany(visible[activeIndex], nextPath).catch((error) => toast(error instanceof Error ? error.message : "Customer could not be selected", "error")); }
     });
   } catch (error) {
     body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Customers unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`;

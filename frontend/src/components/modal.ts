@@ -1,6 +1,11 @@
 import { refreshIcons } from "./icons";
 
-export function openModal(title: string, content: HTMLElement, size: "normal" | "wide" = "normal"): HTMLDialogElement {
+export interface ModalOptions {
+  /** Keep the dialog's default first-control focus unless a caller opts out. */
+  autoFocus?: boolean;
+}
+
+export function openModal(title: string, content: HTMLElement, size: "normal" | "wide" = "normal", options: ModalOptions = {}): HTMLDialogElement {
   const dialog = document.createElement("dialog");
   const titleId = `modal-title-${crypto.randomUUID()}`;
   dialog.className = `modal ${size === "wide" ? "modal-wide" : ""}`;
@@ -27,7 +32,14 @@ export function openModal(title: string, content: HTMLElement, size: "normal" | 
   });
   document.body.append(dialog);
   dialog.showModal();
-  window.setTimeout(() => (dialog.querySelector<HTMLElement>("input, select, textarea, button:not([data-close])") ?? dialog.querySelector<HTMLElement>("[data-close]"))?.focus(), 0);
+  if (options.autoFocus === false) {
+    // Cart edit dialogs contain a searchable Product input. Keep focus on a
+    // neutral dialog target so opening the modal cannot start that search.
+    dialog.tabIndex = -1;
+    dialog.focus({ preventScroll: true });
+  } else {
+    window.setTimeout(() => (dialog.querySelector<HTMLElement>("input, select, textarea, button:not([data-close])") ?? dialog.querySelector<HTMLElement>("[data-close]"))?.focus(), 0);
+  }
   refreshIcons(dialog);
   return dialog;
 }

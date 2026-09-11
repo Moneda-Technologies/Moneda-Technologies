@@ -8,7 +8,8 @@ import { hasCustomerContext, customerGuardMessage } from "../guards/customer-con
 import { logout } from "../auth/logout";
 import { createWatermark, setWatermarkEnabled } from "../components/watermark";
 
-interface NavItem { label: string; path: string; icon: string; permission: string; section?: string }
+interface NavItem { id: string; label: string; path: string; icon: string; permission: string }
+interface NavGroup { key: string; label: string; icon: string; items: NavItem[] }
 type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
 
 let fxSnapshot: FxSnapshot | null = null;
@@ -49,20 +50,33 @@ function renderFxPopover(popover: HTMLElement): void {
   refreshIcons(popover);
 }
 
-const navItems: NavItem[] = [
-  { label: "Dashboard", path: "/dashboard", icon: "layout-dashboard", permission: "dashboard.view", section: "Workspace" },
-  { label: "Select Customer", path: "/customer-selection", icon: "building-2", permission: "companies.view", section: "Workspace" },
-  { label: "Calculator", path: "/calculator", icon: "calculator", permission: "calculator.view" },
-  { label: "Cart", path: "/cart", icon: "shopping-cart", permission: "cart.view" },
-  { label: "Customers", path: "/customers", icon: "building-2", permission: "customers.view" },
-  { label: "Quotations", path: "/quotations", icon: "file-text", permission: "quotations.view" },
-  { label: "Orders", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
-  { label: "CRM", path: "/crm", icon: "chart-no-axes-combined", permission: "crm.view", section: "Sales" },
-  { label: "Reminders", path: "/reminders", icon: "bell-ring", permission: "reminders.view" },
-  { label: "Reports", path: "/reports", icon: "chart-spline", permission: "reports.view" },
-  { label: "Users", path: "/users", icon: "users", permission: "users.view" },
-  { label: "Product & Pricing", path: "/admin", icon: "badge-euro", permission: "pricing.history" },
-  { label: "Settings", path: "/settings", icon: "settings", permission: "settings.view" },
+const directNav: NavItem[] = [
+  { id: "dashboard", label: "Dashboard", path: "/dashboard", icon: "layout-dashboard", permission: "dashboard.view" },
+  { id: "reports", label: "Reports", path: "/reports", icon: "chart-spline", permission: "reports.view" },
+  { id: "crm", label: "CRM", path: "/crm", icon: "chart-no-axes-combined", permission: "crm.view" },
+];
+
+const navGroups: NavGroup[] = [
+  { key: "sales", label: "Sales", icon: "shopping-cart", items: [
+    { id: "customers", label: "Customers", path: "/customers", icon: "building-2", permission: "customers.view" },
+    { id: "calculator", label: "Calculator", path: "/calculator", icon: "calculator", permission: "calculator.view" },
+    { id: "cart", label: "Cart", path: "/cart", icon: "shopping-cart", permission: "cart.view" },
+    { id: "quotations", label: "Quotations", path: "/quotations", icon: "file-text", permission: "quotations.view" },
+    { id: "orders", label: "Orders", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
+  ] },
+  { key: "users", label: "Users", icon: "users", items: [
+    { id: "user-list", label: "User List", path: "/users", icon: "users", permission: "users.view" },
+    { id: "roles-permissions", label: "Roles & Permissions", path: "/users?section=roles", icon: "shield-check", permission: "users.view" },
+    { id: "incentives", label: "Incentives", path: "/incentives", icon: "badge-euro", permission: "incentives.view" },
+    { id: "activity-devices", label: "Activity / Login Devices", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
+  ] },
+  { key: "settings", label: "Settings", icon: "settings", items: [
+    { id: "settings-brand", label: "Settings", path: "/settings", icon: "palette", permission: "settings.view" },
+    { id: "product-pricing", label: "Product & Pricing", path: "/admin", icon: "badge-euro", permission: "pricing.history" },
+    { id: "currencies", label: "Currencies", path: "/settings/currencies", icon: "euro", permission: "settings.view" },
+    { id: "communication", label: "Communication", path: "/settings/communication", icon: "mail", permission: "settings.view" },
+    { id: "security", label: "Security", path: "/settings/security", icon: "shield-check", permission: "settings.view" },
+  ] },
 ];
 
 export function renderShell(): HTMLElement {
@@ -73,18 +87,23 @@ export function renderShell(): HTMLElement {
   const root = document.createElement("div");
   root.className = `app-shell ${localStorage.getItem("moneda-sidebar") === "collapsed" ? "sidebar-collapsed" : ""}`;
   const watermark = createWatermark(state.user, state.watermarkEnabled);
-  let currentSection = "";
-  const nav = navItems.filter((item) => appStore.can(item.permission)).map((item) => {
-    const section = item.section && item.section !== currentSection ? `<div class="nav-section">${item.section}</div>` : "";
-    if (item.section) currentSection = item.section;
-    const customerLocked = ["/calculator", "/cart"].includes(item.path) && !hasCustomerContext();
-    return `${section}<a href="${item.path}" data-route="${item.path}" class="nav-link${customerLocked ? " nav-link-locked" : ""}" aria-label="${item.label}"${customerLocked ? ` aria-disabled="true" data-customer-guard="true" title="Select a customer first"` : ""}><i data-lucide="${customerLocked ? "lock-keyhole" : item.icon}"></i><span>${item.label}</span>${item.path === "/cart" ? `<b data-cart-count>${state.cartCount || ""}</b>` : ""}</a>`;
-  }).join("");
+  const renderNavLink = (item: NavItem, child = false, leaf = false) => {
+    const customerLocked = ["/cart"].includes(item.path) && !hasCustomerContext();
+    return `<a href="${item.path}" data-route="${item.path}" data-nav-id="${item.id}" class="nav-link${child ? " nav-child" : ""}${customerLocked ? " nav-link-locked" : ""}" aria-label="${item.label}"${leaf ? ` data-nav-leaf="true"` : ""}${customerLocked ? ` aria-disabled="true" data-customer-guard="true" title="Select a customer first"` : ""}><span class="nav-icon" aria-hidden="true"><i data-lucide="${customerLocked ? "lock-keyhole" : item.icon}"></i></span><span class="nav-label">${item.label}</span>${item.path === "/cart" ? `<b data-cart-count>${state.cartCount || ""}</b>` : ""}</a>`;
+  };
+  const renderDirect = (item: NavItem) => appStore.can(item.permission) ? renderNavLink(item, false, true) : "";
+  const renderGroup = (group: NavGroup) => {
+    const visible = group.items.filter((item) => appStore.can(item.permission));
+    if (!visible.length) return "";
+    const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
+    return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}" aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
+  };
+  const nav = `<div class="nav-section">Home</div>${renderDirect(directNav[0])}<div class="nav-section">Sales</div>${renderGroup(navGroups[0])}<div class="nav-section">Users</div>${renderGroup(navGroups[1])}<div class="nav-section">Reports</div>${renderDirect(directNav[1])}<div class="nav-section">CRM</div>${renderDirect(directNav[2])}<div class="nav-section">Settings</div>${renderGroup(navGroups[2])}`;
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
-      <div class="brand-block"><a class="brand-home" href="/dashboard" data-route="/dashboard" aria-label="${escapeHtml(state.brandName)} dashboard"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"></a><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button></div>
+      <div class="sidebar-header"><a class="brand-home" href="/dashboard" data-route="/dashboard" aria-label="${escapeHtml(state.brandName)} dashboard"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"></a></div>
       <nav>${nav}</nav>
-      <div class="sidebar-foot"><div class="avatar">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role_display_name)}</span></div><a href="/profile" data-route="/profile" aria-label="Profile" title="Open profile"><i data-lucide="chevron-right"></i></a></div>
+      <div class="sidebar-foot"><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button><div class="sidebar-account"><div class="avatar">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role_display_name)}</span></div><a href="/profile" data-route="/profile" aria-label="Profile" title="Open profile"><i data-lucide="chevron-right"></i></a></div></div>
     </aside>
     <div class="workspace">
       <header class="topbar">
@@ -103,9 +122,125 @@ export function renderShell(): HTMLElement {
     <dialog id="command-palette" class="command-palette"><form method="dialog"><div class="command-input"><i data-lucide="search"></i><input aria-label="Global search" placeholder="Search across Moneda" autocomplete="off"><button aria-label="Close">ESC</button></div><div class="command-results"><p>Start typing to search products, customers, quotations, orders and leads.</p></div></form></dialog>`;
   root.prepend(watermark);
 
-  root.querySelector(".sidebar-toggle")?.addEventListener("click", () => {
+  document.querySelectorAll<HTMLElement>(".nav-leaf-tooltip").forEach((node) => node.remove());
+  const leafTooltip = document.createElement("div");
+  leafTooltip.className = "nav-leaf-tooltip";
+  leafTooltip.setAttribute("role", "tooltip");
+  leafTooltip.hidden = true;
+  document.body.appendChild(leafTooltip);
+  let hoveredItemId: string | null = null;
+  let leafTooltipTimer = 0;
+  const hideLeafTooltip = () => {
+    window.clearTimeout(leafTooltipTimer);
+    hoveredItemId = null;
+    leafTooltip.hidden = true;
+  };
+  const positionLeafTooltip = (link: HTMLElement) => {
+    if (leafTooltip.hidden || !root.classList.contains("sidebar-collapsed")) return;
+    const rect = link.getBoundingClientRect();
+    const tooltipHeight = leafTooltip.getBoundingClientRect().height || 0;
+    leafTooltip.style.left = `${rect.right + 8}px`;
+    leafTooltip.style.top = `${Math.max(8, Math.min(Math.max(8, window.innerHeight - tooltipHeight - 8), rect.top + rect.height / 2))}px`;
+  };
+  const showLeafTooltip = (link: HTMLAnchorElement) => {
+    if (!root.classList.contains("sidebar-collapsed")) return;
+    const item = directNav.find((candidate) => candidate.id === link.dataset.navId);
+    if (!item) return;
+    hoveredItemId = item.id;
+    window.clearTimeout(leafTooltipTimer);
+    leafTooltipTimer = window.setTimeout(() => {
+      if (hoveredItemId !== item.id || !root.isConnected) return;
+      leafTooltip.textContent = item.label;
+      leafTooltip.hidden = false;
+      positionLeafTooltip(link);
+    }, 70);
+  };
+  root.querySelectorAll<HTMLAnchorElement>("[data-nav-leaf]").forEach((link) => {
+    link.addEventListener("pointerenter", () => showLeafTooltip(link));
+    link.addEventListener("pointerleave", hideLeafTooltip);
+    link.addEventListener("focusin", () => showLeafTooltip(link));
+    link.addEventListener("focusout", hideLeafTooltip);
+  });
+  const repositionLeafTooltip = () => {
+    const active = hoveredItemId ? [...root.querySelectorAll<HTMLElement>("[data-nav-id]")].find((node) => node.dataset.navId === hoveredItemId) ?? null : null;
+    if (active) positionLeafTooltip(active);
+    if (!root.isConnected) { hideLeafTooltip(); leafTooltip.remove(); window.removeEventListener("resize", repositionLeafTooltip); window.removeEventListener("scroll", repositionLeafTooltip, true); }
+  };
+  window.addEventListener("resize", repositionLeafTooltip);
+  window.addEventListener("scroll", repositionLeafTooltip, true);
+
+  const sidebarToggle = root.querySelector<HTMLButtonElement>(".sidebar-toggle");
+  const updateSidebarToggle = () => {
+    const collapsed = root.classList.contains("sidebar-collapsed");
+    sidebarToggle?.setAttribute("aria-label", collapsed ? "Expand navigation" : "Collapse navigation");
+    sidebarToggle?.setAttribute("title", collapsed ? "Expand navigation" : "Collapse navigation");
+    if (sidebarToggle) { sidebarToggle.innerHTML = `<i data-lucide="${collapsed ? "panel-left-open" : "panel-left-close"}"></i>`; refreshIcons(sidebarToggle); }
+  };
+  updateSidebarToggle();
+  sidebarToggle?.addEventListener("click", () => {
     root.classList.toggle("sidebar-collapsed");
+    if (!root.classList.contains("sidebar-collapsed")) hideLeafTooltip();
     localStorage.setItem("moneda-sidebar", root.classList.contains("sidebar-collapsed") ? "collapsed" : "open");
+    updateSidebarToggle();
+    root.querySelectorAll<HTMLElement>(".nav-group.is-open").forEach((group) => {
+      const submenu = group.querySelector<HTMLElement>(".nav-submenu");
+      if (root.classList.contains("sidebar-collapsed") && submenu) positionFlyout(group);
+      else if (submenu) { submenu.style.removeProperty("top"); submenu.style.removeProperty("left"); }
+    });
+  });
+  const positionFlyout = (group: HTMLElement) => {
+    const submenu = group.querySelector<HTMLElement>(".nav-submenu");
+    if (!submenu || !root.classList.contains("sidebar-collapsed")) return;
+    const bounds = group.getBoundingClientRect();
+    const flyoutHeight = submenu.getBoundingClientRect().height || 0;
+    submenu.style.top = `${Math.max(8, Math.min(Math.max(8, window.innerHeight - flyoutHeight - 8), bounds.top))}px`;
+    submenu.style.left = `${bounds.right + 8}px`;
+  };
+  const setGroupOpen = (group: HTMLElement, open: boolean) => {
+    const submenu = group.querySelector<HTMLElement>(".nav-submenu");
+    const parent = group.querySelector<HTMLButtonElement>(".nav-parent");
+    if (!submenu || !parent) return;
+    group.classList.toggle("is-open", open);
+    submenu.hidden = !open;
+    parent.setAttribute("aria-expanded", String(open));
+    if (open) positionFlyout(group);
+    else { submenu.style.removeProperty("top"); submenu.style.removeProperty("left"); }
+  };
+  let navCloseTimer = 0;
+  let openFlyoutId: string | null = null;
+  root.querySelectorAll<HTMLElement>(".nav-group").forEach((group) => {
+    const parent = group.querySelector<HTMLButtonElement>(".nav-parent");
+    const groupId = group.dataset.navGroup ?? "";
+    const openOnlyThisGroup = (open: boolean) => {
+      if (open && root.classList.contains("sidebar-collapsed")) {
+        root.querySelectorAll<HTMLElement>(".nav-group.is-open").forEach((other) => { if (other !== group) setGroupOpen(other, false); });
+        openFlyoutId = groupId;
+      } else if (!open && openFlyoutId === groupId) openFlyoutId = null;
+      setGroupOpen(group, open);
+    };
+    parent?.addEventListener("click", () => openOnlyThisGroup(!group.classList.contains("is-open")));
+    group.addEventListener("mouseenter", () => {
+      if (!root.classList.contains("sidebar-collapsed")) return;
+      window.clearTimeout(navCloseTimer); openOnlyThisGroup(true);
+    });
+    group.addEventListener("mouseleave", () => {
+      if (!root.classList.contains("sidebar-collapsed") || group.matches(":focus-within")) return;
+      navCloseTimer = window.setTimeout(() => openOnlyThisGroup(false), 180);
+    });
+    group.addEventListener("focusin", () => { if (root.classList.contains("sidebar-collapsed")) openOnlyThisGroup(true); });
+    group.addEventListener("focusout", () => {
+      if (root.classList.contains("sidebar-collapsed")) window.setTimeout(() => { if (!group.matches(":focus-within")) openOnlyThisGroup(false); }, 0);
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (!root.isConnected || root.contains(event.target as Node)) return;
+    root.querySelectorAll<HTMLElement>(".nav-group.is-open").forEach((group) => setGroupOpen(group, false));
+  });
+  window.addEventListener("resize", () => root.querySelectorAll<HTMLElement>(".nav-group.is-open").forEach(positionFlyout));
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    root.querySelectorAll<HTMLElement>(".nav-group.is-open").forEach((group) => setGroupOpen(group, false));
+    openFlyoutId = null;
   });
   root.querySelector(".mobile-menu")?.addEventListener("click", () => root.classList.add("mobile-nav-open"));
   root.querySelector(".mobile-scrim")?.addEventListener("click", () => root.classList.remove("mobile-nav-open"));
@@ -212,10 +347,14 @@ export function renderShell(): HTMLElement {
     if (badge) badge.textContent = result.unread ? String(result.unread) : "";
     const notificationPopover = root.querySelector<HTMLElement>("#notification-popover");
     const notificationButton = root.querySelector<HTMLButtonElement>("#notification-button");
+    const deletingNotificationIds = new Set<string>();
+    let clearNotificationsInFlight = false;
     const renderNotifications = () => {
       if (!notificationPopover) return;
       const rows = result.items;
-      notificationPopover.innerHTML = `<div class="notification-popover-head"><strong>Notifications</strong>${result.unread ? `<button type="button" data-mark-all>Mark all read</button>` : ""}</div>${rows.length ? `<div class="notification-list">${rows.map((row) => `<button type="button" class="notification-item${row.read ? " is-read" : ""}" data-notification-id="${escapeHtml(String(row._id ?? row.id ?? ""))}"><span class="notification-item-dot"></span><span><strong>${escapeHtml(String(row.title ?? "Notification"))}</strong><small>${escapeHtml(String(row.message ?? ""))}</small><em>${row.created_at ? fxDate(String(row.created_at)) : ""}</em></span></button>`).join("")}</div>` : `<p class="notification-empty">No new notifications</p>`}`;
+      const controls = `${result.unread ? `<button type="button" data-mark-all>Mark all read</button>` : ""}${rows.length ? `<button type="button" data-clear-all>Clear all</button>` : ""}`;
+      notificationPopover.innerHTML = `<div class="notification-popover-head"><strong>Notifications</strong><span class="notification-popover-actions">${controls}</span></div>${rows.length ? `<div class="notification-list">${rows.map((row) => { const id = String(row._id ?? row.id ?? ""); return `<div class="notification-item${row.read ? " is-read" : ""}"><button type="button" class="notification-item-main" data-notification-id="${escapeHtml(id)}"><span class="notification-item-dot"></span><span><strong>${escapeHtml(String(row.title ?? "Notification"))}</strong><small>${escapeHtml(String(row.message ?? ""))}</small><em>${row.created_at ? fxDate(String(row.created_at)) : ""}</em></span></button><button type="button" class="notification-delete" data-notification-delete="${escapeHtml(id)}" aria-label="Delete notification" title="Delete notification"><i data-lucide="trash-2"></i></button></div>`; }).join("")}</div>` : `<p class="notification-empty">No new notifications</p>`}`;
+      refreshIcons(notificationPopover);
       notificationPopover.querySelectorAll<HTMLButtonElement>("[data-notification-id]").forEach((item) => item.addEventListener("click", async () => {
         const id = item.dataset.notificationId; if (!id) return;
         await profileApi.markNotificationRead(id).catch(() => undefined);
@@ -229,6 +368,40 @@ export function renderShell(): HTMLElement {
         await Promise.all(result.items.filter((row) => !row.read).map((row) => profileApi.markNotificationRead(String(row._id ?? row.id)).catch(() => undefined)));
         result.items.forEach((row) => { row.read = true; }); result.unread = 0; appStore.set({ notificationCount: 0 });
         const badge = root.querySelector<HTMLElement>("[data-notification-count]"); if (badge) badge.textContent = ""; renderNotifications();
+      });
+      notificationPopover.querySelectorAll<HTMLButtonElement>("[data-notification-delete]").forEach((item) => item.addEventListener("click", async () => {
+        const id = item.dataset.notificationDelete; if (!id) return;
+        if (deletingNotificationIds.has(id)) return;
+        deletingNotificationIds.add(id); item.disabled = true;
+        try {
+          await profileApi.deleteNotification(id);
+          const index = result.items.findIndex((row) => String(row._id ?? row.id) === id);
+          if (index >= 0) result.items.splice(index, 1);
+          result.unread = result.items.filter((row) => !row.read).length;
+          appStore.set({ notificationCount: result.unread });
+          const badge = root.querySelector<HTMLElement>("[data-notification-count]"); if (badge) badge.textContent = result.unread ? String(result.unread) : "";
+          renderNotifications();
+        } catch {
+          toast("Notification could not be deleted.", "error");
+        } finally {
+          deletingNotificationIds.delete(id); if (item.isConnected) item.disabled = false;
+        }
+      }));
+      notificationPopover.querySelector<HTMLButtonElement>("[data-clear-all]")?.addEventListener("click", async () => {
+        if (clearNotificationsInFlight) return;
+        clearNotificationsInFlight = true;
+        const clearButton = notificationPopover.querySelector<HTMLButtonElement>("[data-clear-all]");
+        if (clearButton) clearButton.disabled = true;
+        try {
+          await profileApi.deleteNotifications();
+          result.items.splice(0, result.items.length); result.unread = 0; appStore.set({ notificationCount: 0 });
+          const badge = root.querySelector<HTMLElement>("[data-notification-count]"); if (badge) badge.textContent = "";
+          renderNotifications();
+        } catch {
+          toast("Notifications could not be deleted.", "error");
+        } finally {
+          clearNotificationsInFlight = false; if (clearButton?.isConnected) clearButton.disabled = false;
+        }
       });
     };
     renderNotifications();
@@ -263,8 +436,32 @@ export function renderShell(): HTMLElement {
 }
 
 export function updateActiveNav(path: string): void {
+  const routePath = path.split("?", 1)[0].replace(/\/$/, "") || "/";
+  const matches = (href: string): boolean => {
+    const [targetPath, targetQuery = ""] = href.split("?", 2);
+    const target = targetPath.replace(/\/$/, "") || "/";
+    const routeQuery = path.includes("?") ? path.slice(path.indexOf("?") + 1) : "";
+    if (targetQuery) return routePath === target && routeQuery === targetQuery;
+    if (target === "/users" && routeQuery) return false;
+    if (target === "/settings") return routePath === target || routePath.startsWith(`${target}/`);
+    if (target === "/calculator") return routePath === target || routePath === "/products" || routePath.startsWith("/products/");
+    if (target === "/quotations") return routePath === target || routePath.startsWith("/quotations/") || routePath.startsWith("/quotation");
+    return routePath === target || routePath.startsWith(`${target}/`);
+  };
   document.querySelectorAll(".nav-link").forEach((node) => {
     const href = node.getAttribute("href") ?? "";
-    node.classList.toggle("active", href === path || (href === "/settings" && path.startsWith("/settings/")));
+    node.classList.toggle("active", matches(href));
+  });
+  document.querySelectorAll<HTMLElement>(".nav-group").forEach((group) => {
+    const active = [...group.querySelectorAll<HTMLAnchorElement>(".nav-child")].some((link) => matches(link.getAttribute("href") ?? ""));
+    group.classList.toggle("active", active);
+    const parent = group.querySelector<HTMLButtonElement>(".nav-parent");
+    const submenu = group.querySelector<HTMLElement>(".nav-submenu");
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    if (active && !shell?.classList.contains("sidebar-collapsed")) {
+      group.classList.add("is-open");
+      if (submenu) submenu.hidden = false;
+      parent?.setAttribute("aria-expanded", "true");
+    }
   });
 }

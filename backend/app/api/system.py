@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from flask import Blueprint, current_app, request, session
 from pydantic import ValidationError
 
@@ -315,6 +317,38 @@ def mark_notification_read(notification_id: str):
         return success(message="Notification already cleared")
     updated = store.update_one("notifications", {"_id": notification_id, "user_id": user["_id"]}, {"read": True, "read_at": utcnow()})
     return success(updated, "Notification marked read")
+
+
+@bp.delete("/notifications/<notification_id>")
+@login_required
+def delete_notification(notification_id: str):
+    """Remove one notification belonging to the authenticated user."""
+    try:
+        UUID(notification_id)
+    except (ValueError, AttributeError, TypeError):
+        return failure("Invalid notification id", status=400)
+    user = current_user() or {}
+    store = current_app.extensions["store"]
+    row = store.find_one("notifications", {"_id": notification_id})
+    if not row:
+        return failure("Notification not found", status=404)
+    if str(row.get("user_id")) != str(user.get("_id")):
+        return failure("You are not allowed to delete this notification", status=403)
+    removed = store.delete_one("notifications", {"_id": notification_id, "user_id": user["_id"]})
+    if not removed:
+        return failure("Notification not found", status=404)
+    return success({"removed": True}, "Notification deleted")
+
+
+@bp.delete("/notifications")
+@login_required
+def delete_notifications():
+    """Remove all notifications owned by the authenticated user in one operation."""
+    user = current_user() or {}
+    store = current_app.extensions["store"]
+    rows, _ = store.list("notifications", {"user_id": user["_id"]}, limit=100_000)
+    removed = sum(1 for row in rows if store.delete_one("notifications", {"_id": row["_id"], "user_id": user["_id"]}))
+    return success({"removed": removed}, "Notifications deleted")
 
 
 @bp.get("/openapi.json")

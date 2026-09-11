@@ -24,6 +24,7 @@ from app.middleware.access import can_view_all_customers, customer_access_ids_fo
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
+from app.finance.service import DEFAULT_INCENTIVE_PERCENTAGE, INCENTIVE_ELIGIBLE_ROLES, INCENTIVE_PERCENTAGES
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 
 
@@ -374,6 +375,7 @@ def update_product(product_id: str):
 @permission_required("users.view")
 def list_users():
     store = current_app.extensions["store"]
+    actor = current_user() or {}
     rows, total = store.list("users", limit=100, sort="name", direction=1)
     roles = {row["_id"]: row for row in store.list("roles", limit=100)[0]}
     customer_rows, _ = store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=100_000)
@@ -389,6 +391,10 @@ def list_users():
             assigned_by_user.setdefault(user_id, []).append(customer_id)
     for row in rows:
         row.pop("password_hash", None)
+        if str(actor.get("role_id") or "") != "superadmin":
+            # Incentive configuration is a Superadmin-only concern; do not
+            # expose the value through the user-management API to other roles.
+            row.pop("incentive_percentage", None)
         role = roles.get(row.get("role_id"), {})
         global_access = can_view_all_customers({**row, "permissions": role.get("permissions", [])})
         assigned_ids = list(dict.fromkeys(assigned_by_user.get(str(row.get("_id")), [])))
@@ -585,6 +591,7 @@ def create_user():
     password = str(payload.get("password", ""))
     confirm_password = str(payload.get("confirm_password", ""))
     role_id = str(payload.get("role_id", "")).strip()
+    incentive_value = payload.get("incentive_percentage")
     store = current_app.extensions["store"]
 
     if len(name) < 2:
@@ -605,6 +612,21 @@ def create_user():
     role = store.find_one("roles", {"_id": role_id})
     if not role:
         return failure("Select a valid role.", status=422, error="invalid_role")
+    if role_id not in INCENTIVE_ELIGIBLE_ROLES:
+        if incentive_value not in (None, ""):
+            return failure("Incentive percentage applies only to Admin, Manager / Sales Admin and User accounts.", status=422, error="incentive_not_applicable")
+        incentive_value = None
+    elif incentive_value not in (None, ""):
+        try:
+            incentive_value = float(incentive_value)
+        except (TypeError, ValueError):
+            return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
+        if incentive_value not in INCENTIVE_PERCENTAGES:
+            return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
+    else:
+        # Invitations do not expose financial configuration. New eligible
+        # users receive the documented default until a Superadmin changes it.
+        incentive_value = DEFAULT_INCENTIVE_PERCENTAGE
 
     if store.find_one("users", {"username_normalized": username_normalized}) or store.find_one(
         "users", {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
@@ -645,6 +667,7 @@ def create_user():
         "active": True,
         "device_access_mode": device_access_mode,
         "invitation_email_status": "pending",
+        "incentive_percentage": incentive_value,
     }
     try:
         row = store.insert_one("users", document)
@@ -742,10 +765,40 @@ def update_user(user_id: str):
     existing = store.find_one("users", {"_id": user_id})
     if not existing:
         return failure("User not found", status=404)
-    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "device_access_mode"}
+    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "device_access_mode", "incentive_percentage"}
     changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
     if "device_access_mode" in changes and changes["device_access_mode"] not in {"any_authorized_device", "approved_devices_only"}:
         return failure("Invalid device access policy", status=422)
+    target_role_id = str(changes.get("role_id") or existing.get("role_id") or "")
+    if "incentive_percentage" in changes:
+        if str((current_user() or {}).get("role_id") or "") != "superadmin":
+            return failure("Only a Superadmin can configure incentive percentages", status=403, error="superadmin_required")
+        if target_role_id not in INCENTIVE_ELIGIBLE_ROLES:
+            if changes["incentive_percentage"] not in (None, ""):
+                return failure("Incentive percentage applies only to Admin, Manager / Sales Admin and User accounts.", status=422, error="incentive_not_applicable")
+            changes["incentive_percentage"] = None
+        else:
+            try:
+                rate = float(changes["incentive_percentage"])
+            except (TypeError, ValueError):
+                return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
+            if rate not in INCENTIVE_PERCENTAGES:
+                return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
+            changes["incentive_percentage"] = rate
+    elif "role_id" in changes and target_role_id not in INCENTIVE_ELIGIBLE_ROLES:
+        # A role change to Superadmin (or a non-incentive role) must never
+        # retain a stale percentage from the previous role.
+        changes["incentive_percentage"] = None
+    elif "role_id" in changes and target_role_id in INCENTIVE_ELIGIBLE_ROLES:
+        # Give a newly eligible user the migration default when no prior
+        # percentage exists; preserve an already configured historical value.
+        raw_current_rate = existing.get("incentive_percentage")
+        try:
+            current_rate = float(raw_current_rate)
+        except (TypeError, ValueError):
+            current_rate = -1.0
+        if raw_current_rate in (None, "") or current_rate not in INCENTIVE_PERCENTAGES:
+            changes["incentive_percentage"] = DEFAULT_INCENTIVE_PERCENTAGE
     actor = current_user() or {}
     if user_id == actor.get("_id") and "role_id" in changes and changes["role_id"] != existing.get("role_id"):
         return failure("You cannot change your own role", status=403)

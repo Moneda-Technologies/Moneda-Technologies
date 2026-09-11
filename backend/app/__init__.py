@@ -193,8 +193,9 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     from app.reports.routes import bp as reports_bp
     from app.integrations.routes import bp as integrations_bp
     from app.devices.routes import bp as devices_bp
+    from app.finance.routes import bp as finance_bp
 
-    blueprints = (system_bp, auth_bp, catalog_bp, companies_bp, customers_bp, pricing_bp, quotations_bp, crm_bp, orders_bp, reports_bp, admin_bp, integrations_bp, devices_bp)
+    blueprints = (system_bp, auth_bp, catalog_bp, companies_bp, customers_bp, pricing_bp, quotations_bp, crm_bp, orders_bp, reports_bp, admin_bp, integrations_bp, devices_bp, finance_bp)
     for blueprint in blueprints:
         app.register_blueprint(blueprint)
 
@@ -206,6 +207,7 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
         "pricing": "/api/v1", "quotations": "/api/v1/quotations",
         "crm": "/api/v1", "orders": "/api/v1", "reports": "/api/v1", "admin": "/api/v1", "integrations": "/api/v1",
         "devices": "/api/v1",
+        "finance": "/api/v1",
     }
     for blueprint in blueprints:
         app.register_blueprint(blueprint, url_prefix=v1_prefixes[blueprint.name], name=f"{blueprint.name}_v1")

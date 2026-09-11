@@ -39,6 +39,7 @@ export interface User {
   phone?: string;
   role_id: string;
   role_display_name: string;
+  incentive_percentage?: number | null;
   company_ids: string[];
   customer_ids?: string[];
   customer_company_ids?: string[];

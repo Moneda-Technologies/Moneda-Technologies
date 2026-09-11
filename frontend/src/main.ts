@@ -60,7 +60,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     : authEntry
       ? "/dashboard"
       : location.pathname;
-  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
+  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/payments", "/incentives", "/credit-notes", "/reminders", "/reports", "/users", "/settings", "/profile"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 

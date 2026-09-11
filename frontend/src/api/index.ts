@@ -26,6 +26,8 @@ export const profileApi = {
   cancelEmailChange: () => api<SessionPayload["user"]>("/profile/email-change/cancel", jsonBody({})),
   notifications: () => api<{ items: Record<string, unknown>[]; unread: number; total: number }>("/notifications"),
   markNotificationRead: (id: string) => api<null>(`/notifications/${encodeURIComponent(id)}`, patchBody({ read: true })),
+  deleteNotification: (id: string) => api<null>(`/notifications/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteNotifications: () => api<{ removed: number }>("/notifications", { method: "DELETE" }),
 };
 
 export const catalogApi = {
@@ -102,8 +104,20 @@ export const crmApi = {
 export const orderApi = {
   list: (customerId?: string) => api<{ items: Record<string, unknown>[]; total: number }>(customerId ? `/orders?customer_id=${encodeURIComponent(customerId)}` : "/orders"),
   get: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`),
+  configuration: (id: string) => api<{ quote: Quotation; defaults: Record<string, unknown> }>(`/quotations/${encodeURIComponent(id)}/order-configuration`),
+  convert: (id: string, value: unknown = {}) => api<Record<string, unknown>>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, jsonBody(value)),
   sendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-confirmation`, jsonBody({})),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
+};
+export const financeApi = {
+  payments: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/payments${query ? `?${query}` : ""}`),
+  createPayment: (value: unknown) => api<Record<string, unknown>>("/payments", jsonBody(value)),
+  submitPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/submit`, jsonBody({})),
+  confirmPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/confirm`, jsonBody({})),
+  rejectPayment: (id: string, reason: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/reject`, jsonBody({ reason })),
+  incentives: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/incentives${query ? `?${query}` : ""}`),
+  creditNotes: () => api<{ items: Record<string, unknown>[]; total: number }>("/credit-notes"),
+  createCreditNote: (value: unknown) => api<Record<string, unknown>>("/credit-notes", jsonBody(value)),
 };
 export const adminApi = {
   users: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/users"),

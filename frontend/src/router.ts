@@ -8,6 +8,7 @@ import { dashboardPage } from "./pages/dashboard";
 import { orderDetailPage, ordersPage } from "./pages/orders";
 import { cartPage, quotationDetailPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "./pages/quotations";
 import { reportDetailPage, reportsPage } from "./pages/reports";
+import { creditNotesPage, incentivesPage, paymentsPage } from "./pages/finance";
 import { companySelectionPage } from "./pages/company-selection";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
@@ -19,7 +20,7 @@ type PageFactory = () => Promise<HTMLElement>;
 const routes: Record<string, PageFactory> = {
   "/customer-selection": companySelectionPage,
   "/company-selection": companySelectionPage,
-  "/calculator": () => catalogPage(),
+  "/calculator": () => companySelectionPage({ preserveCurrent: true, nextPath: "/products" }),
   "/products": () => catalogPage(),
   "/products/blankets": () => catalogPage("blankets"),
   "/products/mpacks": () => catalogPage("mpacks"),
@@ -34,6 +35,9 @@ const routes: Record<string, PageFactory> = {
   "/customers": customersPage,
   "/quotations": quotationsPage,
   "/orders": ordersPage,
+  "/payments": paymentsPage,
+  "/incentives": incentivesPage,
+  "/credit-notes": creditNotesPage,
   "/crm": crmPage,
   "/reminders": remindersWorkspacePage,
   "/reports": reportsPage,
@@ -71,7 +75,7 @@ export async function navigate(path: string, push = true): Promise<void> {
   const main = document.querySelector<HTMLElement>("#main-content");
   if (!main) return;
   main.innerHTML = '<div class="page-loading"><span></span><p>Loading workspace…</p></div>';
-  updateActiveNav(resolved);
+  updateActiveNav(`${resolved}${query}`);
   document.querySelector(".app-shell")?.classList.remove("mobile-nav-open");
   try {
     const factory = routes[resolved] ?? (resolved.startsWith("/customers/") ? () => customerDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotation/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotations/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/orders/") ? () => orderDetailPage(resolved.split("/")[2]) : undefined);

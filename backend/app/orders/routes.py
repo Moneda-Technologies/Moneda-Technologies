@@ -8,6 +8,7 @@ from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
+from app.finance.service import create_incentive_for_order
 from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, permission_required, permitted_customer_query
 from app.repositories.store import utcnow
 from app.services.audit import audit
@@ -28,6 +29,28 @@ def _order_recipient(order: dict) -> str:
     return ""
 
 
+def _order_recipients(order: dict) -> list[str]:
+    values: list[str] = []
+    for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot"):
+        value = (order.get(snapshot_name) or {}).get("email")
+        if value:
+            try:
+                normalized = validate_email(str(value).strip(), check_deliverability=False).normalized
+                if normalized not in values:
+                    values.append(normalized)
+            except EmailNotValidError:
+                pass
+    sales_email = (order.get("salesperson_snapshot") or {}).get("email")
+    if sales_email:
+        try:
+            normalized = validate_email(str(sales_email).strip(), check_deliverability=False).normalized
+            if normalized not in values:
+                values.append(normalized)
+        except EmailNotValidError:
+            pass
+    return values
+
+
 def _order_email_failure(exc: EmailDeliveryError):
     message = (
         "Email service is not connected. Please contact the administrator."
@@ -43,8 +66,8 @@ def _order_email_failure(exc: EmailDeliveryError):
 
 
 def _send_order_email(order: dict, message_type: str) -> dict:
-    recipient = _order_recipient(order)
-    if not recipient:
+    recipients = _order_recipients(order)
+    if not recipients:
         raise ValueError("CUSTOMER_EMAIL_REQUIRED")
     number = escape(str(order.get("order_number") or order.get("_id") or "order"))
     status = escape(str(order.get("status") or "Pending"))
@@ -52,7 +75,7 @@ def _send_order_email(order: dict, message_type: str) -> dict:
         subject = f"Order confirmation {order.get('order_number')} - Moneda Technologies"
         html = (
             "<div style='font-family:Arial,sans-serif'><h2>Moneda Technologies</h2>"
-            f"<p>Your order <strong>{number}</strong> has been received.</p>"
+            f"<p>Your Order Confirmation <strong>{number}</strong> has been received.</p>"
             f"<p>Current status: <strong>{status}</strong>.</p></div>"
         )
         method = current_app.extensions["email_service"].send_order_confirmation
@@ -64,11 +87,11 @@ def _send_order_email(order: dict, message_type: str) -> dict:
         )
         method = current_app.extensions["email_service"].send_order_status
     result = method(
-        to=[recipient], subject=subject, html=html,
+        to=recipients, subject=subject, html=html,
         request_id=f"{message_type}-{order.get('_id')}",
     )
     current_app.extensions["store"].insert_one("email_logs", {
-        "order_id": order.get("_id"), "recipient": recipient, "subject": subject,
+        "order_id": order.get("_id"), "recipient": recipients, "subject": subject,
         "message_type": message_type, "sent_by": (current_user() or {}).get("_id"),
         "status": "sent", "provider_id": result.get("id"), "cc": result.get("cc", []), "bcc": result.get("bcc", []),
         "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"),
@@ -167,6 +190,22 @@ def send_order_status(order_id: str):
     return success({"sent": True, "diagnostic_id": result.get("diagnostic_id")}, "Order status email sent")
 
 
+@bp.get("/quotations/<quotation_id>/order-configuration")
+@permission_required("orders.create")
+def order_configuration(quotation_id: str):
+    quotation = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    if not quotation:
+        return failure("Quotation not found", status=404)
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    user = current_app.extensions["store"].find_one("users", {"_id": quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id")}) or {}
+    return success({
+        "quote": quotation,
+        "defaults": {"payment_terms": quotation.get("payment_terms"), "order_amount": (quotation.get("totals") or {}).get("grand_total"), "salesperson": {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email")}},
+    })
+
+
 @bp.post("/quotations/<quotation_id>/convert-to-order")
 @permission_required("orders.create")
 def convert_quotation(quotation_id: str):
@@ -180,40 +219,47 @@ def convert_quotation(quotation_id: str):
     if not enforce_customer(quotation_customer_id):
         return failure("Customer access denied", status=403)
     user = current_user() or {}
-    idempotency_key = str(request.headers.get("Idempotency-Key") or (request.get_json(silent=True) or {}).get("idempotency_key") or "").strip()[:160]
+    payload = request.get_json(silent=True) or {}
+    idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or "").strip()[:160]
     if idempotency_key:
         existing_by_key = store.find_one("orders", {"customer_id": quotation_customer_id, "idempotency_key": idempotency_key})
         if existing_by_key:
-            return success(existing_by_key, "Order already created")
+            return success(existing_by_key, "Order Confirmation already created")
     existing = store.find_one("orders", {"quotation_id": quotation_id})
     if existing:
         return failure("Quotation is already linked to an order", status=409)
     sequence = store.next_counter("order")
     now = utcnow()
+    salesperson_id = quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id") or user.get("_id")
+    salesperson = store.find_one("users", {"_id": salesperson_id}) or {}
+    salesperson_snapshot = quotation.get("salesperson_snapshot") or {"name": salesperson.get("name"), "email": salesperson.get("email"), "_id": salesperson_id}
     lead = store.find_one("leads", {"quotation_id": quotation_id, "$or": [{"customer_id": quotation_customer_id}, {"customer_company_id": quotation_customer_id}, {"company_id": quotation_customer_id}]})
     settings = store.find_one("app_settings", {"_id": "system"}) or {}
     issuer = {**(settings.get("issuer") or {}), **(quotation.get("issuer_snapshot") or {})}
     issuer["name"] = "Moneda Technologies"
     issuer["email"] = issuer.get("email") or "business@monedatechnologies.com"
     order_document = {
-        "order_number": f"MON_ORD{sequence:05d}", "quotation_id": quotation_id,
+        "order_number": str(payload.get("oc_number") or payload.get("order_number") or f"MON_ORD{sequence:05d}").strip()[:80], "quotation_id": quotation_id,
         "quotation_number": quotation.get("quotation_number"),
         "lead_id": lead.get("_id") if lead else None,
         "customer_id": quotation_customer_id, "customer_company_id": quotation_customer_id, "company_id": quotation_customer_id,
         "issuer_name": "Moneda Technologies", "issuer_snapshot": issuer,
         "customer_company_snapshot": quotation.get("customer_company_snapshot") or quotation.get("company_snapshot"),
         "company_snapshot": quotation.get("company_snapshot"), "customer_snapshot": quotation.get("customer_snapshot"),
-        "salesperson_id": quotation["salesperson_id"], "prepared_by_user_id": quotation.get("prepared_by_user_id") or quotation["salesperson_id"], "created_by_user_id": user.get("_id"), "salesperson_snapshot": quotation.get("salesperson_snapshot"),
+        "salesperson_id": salesperson_id, "prepared_by_user_id": quotation.get("prepared_by_user_id") or salesperson_id, "created_by_user_id": user.get("_id"), "salesperson_snapshot": salesperson_snapshot,
         "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
-        "totals": quotation["totals"], "payment_terms": quotation.get("payment_terms"), "status": "Pending",
-        "notes": (request.get_json(silent=True) or {}).get("notes", ""),
+        "totals": quotation["totals"], "order_amount": float(payload.get("order_amount") or (quotation.get("totals") or {}).get("grand_total") or 0),
+        "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payload.get("payment_terms") or quotation.get("payment_terms"),
+        "oc_date": payload.get("oc_date") or now.date().isoformat(), "document_type": "order_confirmation", "status": "Pending",
+        "notes": payload.get("notes", ""), "cc": payload.get("cc") or [], "bcc": payload.get("bcc") or [],
         "history": [{"status": "Pending", "at": now, "by": (current_user() or {}).get("_id")}],
     }
     if idempotency_key:
         order_document["idempotency_key"] = idempotency_key
     order = store.insert_one("orders", order_document)
+    incentive = create_incentive_for_order(store, order, salesperson)
     quotation_history = [*quotation.get("history", []), {"status": "Converted to Order", "at": now, "by": user.get("_id")}]
     store.update_one("quotations", {"_id": quotation_id}, {"status": "Converted to Order", "history": quotation_history})
     open_reminders, _ = store.list("reminders", {"quotation_id": quotation_id, "$or": [{"customer_id": quotation_customer_id}, {"customer_company_id": quotation_customer_id}, {"company_id": quotation_customer_id}], "status": {"$in": ["Pending", "Due", "Overdue", "open"]}}, limit=100)
@@ -229,7 +275,12 @@ def convert_quotation(quotation_id: str):
         "order_id": order["_id"], "read": False,
     })
     audit("order.create", "order", str(order["_id"]), {"quotation_id": quotation_id})
-    return success(order, "Order created", 201)
+    try:
+        _send_order_email(order, "order_confirmation")
+    except Exception:
+        current_app.logger.exception("order confirmation email after conversion failed order_id=%s", order.get("_id"))
+    order["incentive_id"] = incentive.get("_id")
+    return success(order, "Order Confirmation created", 201)
 
 
 @bp.patch("/orders/<order_id>")
@@ -241,6 +292,8 @@ def update_order(order_id: str):
         return failure("Order not found", status=404)
     if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
         return failure("Customer access denied", status=403)
+    if order.get("financial_locked") and (current_user() or {}).get("role_id") != "superadmin":
+        return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")
     payload = request.get_json(silent=True) or {}
     if payload.get("status") not in STATUSES:
         return failure("Invalid order status", status=422)
