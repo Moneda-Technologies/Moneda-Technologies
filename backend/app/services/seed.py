@@ -377,6 +377,23 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": settings_controls_migration, "applied_at": utcnow()})
 
+    # Backfill the navigation permissions introduced with the Payments,
+    # Incentives and Credit Notes modules for the privileged roles. Existing
+    # installations keep their role documents when the seed runs, so simply
+    # adding these permissions to ROLE_PERMISSIONS is not enough for existing
+    # administrators. Keep this scoped to read/navigation permissions only;
+    # manager and user visibility remains governed by their assigned role.
+    finance_navigation_migration = "finance-navigation-admin-permissions-v1"
+    if not store.find_one("system_migrations", {"_id": finance_navigation_migration}):
+        navigation_permissions = {"payments.view", "incentives.view", "credit_notes.view"}
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.update(navigation_permissions)
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": finance_navigation_migration, "applied_at": utcnow()})
+
     pricing_policy_migration = "eur-only-no-tax-v1"
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
         # This deliberately does not rewrite historical quotations or customer tax fields.
