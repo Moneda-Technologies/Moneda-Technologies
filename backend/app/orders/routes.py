@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import base64
 from datetime import timedelta
 from html import escape
 import re
 from threading import Lock
 
 from email_validator import EmailNotValidError, validate_email
-from flask import Blueprint, current_app, request
+from flask import Blueprint, Response, current_app, request
 
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.codes import available_customer_code
-from app.finance.service import create_incentive_for_order
+from app.finance.service import IncentiveConfigurationError, create_incentive_for_order, validate_incentive_configuration
 from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, login_required, permission_required, permitted_customer_query
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.quotations.pdf import render_order_confirmation_pdf
 
 
 bp = Blueprint("orders", __name__, url_prefix="/api")
@@ -133,8 +135,9 @@ def _order_to_recipients(order: dict) -> list[str]:
             for snapshot_name in ("customer_snapshot", "customer_company_snapshot", "company_snapshot")
         ])
     explicit.extend(_normalise_recipients(order.get("additional_recipients")))
-    if not explicit:
-        explicit.extend(_normalise_recipients((order.get("salesperson_snapshot") or {}).get("email")))
+    # The assigned Sales Person / Manager is always a direct recipient of the
+    # OC, alongside the customer.  CC/BCC remain independently configurable.
+    explicit.extend(_normalise_recipients((order.get("salesperson_snapshot") or {}).get("email")))
     return list(dict.fromkeys(explicit))
 
 
@@ -206,7 +209,49 @@ def _order_email_failure(exc: EmailDeliveryError):
     )
 
 
-def _send_order_email(order: dict, message_type: str) -> dict:
+def _order_pdf_id(order_id: str) -> str:
+    return f"order-confirmation-pdf-{order_id}"
+
+
+def _ensure_order_pdf(order: dict) -> tuple[bytes, dict]:
+    """Generate and persist the canonical OC PDF, reusing an existing copy."""
+    store = current_app.extensions["store"]
+    order_id = str(order.get("_id") or "")
+    document_id = str(order.get("oc_pdf_document_id") or _order_pdf_id(order_id))
+    existing = store.find_one("order_documents", {"_id": document_id})
+    if existing and existing.get("content_base64"):
+        try:
+            content = base64.b64decode(str(existing["content_base64"]))
+            if order.get("oc_pdf_status") != "Generated" or order.get("oc_pdf_document_id") != document_id:
+                order = store.update_one("orders", {"_id": order_id}, {
+                    "oc_pdf_document_id": document_id, "oc_pdf_filename": existing.get("filename") or f"{order.get('order_number') or order_id}.pdf",
+                    "oc_pdf_status": "Generated", "document_status": "Generated",
+                }) or order
+            return content, order
+        except (ValueError, TypeError):
+            pass
+    content = render_order_confirmation_pdf(order)
+    now = utcnow()
+    filename = f"{order.get('order_number') or order_id}.pdf"
+    document = {
+        "_id": document_id, "order_id": order_id, "document_type": "order_confirmation",
+        "filename": filename, "content_type": "application/pdf",
+        "content_base64": base64.b64encode(content).decode("ascii"), "created_at": now,
+        "updated_at": now,
+    }
+    if existing:
+        document = store.update_one("order_documents", {"_id": document_id}, document) or document
+    else:
+        document = store.insert_one("order_documents", document)
+    updated = store.update_one("orders", {"_id": order_id}, {
+        "oc_pdf_document_id": document_id, "oc_pdf_filename": filename,
+        "oc_pdf_status": "Generated", "document_status": "Generated", "oc_pdf_generated_at": now,
+    }) or order
+    audit("order.pdf_generated", "order", order_id, {"document_id": document_id})
+    return content, updated
+
+
+def _send_order_email(order: dict, message_type: str, attachment: bytes | None = None) -> dict:
     recipients = _order_to_recipients(order)
     if not recipients:
         raise ValueError("CUSTOMER_EMAIL_REQUIRED")
@@ -231,6 +276,8 @@ def _send_order_email(order: dict, message_type: str) -> dict:
         method = current_app.extensions["email_service"].send_order_status
     result = method(
         to=recipients, subject=subject, html=html,
+        attachments=([{"filename": str(order.get("oc_pdf_filename") or f"{order.get('order_number') or 'order-confirmation'}.pdf"), "content": base64.b64encode(attachment).decode("ascii")}]
+                     if attachment is not None and message_type == "order_confirmation" else None),
         cc=cc, bcc=bcc,
         request_id=f"{message_type}-{order.get('_id')}",
     )
@@ -239,6 +286,7 @@ def _send_order_email(order: dict, message_type: str) -> dict:
         "message_type": message_type, "sent_by": (current_user() or {}).get("_id"),
         "status": "sent", "provider_id": result.get("id"), "cc": result.get("cc", []), "bcc": result.get("bcc", []),
         "diagnostic_id": result.get("diagnostic_id"), "stage": result.get("stage", "message_submission"),
+        "attachments": [str(order.get("oc_pdf_filename"))] if attachment is not None else [],
         "channel": "email", "created_at": utcnow(),
     })
     return result
@@ -252,6 +300,25 @@ def _log_order_email_failure(order: dict, message_type: str, exc: EmailDeliveryE
         "diagnostic_id": exc.diagnostic_id, "stage": exc.stage,
         "channel": "email", "created_at": utcnow(),
     })
+
+
+def _mark_order_email_failed(order: dict, exc: Exception) -> None:
+    error_code = str(getattr(exc, "error_code", "MESSAGE_SUBMISSION_FAILED"))
+    details = {
+        "email_status": "Failed", "email_error": error_code,
+        "email_failed_at": utcnow(),
+    }
+    current_app.extensions["store"].update_one("orders", {"_id": order.get("_id")}, details)
+    if isinstance(exc, EmailDeliveryError):
+        _log_order_email_failure(order, "order_confirmation", exc)
+        audit("order.email_failed", "order", str(order.get("_id")), {"error_code": exc.error_code, "diagnostic_id": exc.diagnostic_id})
+    else:
+        current_app.extensions["store"].insert_one("email_logs", {
+            "order_id": order.get("_id"), "recipient": _order_recipient(order),
+            "message_type": "order_confirmation", "status": "failed",
+            "error_code": error_code, "channel": "email", "created_at": utcnow(),
+        })
+        audit("order.email_failed", "order", str(order.get("_id")), {"error_code": "MESSAGE_SUBMISSION_FAILED"})
 
 
 @bp.get("/orders")
@@ -274,7 +341,25 @@ def list_orders():
     if request.args.get("status"):
         query["status"] = request.args["status"]
     rows, total = store.list("orders", query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
-    return success({"items": rows, "total": total})
+    # Add lightweight payment/incentive state for the operational OC table.
+    # Payment proofs are intentionally omitted from the list payload.
+    enriched = []
+    for row in rows:
+        payments, _ = store.list("payments", {"order_id": row.get("_id")}, limit=100)
+        latest_payment = payments[-1] if payments else None
+        if latest_payment:
+            payment_snapshot = {key: value for key, value in latest_payment.items() if key != "attachment"}
+            row["payment_snapshot"] = payment_snapshot
+            row["payment_status"] = latest_payment.get("status")
+        else:
+            row["payment_status"] = "PENDING PAYMENT"
+        incentive = store.find_one("incentives", {"order_id": row.get("_id")})
+        if incentive:
+            row["incentive_id"] = incentive.get("_id")
+            row["incentive_status"] = incentive.get("status", "PENDING PAYMENT")
+            row["incentive_amount"] = incentive.get("gross_incentive_amount", row.get("incentive_amount", 0))
+        enriched.append(row)
+    return success({"items": enriched, "total": total})
 
 
 @bp.get("/orders/<order_id>")
@@ -291,24 +376,81 @@ def get_order(order_id: str):
 @bp.post("/orders/<order_id>/send-confirmation")
 @permission_required("orders.update")
 def send_order_confirmation(order_id: str):
-    order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
     if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
         return failure("Customer access denied", status=403)
     try:
-        result = _send_order_email(order, "order_confirmation")
+        pdf, order = _ensure_order_pdf(order)
+        result = _send_order_email(order, "order_confirmation", pdf)
+        store.update_one("orders", {"_id": order_id}, {
+            "email_status": "Sent", "email_last_sent_at": utcnow(),
+            "email_diagnostic_id": result.get("diagnostic_id"),
+        })
     except ValueError as exc:
         return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     except EmailDeliveryError as exc:
-        _log_order_email_failure(order, "order_confirmation", exc)
+        _mark_order_email_failed(order, exc)
         return _order_email_failure(exc)
     except Exception:
         diagnostic_id = email_diagnostic_id()
         current_app.logger.exception("order confirmation email failed diagnostic_id=%s stage=email_service", diagnostic_id)
+        _mark_order_email_failed(order, RuntimeError("MESSAGE_SUBMISSION_FAILED"))
         return failure("Order email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
     audit("order.email_confirmation", "order", order_id, {"diagnostic_id": result.get("diagnostic_id")})
     return success({"sent": True, "diagnostic_id": result.get("diagnostic_id")}, "Order confirmation sent")
+
+
+@bp.get("/orders/<order_id>/pdf")
+@permission_required("orders.view")
+def order_confirmation_pdf(order_id: str):
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    if not order:
+        return failure("Order not found", status=404)
+    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+        return failure("Customer access denied", status=403)
+    try:
+        content, order = _ensure_order_pdf(order)
+    except Exception:
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("order confirmation PDF failed diagnostic_id=%s order_id=%s", diagnostic_id, order_id)
+        return failure("Order Confirmation PDF could not be generated.", status=503, error="OC_PDF_GENERATION_FAILED", diagnostic_id=diagnostic_id)
+    disposition = "inline" if request.args.get("preview") == "true" else "attachment"
+    filename = str(order.get("oc_pdf_filename") or f"{order.get('order_number') or order_id}.pdf")
+    return Response(content, mimetype="application/pdf", headers={"Content-Disposition": f'{disposition}; filename="{filename}"'})
+
+
+@bp.post("/orders/<order_id>/resend-confirmation")
+@permission_required("orders.update")
+def resend_order_confirmation(order_id: str):
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    if not order:
+        return failure("Order not found", status=404)
+    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+        return failure("Customer access denied", status=403)
+    try:
+        pdf, order = _ensure_order_pdf(order)
+        result = _send_order_email(order, "order_confirmation", pdf)
+        store.update_one("orders", {"_id": order_id}, {
+            "email_status": "Sent", "email_last_sent_at": utcnow(),
+            "email_diagnostic_id": result.get("diagnostic_id"),
+        })
+    except ValueError:
+        return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
+    except EmailDeliveryError as exc:
+        _mark_order_email_failed(order, exc)
+        return _order_email_failure(exc)
+    except Exception:
+        diagnostic_id = email_diagnostic_id()
+        current_app.logger.exception("order confirmation resend failed diagnostic_id=%s order_id=%s", diagnostic_id, order_id)
+        _mark_order_email_failed(order, RuntimeError("MESSAGE_SUBMISSION_FAILED"))
+        return failure("Order email could not be delivered.", status=503, error="MESSAGE_SUBMISSION_FAILED", diagnostic_id=diagnostic_id, stage="email_service")
+    audit("order.email_resent", "order", order_id, {"diagnostic_id": result.get("diagnostic_id")})
+    return success({"sent": True, "diagnostic_id": result.get("diagnostic_id")}, "Order confirmation resent")
 
 
 @bp.post("/orders/<order_id>/send-status")
@@ -404,12 +546,19 @@ def convert_quotation(quotation_id: str):
         "totals": quotation["totals"], "order_amount": float((quotation.get("totals") or {}).get("grand_total") or 0),
         "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payment_terms,
         "oc_date": payload.get("oc_date") or now.date().isoformat(), "document_type": "order_confirmation", "status": "Pending",
+        "created_at": now, "document_status": "Pending", "email_status": "Pending",
         "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
         "additional_recipients": additional_recipients,
         "history": [{"status": "Pending", "at": now, "by": (current_user() or {}).get("_id")}],
     }
     if idempotency_key:
         order_document["idempotency_key"] = idempotency_key
+    try:
+        # Validate the category-wise incentive matrix before allocating an OC
+        # number or inserting any financial record.
+        validate_incentive_configuration(store, order_document, salesperson)
+    except IncentiveConfigurationError as exc:
+        return failure(str(exc), status=422, error="INCENTIVE_CONFIGURATION_REQUIRED", category_id=exc.category_id)
     # Keep the existing preflight check for a friendly 409, then repeat it
     # while holding a process-local lock so two rapid conversion requests in
     # this worker cannot both create an Order Confirmation.
@@ -431,7 +580,36 @@ def convert_quotation(quotation_id: str):
                 if existing:
                     return failure("Quotation is already linked to an order", status=409)
             raise
-    incentive = create_incentive_for_order(store, order, salesperson)
+    try:
+        order_pdf, order = _ensure_order_pdf(order)
+    except Exception:
+        current_app.logger.exception("order confirmation PDF generation failed order_id=%s", order.get("_id"))
+        store.update_one("orders", {"_id": order.get("_id")}, {"document_status": "Failed"})
+        order_pdf = None
+    try:
+        incentive = create_incentive_for_order(store, order, salesperson)
+    except IncentiveConfigurationError as exc:
+        # The product matrix may have changed between preflight and insert.
+        # Remove only this brand-new, unreferenced order/document so no
+        # partially-created financial record remains.
+        store.delete_one("order_documents", {"order_id": order.get("_id")})
+        store.delete_one("orders", {"_id": order.get("_id")})
+        return failure(str(exc), status=422, error="INCENTIVE_CONFIGURATION_REQUIRED", category_id=exc.category_id)
+    except Exception:
+        current_app.logger.exception("incentive creation failed order_id=%s", order.get("_id"))
+        store.delete_one("order_documents", {"order_id": order.get("_id")})
+        store.delete_one("orders", {"_id": order.get("_id")})
+        return failure("Order Confirmation could not be created because its incentive record failed.", status=503, error="INCENTIVE_CREATION_FAILED")
+    audit("incentive.created", "incentive", str(incentive.get("_id")), {
+        "order_id": order.get("_id"), "rate": incentive.get("incentive_percentage_snapshot", 0),
+        "line_count": len(incentive.get("incentive_lines") or []),
+        "rates": [line.get("incentive_rate_snapshot") for line in incentive.get("incentive_lines") or []],
+    })
+    order = store.update_one("orders", {"_id": order.get("_id")}, {
+        "incentive_id": incentive.get("_id"),
+        "incentive_status": incentive.get("status", "PENDING PAYMENT"),
+        "incentive_amount": incentive.get("gross_incentive_amount", 0),
+    }) or order
     quotation_history = [*quotation.get("history", []), {"status": "Converted to Order", "at": now, "by": user.get("_id")}]
     store.update_one("quotations", {"_id": quotation_id}, {"status": "Converted to Order", "history": quotation_history})
     open_reminders, _ = store.list("reminders", {"quotation_id": quotation_id, "$or": [{"customer_id": quotation_customer_id}, {"customer_company_id": quotation_customer_id}, {"company_id": quotation_customer_id}], "status": {"$in": ["Pending", "Due", "Overdue", "open"]}}, limit=100)
@@ -447,10 +625,18 @@ def convert_quotation(quotation_id: str):
         "order_id": order["_id"], "read": False,
     })
     audit("order.create", "order", str(order["_id"]), {"quotation_id": quotation_id})
-    try:
-        _send_order_email(order, "order_confirmation")
-    except Exception:
-        current_app.logger.exception("order confirmation email after conversion failed order_id=%s", order.get("_id"))
+    if order_pdf is not None:
+        try:
+            email_result = _send_order_email(order, "order_confirmation", order_pdf)
+            order = store.update_one("orders", {"_id": order.get("_id")}, {
+                "email_status": "Sent", "email_last_sent_at": utcnow(),
+                "email_diagnostic_id": email_result.get("diagnostic_id"),
+            }) or {**order, "email_status": "Sent"}
+            audit("order.email_sent", "order", str(order.get("_id")), {"diagnostic_id": email_result.get("diagnostic_id")})
+        except Exception as exc:
+            current_app.logger.exception("order confirmation email after conversion failed order_id=%s", order.get("_id"))
+            _mark_order_email_failed(order, exc)
+            order = {**order, "email_status": "Failed", "email_error": str(getattr(exc, "error_code", "MESSAGE_SUBMISSION_FAILED"))}
     order["incentive_id"] = incentive.get("_id")
     return success(order, "Order Confirmation created", 201)
 

@@ -120,9 +120,13 @@ async function openOrderConversionModal(quotationId: string, onConverted: () => 
     const errorNode = content.querySelector<HTMLElement>("[data-oc-error]");
     try {
       const additionalRecipients = Array.from(form.querySelectorAll<HTMLInputElement>("[name='additional_recipient']")).map((input) => input.value.trim()).filter(Boolean);
-      await orderApi.convert(quotationId, { oc_date: data.get("oc_date"), payment_terms: data.get("payment_terms"), additional_recipients: additionalRecipients });
+      const createdOrder = await orderApi.convert(quotationId, { oc_date: data.get("oc_date"), payment_terms: data.get("payment_terms"), additional_recipients: additionalRecipients }) as Record<string, unknown>;
       dialog.close();
-      toast("Order Confirmation created and email queued");
+      if (String(createdOrder.email_status ?? "").toLowerCase() === "failed") {
+        toast("Order Confirmation created, but the email failed. You can resend it from the Order page.", "error");
+      } else {
+        toast("Order Confirmation created and email sent", "info");
+      }
       await onConverted();
     } catch (error) {
       if (errorNode) errorNode.textContent = error instanceof Error ? error.message : "Order Confirmation could not be created";

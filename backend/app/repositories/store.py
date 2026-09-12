@@ -212,10 +212,20 @@ class MongoStore:
         self.db.login_approvals.create_index("token_hash", unique=True)
         self.db.login_approvals.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
         self.db.orders.create_index("quotation_id")
+        self.db.order_documents.create_index("order_id", unique=True)
         self.db.payments.create_index([("order_id", ASCENDING), ("status", ASCENDING)])
         self.db.incentives.create_index([("salesperson_id", ASCENDING), ("status", ASCENDING)])
         self.db.incentives.create_index("order_id", unique=True)
         self.db.credit_notes.create_index([("order_id", ASCENDING), ("created_at", DESCENDING)])
+        self.db.incentive_adjustments.create_index([("incentive_id", ASCENDING), ("created_at", DESCENDING)])
+        # Category is the configuration key.  Drop the pre-category product
+        # index when upgrading an existing Mongo database so multiple category
+        # rows can coexist for one user.
+        try:
+            self.db.incentive_configurations.drop_index("user_id_1_product_id_1")
+        except Exception:
+            pass
+        self.db.incentive_configurations.create_index([("user_id", ASCENDING), ("category_id", ASCENDING)], unique=True)
 
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]:

@@ -126,6 +126,7 @@ class QuotationService:
                 )
                 pricing_source = "legacy_cart_recalculated_eur"
             line["discount_source"] = "saved_cart_item"
+            line["category_id"] = product.get("category_id")
             # Commercial amounts remain the immutable cart snapshot, while
             # descriptive catalogue copy comes from the current canonical
             # product record when the quotation itself is created.

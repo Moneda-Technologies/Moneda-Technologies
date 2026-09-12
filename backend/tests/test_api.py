@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import base64
+from datetime import timedelta
+from io import BytesIO
 from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from pypdf import PdfReader
 from werkzeug.security import generate_password_hash
 
 from app.communication.email import EmailDeliveryError
 from app.customers.codes import customer_code
+from app.finance.service import IncentiveConfigurationError, create_incentive_for_order
 from app.middleware.access import repair_customer_assignments
 from app.orders.routes import _next_oc_number
 from app.repositories.store import build_store, utcnow
@@ -967,6 +972,83 @@ def test_converted_order_keeps_quotation_number(authenticated):
     assert order["quotation_number"] == quote["quotation_number"]
 
 
+def test_order_confirmation_pdf_is_persisted_and_attached(app, authenticated):
+    store = app.extensions["store"]
+    quote = store.insert_one("quotations", {
+        "_id": "oc-document-quote", "quotation_number": "MT-DOC-001", "status": "Sent",
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "Advance",
+        "customer_snapshot": {"name": "Document Customer", "customer_code": "DOC-001", "email": "customer@example.com", "address": "1 Test Street"},
+        "lines": [{"product_name": "Test Product", "description": "Document line", "quantity": 2, "unit_price": 25, "line_total": 50}],
+        "totals": {"subtotal": 50, "grand_total": 50}, "created_by_user_id": "user-demo-admin",
+    })
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert response.status_code == 201
+    order = response.json["data"]
+    document = store.find_one("order_documents", {"order_id": order["_id"]})
+    assert document and document["document_type"] == "order_confirmation"
+    pdf_bytes = base64.b64decode(document["content_base64"])
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf_bytes)).pages)
+    assert order["order_number"] in text
+    assert "Document Customer" in text
+    assert "Test Product" in text
+    download = authenticated.get(f"/api/v1/orders/{order['_id']}/pdf")
+    assert download.status_code == 200 and download.headers["Content-Type"].startswith("application/pdf")
+    message = app.extensions["email_provider"].messages[-1]
+    assert message["attachments"] and message["attachments"][0]["filename"] == document["filename"]
+    attached = base64.b64decode(message["attachments"][0]["content"])
+    assert attached == pdf_bytes
+
+
+def test_superadmin_can_confirm_incentive_payment_and_activate(app, authenticated):
+    store = app.extensions["store"]
+    order = store.insert_one("orders", {
+        "_id": "incentive-confirm-order", "order_number": "MT-OC-CONFIRM-001",
+        "customer_id": COMPANY, "order_amount": 100, "totals": {"grand_total": 100},
+    })
+    incentive = store.insert_one("incentives", {
+        "_id": "incentive-confirm-test", "order_id": order["_id"], "customer_id": COMPANY,
+        "salesperson_id": "user-demo-admin", "order_amount": 100,
+        "incentive_percentage_snapshot": 2, "gross_incentive_amount": 2,
+        "net_payable_incentive": 2, "status": "PENDING PAYMENT",
+    })
+    payment = store.insert_one("payments", {
+        "_id": "incentive-confirm-payment", "order_id": order["_id"], "customer_id": COMPANY,
+        "amount": 100, "payment_date": utcnow(), "status": "CONFIRMED", "confirmed_at": utcnow(), "utr": "UTR-1",
+    })
+    response = authenticated.post(f"/api/v1/incentives/{incentive['_id']}/confirm-payment", json={"payment_id": payment["_id"]})
+    assert response.status_code == 200
+    assert response.json["data"]["status"] == "ACTIVE"
+    assert response.json["data"]["payment_confirmed_by_user_id"] == "user-demo-admin"
+
+
+def test_order_email_failure_keeps_oc_and_resend_reuses_pdf(app, authenticated, monkeypatch):
+    store = app.extensions["store"]
+    quote = store.insert_one("quotations", {
+        "_id": "oc-resend-quote", "quotation_number": "MT-RESEND-001", "status": "Sent",
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "Advance",
+        "customer_snapshot": {"name": "Retry Customer", "email": "customer@example.com"},
+        "lines": [], "totals": {"grand_total": 20}, "created_by_user_id": "user-demo-admin",
+    })
+    service = app.extensions["email_service"]
+    original = service.send_order_confirmation
+
+    def fail_once(**kwargs):
+        raise EmailDeliveryError("temporary failure", stage="message_submission", diagnostic_id="email-retry", error_code="MESSAGE_SUBMISSION_FAILED")
+
+    monkeypatch.setattr(service, "send_order_confirmation", fail_once)
+    converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert converted.status_code == 201
+    order = converted.json["data"]
+    persisted = store.find_one("orders", {"_id": order["_id"]})
+    assert persisted and persisted["email_status"] == "Failed"
+    assert store.find_one("order_documents", {"order_id": order["_id"]})
+    monkeypatch.setattr(service, "send_order_confirmation", original)
+    resent = authenticated.post(f"/api/v1/orders/{order['_id']}/resend-confirmation", json={})
+    assert resent.status_code == 200
+    assert store.count("orders", {"quotation_id": quote["_id"]}) == 1
+    assert store.count("incentives", {"order_id": order["_id"]}) == 1
+
+
 def _login_as_user(client, user_id: str):
     with client.session_transaction() as session:
         session["user_id"] = user_id
@@ -1067,6 +1149,98 @@ def test_customer_oc_sequence_is_unique_under_concurrency(app):
     with ThreadPoolExecutor(max_workers=8) as executor:
         numbers = list(executor.map(lambda _: _next_oc_number(store, "customer-demo-1"), range(8)))
     assert len(numbers) == len(set(numbers)) == 8
+
+
+def test_category_incentive_rates_are_snapshotted_per_order_line(app):
+    store = app.extensions["store"]
+    salesperson = add_test_user(app, "category-salesperson")
+    salesperson["incentive_rates"] = {"blankets": 5, "mpacks": 3, "chemicals": 6}
+    store.update_one("users", {"_id": salesperson["_id"]}, {"incentive_rates": salesperson["incentive_rates"]})
+    for product_id, category_id in (("category-blanket", "blankets"), ("category-mpack", "mpacks"), ("category-chemical", "chemicals")):
+        store.insert_one("products", {"_id": product_id, "name": product_id, "category_id": category_id})
+    order = {
+        "_id": "category-snapshot-order", "order_number": "MT-OC-CATEGORY-001", "customer_id": COMPANY,
+        "order_amount": 17_000, "products_snapshot": [
+            {"product_id": "category-blanket", "line_total": 10_000},
+            {"product_id": "category-mpack", "line_total": 5_000},
+            {"product_id": "category-chemical", "line_total": 2_000},
+        ],
+    }
+    incentive = create_incentive_for_order(store, order, salesperson)
+    assert incentive["status"] == "PENDING PAYMENT"
+    assert incentive["gross_incentive_amount"] == 770.0
+    assert [(line["category_id"], line["incentive_rate_snapshot"], line["incentive_amount"]) for line in incentive["incentive_lines"]] == [
+        ("blankets", 5.0, 500.0), ("mpacks", 3.0, 150.0), ("chemicals", 6.0, 120.0),
+    ]
+    store.update_one("users", {"_id": salesperson["_id"]}, {"incentive_rates": {"blankets": 6, "mpacks": 6, "chemicals": 6}})
+    persisted = store.find_one("incentives", {"_id": incentive["_id"]})
+    assert [line["incentive_rate_snapshot"] for line in persisted["incentive_lines"]] == [5.0, 3.0, 6.0]
+
+
+def test_missing_category_rate_blocks_incentive_creation(app):
+    store = app.extensions["store"]
+    salesperson = add_test_user(app, "missing-category-rate")
+    salesperson["incentive_rates"] = {"blankets": 5}
+    store.insert_one("products", {"_id": "missing-chemical", "name": "Missing Chemical", "category_id": "chemicals"})
+    with pytest.raises(IncentiveConfigurationError, match="Chemical"):
+        create_incentive_for_order(store, {
+            "_id": "missing-rate-order", "order_number": "MT-OC-MISSING-001", "customer_id": COMPANY,
+            "order_amount": 100, "products_snapshot": [{"product_id": "missing-chemical", "line_total": 100}],
+        }, salesperson)
+
+
+def test_payment_must_be_submitted_before_superadmin_confirmation(app, authenticated):
+    store = app.extensions["store"]
+    order = store.insert_one("orders", {"_id": "payment-lifecycle-order", "order_number": "MT-OC-PAYMENT-001", "customer_id": COMPANY, "order_amount": 100, "totals": {"grand_total": 100}})
+    incentive = store.insert_one("incentives", {"_id": "payment-lifecycle-incentive", "order_id": order["_id"], "customer_id": COMPANY, "status": "PENDING PAYMENT", "gross_incentive_amount": 2, "credit_note_deduction": 0, "paid_amount": 0, "net_payable_incentive": 2})
+    payment = store.insert_one("payments", {"_id": "payment-lifecycle-payment", "order_id": order["_id"], "customer_id": COMPANY, "amount": 100, "payment_date": utcnow(), "status": "PAYMENT RECORDED"})
+    not_ready = authenticated.post(f"/api/v1/payments/{payment['_id']}/confirm", json={})
+    assert not_ready.status_code == 409
+    assert store.find_one("payments", {"_id": payment["_id"]})["status"] == "PAYMENT RECORDED"
+    submitted = authenticated.post(f"/api/v1/payments/{payment['_id']}/submit", json={})
+    assert submitted.status_code == 200
+    confirmed = authenticated.post(f"/api/v1/payments/{payment['_id']}/confirm", json={})
+    assert confirmed.status_code == 200
+    persisted_payment = store.find_one("payments", {"_id": payment["_id"]})
+    persisted_incentive = store.find_one("incentives", {"_id": incentive["_id"]})
+    assert persisted_payment["status"] == "CONFIRMED"
+    assert persisted_incentive["status"] == "ACTIVE"
+    assert persisted_incentive["incentive_due_date"] == persisted_incentive["payment_confirmation_date"] + timedelta(days=30)
+    assert store.count("incentives", {"order_id": order["_id"]}) == 1
+
+
+def test_non_superadmin_cannot_confirm_payment(app, client):
+    actor = add_test_user(app, "payment-review-user", role_id="user")
+    store = app.extensions["store"]
+    payment = store.insert_one("payments", {"_id": "unauthorized-confirm-payment", "order_id": "missing-order", "customer_id": COMPANY, "amount": 10, "payment_date": utcnow(), "status": "AWAITING SUPERADMIN CONFIRMATION"})
+    _login_as_user(client, actor["_id"])
+    response = client.post(f"/api/v1/payments/{payment['_id']}/confirm", json={})
+    assert response.status_code == 403
+    assert store.find_one("payments", {"_id": payment["_id"]})["status"] == "AWAITING SUPERADMIN CONFIRMATION"
+
+
+def test_category_incentive_configuration_is_superadmin_only(app, client):
+    store = app.extensions["store"]
+    target = add_test_user(app, "category-config-target", role_id="user")
+    admin = add_test_user(app, "category-config-admin", role_id="admin")
+    _login_as_user(client, admin["_id"])
+    listed = client.get("/api/v1/admin/users")
+    assert listed.status_code == 200
+    listed_target = next(row for row in listed.json["data"]["items"] if row["_id"] == target["_id"])
+    assert "incentive_rates" not in listed_target
+    denied = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 5}})
+    assert denied.status_code == 403
+
+    superadmin = store.find_one("users", {"_id": "user-demo-admin"})
+    _login_as_user(client, superadmin["_id"])
+    saved = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 5, "mpacks": 3, "chemicals": 6}})
+    assert saved.status_code == 200
+    persisted = store.find_one("users", {"_id": target["_id"]})
+    assert persisted["incentive_rates"] == {"blankets": 5.0, "mpacks": 3.0, "chemicals": 6.0}
+    invalid = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 6.5}})
+    assert invalid.status_code == 422
+    superadmin_target = client.patch(f"/api/v1/admin/users/{superadmin['_id']}", json={"incentive_rates": {"blankets": 5}})
+    assert superadmin_target.status_code == 422
 
 
 def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):

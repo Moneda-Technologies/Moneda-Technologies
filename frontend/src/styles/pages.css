@@ -225,6 +225,11 @@
 .admin-user-section { border-top: 1px solid var(--border); display: grid; gap: 10px; padding-top: 15px; }
 .admin-user-section:first-child { border-top: 0; padding-top: 0; }
 .admin-user-section .eyebrow { font-size: .64rem; }
+.incentive-product-grid, .incentive-category-grid { border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 0; max-height: 280px; overflow: auto; }
+.incentive-product-grid label, .incentive-category-grid label { align-items: center; border-bottom: 1px solid var(--border); display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 120px; padding: 10px 12px; }
+.incentive-product-grid label:last-child, .incentive-category-grid label:last-child { border-bottom: 0; }
+.incentive-product-grid label small, .incentive-category-grid label small { color: var(--text-muted); font-weight: 500; }
+.incentive-product-grid select, .incentive-category-grid select { min-height: 36px; }
 .customer-access-actions { display: flex; gap: 7px; }
 .customer-access-actions .button { font-size: .68rem; padding: 7px 10px; width: auto; }
 .customer-access-search { width: 100%; }

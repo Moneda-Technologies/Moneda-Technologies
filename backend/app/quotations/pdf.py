@@ -185,10 +185,14 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         logo.scale(scale, scale)
     except (ImportError, OSError, ValueError):
         logo = Paragraph("<font size='22'><b>MONEDA</b></font><br/><font size='8'>T E C H N O L O G I E S</font>", normal)
-    quote_number = safe(quotation.get("quotation_number"))
+    is_order_confirmation = str(quotation.get("document_type") or "").lower() == "order_confirmation"
+    document_number = quotation.get("order_number") if is_order_confirmation else quotation.get("quotation_number")
+    document_title = "ORDER CONFIRMATION" if is_order_confirmation else "QUOTATION"
+    document_date = quotation.get("oc_date") if is_order_confirmation else quotation.get("created_at")
+    quote_number = safe(document_number)
     title = Paragraph(
-        f"<font size='20'>QUOTATION</font><br/><font color='#df3731'><b>{quote_number}</b></font>"
-        f"<br/><font color='#70706b' size='7'>{safe(_display_date(quotation.get('created_at')))}</font>", right,
+        f"<font size='18'>{document_title}</font><br/><font color='#df3731'><b>{quote_number}</b></font>"
+        f"<br/><font color='#70706b' size='7'>{safe(_display_date(document_date))}</font>", right,
     )
     header = Table([[logo, title]], colWidths=[112 * mm, 64 * mm])
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (1, 0), (1, 0), "RIGHT"), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
@@ -213,6 +217,7 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     creator = quotation.get("creator_snapshot") or quotation.get("salesperson_snapshot") or {}
     customer_company = quotation.get("customer_company_snapshot") or quotation.get("company_snapshot") or {}
     customer = quotation.get("customer_snapshot") or customer_company
+    customer_code = customer.get("customer_code") or customer_company.get("customer_code")
     issued_by = [
         Paragraph("FROM", yellow_label),
         Paragraph(safe(issuer.get("name") or "Moneda Technologies"), party_heading),
@@ -225,7 +230,11 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     ]
     prepared_for = [
         Paragraph("TO", yellow_label), Paragraph(safe(customer_company.get("name") or customer.get("name")), party_heading),
-        Paragraph(lines(f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None, customer.get("address"), customer.get("email"), customer.get("phone")), party_body),
+        Paragraph(lines(
+            f"Customer code: {customer_code}" if customer_code else None,
+            f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None,
+            customer.get("address"), customer.get("email"), customer.get("phone"),
+        ), party_body),
     ]
     parties = Table([[issued_by, prepared_for]], colWidths=[86 * mm, 86 * mm], rowHeights=[34 * mm], splitByRow=0)
     parties.setStyle(TableStyle([
@@ -247,8 +256,10 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     ]
     table_data: list[list[Any]] = [header_row]
     for line in quotation.get("lines") or []:
+        article = line.get("article_no") or line.get("article") or line.get("sku")
+        article_line = f"<br/><font color='#70706b' size='6'>Art. {safe(article)}</font>" if article else ""
         product = Paragraph(
-            f"<b>{safe(line.get('product_name'))}</b>"
+            f"<b>{safe(line.get('product_name'))}</b>{article_line}"
             f"<br/><font color='#70706b' size='6'>{safe(line.get('description'))}</font>"
             f"<br/>{'<br/>'.join(safe(item) for item in _line_configuration_lines(line))}", normal,
         )
@@ -337,4 +348,15 @@ def render_quotation_pdf(quotation: dict[str, Any]) -> bytes:
     logo_path = _logo_path()
     content = _render_reportlab_pdf(quotation, logo_path)
     current_app.logger.info("quotation_pdf_generation quotation_id=%s renderer=reportlab format=pdf result=PASS", quotation.get("_id", "preview"))
+    return content
+
+
+def render_order_confirmation_pdf(order: dict[str, Any]) -> bytes:
+    """Render a persisted Order Confirmation using the quotation document layout."""
+    document = {**order, "document_type": "order_confirmation"}
+    content = _render_reportlab_pdf(document, _logo_path())
+    current_app.logger.info(
+        "order_confirmation_pdf_generation order_id=%s renderer=reportlab format=pdf result=PASS",
+        order.get("_id", "preview"),
+    )
     return content

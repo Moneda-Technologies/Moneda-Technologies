@@ -1,4 +1,4 @@
-import { api, jsonBody, patchBody } from "./client";
+import { api, apiEndpoint, jsonBody, patchBody } from "./client";
 import type { CartItem, CatalogOption, Category, Currency, Customer, DashboardData, PageResult, PriceHistoryEntry, PricingResource, Product, Quotation, SessionPayload } from "../types/domain";
 import type { CountryMeta } from "../config/customer-metadata";
 
@@ -110,15 +110,21 @@ export const orderApi = {
     { ...jsonBody(value), headers: { "Idempotency-Key": idempotencyKey } },
   ),
   sendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-confirmation`, jsonBody({})),
+  resendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/resend-confirmation`, jsonBody({})),
+  pdfUrl: (id: string, inline = false) => apiEndpoint(`/orders/${encodeURIComponent(id)}/pdf${inline ? "?preview=true" : ""}`),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };
 export const financeApi = {
   payments: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/payments${query ? `?${query}` : ""}`),
   createPayment: (value: unknown) => api<Record<string, unknown>>("/payments", jsonBody(value)),
+  updatePayment: (id: string, value: unknown) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}`, patchBody(value)),
   submitPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/submit`, jsonBody({})),
   confirmPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/confirm`, jsonBody({})),
   rejectPayment: (id: string, reason: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/reject`, jsonBody({ reason })),
   incentives: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/incentives${query ? `?${query}` : ""}`),
+  incentive: (id: string) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}`),
+  payIncentive: (id: string, paidAmount?: number) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}/pay`, jsonBody(paidAmount === undefined ? {} : { paid_amount: paidAmount })),
+  confirmIncentivePayment: (id: string, reference?: string) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}/confirm-payment`, jsonBody(reference ? { payment_reference: reference } : {})),
   creditNotes: () => api<{ items: Record<string, unknown>[]; total: number }>("/credit-notes"),
   createCreditNote: (value: unknown) => api<Record<string, unknown>>("/credit-notes", jsonBody(value)),
 };

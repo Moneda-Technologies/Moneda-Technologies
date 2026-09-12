@@ -24,7 +24,7 @@ from app.middleware.access import can_view_all_customers, customer_access_ids_fo
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
-from app.finance.service import DEFAULT_INCENTIVE_PERCENTAGE, INCENTIVE_ELIGIBLE_ROLES, INCENTIVE_PERCENTAGES
+from app.finance.service import INCENTIVE_CATEGORIES, INCENTIVE_ELIGIBLE_ROLES, INCENTIVE_PERCENTAGES
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 
 
@@ -34,6 +34,33 @@ PRICING_TYPES = {
     "fixed", "quantity", "per_piece", "per_bar", "per_sqm", "per_meter", "per_litre",
     "per_kg", "per_pack", "per_packet", "per_roll", "formula", "on_request",
 }
+
+
+def _can_configure_incentive(user: dict[str, Any] | None = None) -> bool:
+    """Category incentive configuration is a Superadmin-only control."""
+    return str((user or current_user() or {}).get("role_id") or "") == "superadmin"
+
+
+def _normalise_incentive_rates(value: Any) -> dict[str, float] | None:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("Incentive configuration must be a category-to-percentage object")
+    rates: dict[str, float] = {}
+    for category_id, raw_rate in value.items():
+        key = str(category_id or "").strip()
+        if not key:
+            raise ValueError("Every incentive configuration entry needs a category")
+        if key not in INCENTIVE_CATEGORIES:
+            raise ValueError("Incentive configuration may only include Blanket, Underpacking and Chemical")
+        try:
+            rate = float(raw_rate)
+        except (TypeError, ValueError):
+            raise ValueError("Incentive percentage must be 1% to 6% in whole-percent steps") from None
+        if rate not in INCENTIVE_PERCENTAGES:
+            raise ValueError("Incentive percentage must be 1% to 6% in whole-percent steps")
+        rates[key] = rate
+    return rates
 
 
 @bp.post("/products")
@@ -377,6 +404,9 @@ def list_users():
     store = current_app.extensions["store"]
     actor = current_user() or {}
     rows, total = store.list("users", limit=100, sort="name", direction=1)
+    incentive_categories = []
+    if str(actor.get("role_id") or "") == "superadmin":
+        incentive_categories = [{"_id": key, "name": name} for key, name in INCENTIVE_CATEGORIES.items()]
     roles = {row["_id"]: row for row in store.list("roles", limit=100)[0]}
     customer_rows, _ = store.list("customers", {"active": {"$ne": False}, "status": {"$ne": "archived"}}, limit=100_000)
     assigned_by_user: dict[str, list[str]] = {}
@@ -395,6 +425,8 @@ def list_users():
             # Incentive configuration is a Superadmin-only concern; do not
             # expose the value through the user-management API to other roles.
             row.pop("incentive_percentage", None)
+            row.pop("incentive_rates", None)
+            row.pop("incentive_categories", None)
         role = roles.get(row.get("role_id"), {})
         global_access = can_view_all_customers({**row, "permissions": role.get("permissions", [])})
         assigned_ids = list(dict.fromkeys(assigned_by_user.get(str(row.get("_id")), [])))
@@ -409,6 +441,13 @@ def list_users():
             "denied": sum(1 for device in device_rows if device.get("device_status") == DENIED),
             "revoked": sum(1 for device in device_rows if device.get("device_status") == REVOKED),
         }
+        if str(actor.get("role_id") or "") == "superadmin":
+            configured = row.get("incentive_rates") if isinstance(row.get("incentive_rates"), dict) else {}
+            if not configured:
+                config_rows, _ = store.list("incentive_configurations", {"user_id": row.get("_id")}, limit=10_000)
+                configured = {str(config.get("category_id")): config.get("incentive_percentage") for config in config_rows if config.get("category_id")}
+            row["incentive_rates"] = configured
+            row["incentive_categories"] = incentive_categories
     return success({"items": rows, "total": total})
 
 
@@ -591,7 +630,8 @@ def create_user():
     password = str(payload.get("password", ""))
     confirm_password = str(payload.get("confirm_password", ""))
     role_id = str(payload.get("role_id", "")).strip()
-    incentive_value = payload.get("incentive_percentage")
+    if "incentive_percentage" in payload or "incentive_rates" in payload:
+        return failure("Incentives are configured by category after the user is created.", status=422, error="category_incentive_configuration_required")
     store = current_app.extensions["store"]
 
     if len(name) < 2:
@@ -612,22 +652,6 @@ def create_user():
     role = store.find_one("roles", {"_id": role_id})
     if not role:
         return failure("Select a valid role.", status=422, error="invalid_role")
-    if role_id not in INCENTIVE_ELIGIBLE_ROLES:
-        if incentive_value not in (None, ""):
-            return failure("Incentive percentage applies only to Admin, Manager / Sales Admin and User accounts.", status=422, error="incentive_not_applicable")
-        incentive_value = None
-    elif incentive_value not in (None, ""):
-        try:
-            incentive_value = float(incentive_value)
-        except (TypeError, ValueError):
-            return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
-        if incentive_value not in INCENTIVE_PERCENTAGES:
-            return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
-    else:
-        # Invitations do not expose financial configuration. New eligible
-        # users receive the documented default until a Superadmin changes it.
-        incentive_value = DEFAULT_INCENTIVE_PERCENTAGE
-
     if store.find_one("users", {"username_normalized": username_normalized}) or store.find_one(
         "users", {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
     ):
@@ -667,7 +691,8 @@ def create_user():
         "active": True,
         "device_access_mode": device_access_mode,
         "invitation_email_status": "pending",
-        "incentive_percentage": incentive_value,
+        "incentive_percentage": None,
+        "incentive_rates": {},
     }
     try:
         row = store.insert_one("users", document)
@@ -765,40 +790,40 @@ def update_user(user_id: str):
     existing = store.find_one("users", {"_id": user_id})
     if not existing:
         return failure("User not found", status=404)
-    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "device_access_mode", "incentive_percentage"}
-    changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in allowed}
+    payload = request.get_json(silent=True) or {}
+    if "incentive_percentage" in payload:
+        return failure("Incentives must be configured by category", status=422, error="category_incentive_configuration_required")
+    allowed = {"name", "phone", "role_id", "company_ids", "customer_company_ids", "customer_ids", "active", "device_access_mode", "incentive_rates"}
+    changes = {key: value for key, value in payload.items() if key in allowed}
     if "device_access_mode" in changes and changes["device_access_mode"] not in {"any_authorized_device", "approved_devices_only"}:
         return failure("Invalid device access policy", status=422)
     target_role_id = str(changes.get("role_id") or existing.get("role_id") or "")
-    if "incentive_percentage" in changes:
-        if str((current_user() or {}).get("role_id") or "") != "superadmin":
-            return failure("Only a Superadmin can configure incentive percentages", status=403, error="superadmin_required")
+    if "incentive_rates" in changes:
+        if not _can_configure_incentive():
+            return failure("Only a Superadmin can configure category incentive percentages", status=403, error="incentive_configuration_forbidden")
         if target_role_id not in INCENTIVE_ELIGIBLE_ROLES:
-            if changes["incentive_percentage"] not in (None, ""):
-                return failure("Incentive percentage applies only to Admin, Manager / Sales Admin and User accounts.", status=422, error="incentive_not_applicable")
-            changes["incentive_percentage"] = None
+            if changes["incentive_rates"] not in (None, {}, ""):
+                return failure("Superadmin accounts do not have incentive configuration", status=422, error="incentive_not_applicable")
+            changes["incentive_rates"] = {}
         else:
             try:
-                rate = float(changes["incentive_percentage"])
-            except (TypeError, ValueError):
-                return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
-            if rate not in INCENTIVE_PERCENTAGES:
-                return failure("Incentive percentage must be from 0% to 6% in 0.5% increments.", status=422, error="invalid_incentive_percentage")
-            changes["incentive_percentage"] = rate
-    elif "role_id" in changes and target_role_id not in INCENTIVE_ELIGIBLE_ROLES:
+                changes["incentive_rates"] = _normalise_incentive_rates(changes["incentive_rates"])
+            except ValueError as exc:
+                return failure(str(exc), status=422, error="invalid_incentive_configuration")
+            unknown_categories = sorted(set(changes["incentive_rates"]) - set(INCENTIVE_CATEGORIES))
+            if unknown_categories:
+                return failure("Incentive configuration contains an unknown category", status=422, error="invalid_incentive_category", category_id=unknown_categories[0])
+    if "role_id" in changes and target_role_id not in INCENTIVE_ELIGIBLE_ROLES:
         # A role change to Superadmin (or a non-incentive role) must never
         # retain a stale percentage from the previous role.
         changes["incentive_percentage"] = None
+        changes["incentive_rates"] = {}
     elif "role_id" in changes and target_role_id in INCENTIVE_ELIGIBLE_ROLES:
         # Give a newly eligible user the migration default when no prior
         # percentage exists; preserve an already configured historical value.
-        raw_current_rate = existing.get("incentive_percentage")
-        try:
-            current_rate = float(raw_current_rate)
-        except (TypeError, ValueError):
-            current_rate = -1.0
-        if raw_current_rate in (None, "") or current_rate not in INCENTIVE_PERCENTAGES:
-            changes["incentive_percentage"] = DEFAULT_INCENTIVE_PERCENTAGE
+        # Category configuration is explicit.  Do not synthesize a scalar
+        # default when a user becomes eligible.
+        changes.setdefault("incentive_rates", {})
     actor = current_user() or {}
     if user_id == actor.get("_id") and "role_id" in changes and changes["role_id"] != existing.get("role_id"):
         return failure("You cannot change your own role", status=403)
@@ -842,6 +867,21 @@ def update_user(user_id: str):
     if changes.get("role_id") and not store.find_one("roles", {"_id": changes["role_id"]}):
         return failure("Role not found", status=422)
     row = store.update_one("users", {"_id": user_id}, changes)
+    if "incentive_rates" in changes:
+        configured = changes.get("incentive_rates") or {}
+        existing_configs, _ = store.list("incentive_configurations", {"user_id": user_id}, limit=10_000)
+        for config in existing_configs:
+            if str(config.get("category_id")) not in configured:
+                store.delete_one("incentive_configurations", {"_id": config.get("_id")})
+        for category_id, rate in configured.items():
+            store.update_one("incentive_configurations", {"user_id": user_id, "category_id": category_id}, {
+                "user_id": user_id, "category_id": category_id, "category_name": INCENTIVE_CATEGORIES[category_id], "incentive_percentage": rate,
+                "updated_by_user_id": actor.get("_id"), "updated_at": utcnow(),
+            }, upsert=True)
+        audit("incentive.configuration_updated", "user", user_id, {
+            "old_value": existing.get("incentive_rates") or {}, "new_value": configured,
+            "updated_by": actor.get("_id"),
+        })
     if changes.get("active") is False:
         current_app.logger.info("session_revoked user_id=%s reason=admin_deactivated", user_id)
     audit("user.update", "user", user_id, {"fields": sorted(changes)})

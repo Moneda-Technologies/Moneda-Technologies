@@ -63,13 +63,17 @@ const navGroups: NavGroup[] = [
     { id: "calculator", label: "Calculator", path: "/calculator", icon: "calculator", permission: "calculator.view" },
     { id: "cart", label: "Cart", path: "/cart", icon: "shopping-cart", permission: "cart.view" },
     { id: "quotations", label: "Quotations", path: "/quotations", icon: "file-text", permission: "quotations.view" },
-    { id: "orders", label: "Orders", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
+    { id: "orders", label: "Order Confirmations", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
+    { id: "incentives", label: "Incentives", path: "/incentives", icon: "badge-euro", permission: "incentives.view" },
+    { id: "credit-notes", label: "Credit Notes", path: "/credit-notes", icon: "file-minus", permission: "credit_notes.view" },
   ] },
   { key: "users", label: "Users", icon: "users", items: [
     { id: "user-list", label: "User List", path: "/users", icon: "users", permission: "users.view" },
     { id: "roles-permissions", label: "Roles & Permissions", path: "/users?section=roles", icon: "shield-check", permission: "users.view" },
-    { id: "incentives", label: "Incentives", path: "/incentives", icon: "badge-euro", permission: "incentives.view" },
     { id: "activity-devices", label: "Activity / Login Devices", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
+  ] },
+  { key: "payments", label: "Payments", icon: "landmark", items: [
+    { id: "payments", label: "Payment / Banking", path: "/payments", icon: "landmark", permission: "payments.view" },
   ] },
   { key: "settings", label: "Settings", icon: "settings", items: [
     { id: "settings-brand", label: "Settings", path: "/settings", icon: "palette", permission: "settings.view" },
@@ -103,6 +107,7 @@ export function renderShell(): HTMLElement {
   const nav = [
     renderSection("Home", renderDirect(directNav[0])),
     renderSection("Sales", renderGroup(navGroups[0])),
+    renderSection("Payments", renderGroup(navGroups[3])),
     renderSection("Users", renderGroup(navGroups[1])),
     renderSection("Reports", renderDirect(directNav[1])),
     renderSection("CRM", renderDirect(directNav[2])),

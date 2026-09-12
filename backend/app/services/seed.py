@@ -384,10 +384,8 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
 
     incentive_percentage_migration = "incentive-percentage-v4-zero-rate"
     if not store.find_one("system_migrations", {"_id": incentive_percentage_migration}):
-        # Incentives are applicable to Admin, Manager / Sales Admin and User
-        # users. Existing eligible users without a configured rate receive the
-        # documented 0% default; Superadmins and all other roles are explicitly
-        # non-applicable and retain no percentage.
+        # Normalize the legacy scalar field for old records. The later
+        # product-matrix migration makes the product map authoritative.
         eligible_roles = {"admin", "manager_sales_admin", "user"}
         users, _ = store.list("users", limit=100_000)
         for user in users:
@@ -407,6 +405,22 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             if configured not in {index / 2 for index in range(0, 13)}:
                 store.update_one("users", {"_id": user["_id"]}, {"incentive_percentage": 0.0})
         store.insert_one("system_migrations", {"_id": incentive_percentage_migration, "applied_at": utcnow()})
+
+    # Category-wise incentives are authoritative.  Do not infer a rate for
+    # every category from the legacy scalar field; Superadmin must explicitly
+    # configure each applicable category before an Order Confirmation can be
+    # created.
+    incentive_matrix_migration = "incentive-category-matrix-v1"
+    if not store.find_one("system_migrations", {"_id": incentive_matrix_migration}):
+        users, _ = store.list("users", limit=100_000)
+        for user in users:
+            role_id = str(user.get("role_id") or "")
+            store.update_one("users", {"_id": user["_id"]}, {"incentive_rates": {}, "incentive_percentage": None})
+        legacy_configs, _ = store.list("incentive_configurations", limit=100_000)
+        for config in legacy_configs:
+            if config.get("product_id") and not config.get("category_id"):
+                store.delete_one("incentive_configurations", {"_id": config.get("_id")})
+        store.insert_one("system_migrations", {"_id": incentive_matrix_migration, "applied_at": utcnow()})
 
     catalog = _catalog_seed(data_directory)
     families = catalog["families"]
