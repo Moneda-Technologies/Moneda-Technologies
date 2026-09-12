@@ -103,15 +103,22 @@ export function renderShell(): HTMLElement {
     const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
     return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}" aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
   };
+  // Resolve groups by their stable keys rather than array positions.  This
+  // prevents a reordered navGroups definition from putting Settings under
+  // Payments (or moving any other section) by accident.
+  const renderNamedGroup = (key: string) => {
+    const group = navGroups.find((candidate) => candidate.key === key);
+    return group ? renderGroup(group) : "";
+  };
   const renderSection = (label: string, content: string) => content ? `<div class="nav-section">${label}</div>${content}` : "";
   const nav = [
     renderSection("Home", renderDirect(directNav[0])),
-    renderSection("Sales", renderGroup(navGroups[0])),
-    renderSection("Payments", renderGroup(navGroups[3])),
-    renderSection("Users", renderGroup(navGroups[1])),
+    renderSection("Sales", renderNamedGroup("sales")),
+    renderSection("Payments", renderNamedGroup("payments")),
+    renderSection("Users", renderNamedGroup("users")),
     renderSection("Reports", renderDirect(directNav[1])),
+    renderSection("Settings", renderNamedGroup("settings")),
     renderSection("CRM", renderDirect(directNav[2])),
-    renderSection("Settings", renderGroup(navGroups[2])),
   ].join("");
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
