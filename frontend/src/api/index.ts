@@ -102,7 +102,7 @@ export const crmApi = {
   completeReminder: (id: string) => api<{ reminder: Record<string, unknown>; next_reminder?: Record<string, unknown> | null }>(`/reminders/${encodeURIComponent(id)}/complete`, jsonBody({})),
 };
 export const orderApi = {
-  list: (customerId?: string) => api<{ items: Record<string, unknown>[]; total: number }>(customerId ? `/orders?customer_id=${encodeURIComponent(customerId)}` : "/orders"),
+  list: (customerId?: string, limit?: number) => api<{ items: Record<string, unknown>[]; total: number }>(`/orders?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${limit ? `limit=${encodeURIComponent(String(limit))}` : ""}`.replace(/\?$/, "")),
   get: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`),
   configuration: (id: string) => api<{ quote: Quotation; defaults: Record<string, unknown> }>(`/quotations/${encodeURIComponent(id)}/order-configuration`),
   convert: (id: string, value: unknown = {}, idempotencyKey = crypto.randomUUID()) => api<Record<string, unknown>>(

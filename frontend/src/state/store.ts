@@ -56,7 +56,15 @@ class Store {
   }
 
   can(permission: string): boolean {
-    return this.value.user?.permissions.includes(permission) ?? false;
+    const user = this.value.user;
+    if (!user) return false;
+    if (user.permissions.includes(permission)) return true;
+    // These modules are part of every authenticated sales role's read scope.
+    // Keep this UI fallback for older sessions whose role document predates
+    // the finance-navigation migration; the backend remains authoritative for
+    // every request and still enforces customer/ownership scope.
+    const financeReadPermissions = new Set(["payments.view", "incentives.view", "credit_notes.view"]);
+    return financeReadPermissions.has(permission) && ["superadmin", "admin", "manager_sales_admin", "user"].includes(user.role_id);
   }
 }
 

@@ -1089,6 +1089,64 @@ def test_user_cannot_convert_another_users_quotation_outside_scope(app, client):
     assert app.extensions["store"].count("orders", {"quotation_id": quote["_id"]}) == 0
 
 
+def test_oc_owner_can_view_and_record_payment_and_incentive_but_not_confirm(app, client):
+    store = app.extensions["store"]
+    owner = add_test_user(app, "finance-owner")
+    store.update_one("users", {"_id": owner["_id"]}, {"device_access_mode": "any_authorized_device"})
+    store.update_one("customers", {"_id": "customer-demo-1"}, {"assigned_user_ids": [owner["_id"]]})
+    order = store.insert_one("orders", {
+        "_id": "finance-owner-order", "order_number": "MT-OC-FINANCE-001", "customer_id": "customer-demo-1",
+        "salesperson_id": owner["_id"], "created_by_user_id": owner["_id"], "order_amount": 458.70,
+        "totals": {"grand_total": 458.70}, "status": "Pending",
+    })
+    incentive = store.insert_one("incentives", {
+        "_id": "finance-owner-incentive", "order_id": order["_id"], "oc_number": order["order_number"],
+        "customer_id": "customer-demo-1", "salesperson_id": owner["_id"], "status": "PENDING PAYMENT",
+        "gross_incentive_amount": 22.94, "credit_note_deduction": 0, "paid_amount": 0, "net_payable_incentive": 22.94,
+        "incentive_lines": [],
+    })
+    _login_as_user(client, owner["_id"])
+    assert client.get(f"/api/v1/incentives/{incentive['_id']}").status_code == 200
+    assert client.get(f"/api/v1/payments?order_id={order['_id']}").status_code == 200
+    created = client.post("/api/v1/payments", json={
+        "order_id": order["_id"], "amount": 458.70, "payment_date": "2026-09-12",
+        "payment_mode": "Bank Transfer", "bank_name": "HDFC Bank", "utr": "UTR-OWNER-001",
+    })
+    assert created.status_code == 201
+    payment_id = created.json["data"]["_id"]
+    assert client.post(f"/api/v1/payments/{payment_id}/submit", json={}).status_code == 200
+    assert client.post(f"/api/v1/payments/{payment_id}/confirm", json={}).status_code == 403
+
+    other = add_test_user(app, "finance-other")
+    store.update_one("users", {"_id": other["_id"]}, {"device_access_mode": "any_authorized_device"})
+    _login_as_user(client, other["_id"])
+    assert client.get(f"/api/v1/incentives/{incentive['_id']}").status_code == 403
+    assert client.get(f"/api/v1/payments?order_id={order['_id']}").status_code == 403
+    assert client.post("/api/v1/payments", json={"order_id": order["_id"], "amount": 1, "payment_date": "2026-09-12"}).status_code == 403
+
+
+def test_authorized_admin_can_view_and_record_payment_but_not_confirm(app, client):
+    store = app.extensions["store"]
+    admin = add_test_user(app, "finance-admin", role_id="admin")
+    store.update_one("users", {"_id": admin["_id"]}, {"device_access_mode": "any_authorized_device"})
+    store.update_one("customers", {"_id": "customer-demo-1"}, {"assigned_user_ids": [admin["_id"]]})
+    order = store.insert_one("orders", {
+        "_id": "finance-admin-order", "order_number": "MT-OC-FINANCE-ADMIN-001", "customer_id": "customer-demo-1",
+        "order_amount": 100, "totals": {"grand_total": 100}, "status": "Pending",
+    })
+    incentive = store.insert_one("incentives", {
+        "_id": "finance-admin-incentive", "order_id": order["_id"], "customer_id": "customer-demo-1",
+        "salesperson_id": "finance-owner", "status": "PENDING PAYMENT", "gross_incentive_amount": 5,
+        "credit_note_deduction": 0, "paid_amount": 0, "net_payable_incentive": 5, "incentive_lines": [],
+    })
+    _login_as_user(client, admin["_id"])
+    assert client.get(f"/api/v1/incentives/{incentive['_id']}").status_code == 200
+    assert client.get(f"/api/v1/payments?order_id={order['_id']}").status_code == 200
+    created = client.post("/api/v1/payments", json={"order_id": order["_id"], "amount": 100, "payment_date": "2026-09-12"})
+    assert created.status_code == 201
+    assert client.post(f"/api/v1/payments/{created.json['data']['_id']}/confirm", json={}).status_code == 403
+
+
 def test_order_confirmation_configuration_is_server_authoritative(app, authenticated):
     store = app.extensions["store"]
     customer = store.find_one("customers", {"_id": "customer-demo-1"}) or {}

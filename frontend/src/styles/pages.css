@@ -311,6 +311,29 @@
 .field-readonly { background: #f5f5f3; border: 1px solid var(--border); border-radius: 7px; display: grid; gap: 4px; padding: 10px 11px; }
 .field-readonly span { color: var(--text-muted); font-size: .62rem; }.field-readonly strong { font-size: .76rem; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }.modal-actions .button { width: auto; }
+.payment-workflow-modal { gap: 14px; }
+.payment-workflow-modal > .panel:not(.payment-summary-card) { display: none; }
+.payment-workflow-modal > .payment-summary-card { background: #f7f7f4; border-left: 3px solid var(--yellow); }
+.payment-workflow-modal > .payment-summary-card .detail-grid { gap: 12px 18px; }
+.payment-workflow-modal > .panel:not(.payment-summary-card) > .eyebrow { display: block; margin-bottom: 14px; }
+.payment-workflow { gap: 0; }
+.payment-workflow-section { border-bottom: 1px solid var(--border); padding: 18px 0; }
+.payment-workflow-section:first-child { padding-top: 0; }
+.payment-workflow-section:last-of-type { border-bottom: 0; }
+.payment-workflow-section .section-title { align-items: center; display: flex; gap: 12px; margin-bottom: 16px; }
+.payment-workflow-section .section-title h2 { font-size: 1.08rem; margin: 3px 0 0; }
+.payment-workflow-section .step-number { align-items: center; background: var(--primary-black); border-radius: 50%; color: #fff; display: inline-flex; flex: 0 0 34px; font-size: .72rem; font-weight: 750; height: 34px; justify-content: center; }
+.readonly-payment-details { background: #f7f7f4; border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.readonly-payment-details > div { display: grid; gap: 4px; }
+.readonly-payment-details span, .payment-summary-section span { color: var(--text-muted); font-size: .76rem; }
+.readonly-payment-details strong, .payment-summary-section strong { color: var(--text); font-size: .96rem; }
+.payment-summary-section { background: #fffbed; border: 1px solid #eed36a; border-left: 3px solid var(--brand-yellow); border-radius: 8px; padding: 16px; }
+.payment-summary-section + .field-error { display: block; margin-top: 10px; }
+.banking-table { overflow-x: auto; }
+.banking-table table { min-width: 1120px; }
+.banking-table .table-actions { align-items: center; display: flex; gap: 6px; white-space: nowrap; }
+.oc-detail-actions { border-top: 1px solid var(--border); margin-top: 2px; padding-top: 14px; }
+.incentive-status-card { background: #f7f7f4; border-left: 3px solid var(--yellow); }
 .oc-recipients { display: grid; gap: 8px; }
 .oc-recipients > strong { font-size: .86rem; }
 .oc-recipients .form-hint { margin: 0; text-align: left; }

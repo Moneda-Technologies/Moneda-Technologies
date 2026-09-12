@@ -10,7 +10,7 @@ import { logout } from "../auth/logout";
 import { createWatermark, setWatermarkEnabled } from "../components/watermark";
 
 interface NavItem { id: string; label: string; path: string; icon: string; permission: string }
-interface NavGroup { key: string; label: string; icon: string; items: NavItem[] }
+interface NavGroup { key: string; label: string; icon: string; items: NavItem[]; defaultPath?: string }
 type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
 
 let fxSnapshot: FxSnapshot | null = null;
@@ -72,8 +72,12 @@ const navGroups: NavGroup[] = [
     { id: "roles-permissions", label: "Roles & Permissions", path: "/users?section=roles", icon: "shield-check", permission: "users.view" },
     { id: "activity-devices", label: "Activity / Login Devices", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
   ] },
-  { key: "payments", label: "Payments", icon: "landmark", items: [
-    { id: "payments", label: "Payment / Banking", path: "/payments", icon: "landmark", permission: "payments.view" },
+  { key: "finance", label: "Finance", icon: "landmark", defaultPath: "/banking", items: [
+    { id: "banking", label: "Banking", path: "/banking", icon: "landmark", permission: "payments.view" },
+    { id: "payments", label: "Payments", path: "/payments", icon: "wallet-cards", permission: "payments.view" },
+    { id: "pending-payments", label: "Pending Payments", path: "/payments?status=AWAITING%20SUPERADMIN%20CONFIRMATION", icon: "clock-3", permission: "payments.view" },
+    { id: "bank-transactions", label: "Bank Transactions", path: "/payments?view=transactions", icon: "arrow-left-right", permission: "payments.view" },
+    { id: "reconciliation", label: "Reconciliation", path: "/payments?view=reconciliation", icon: "clipboard-check", permission: "payments.view" },
   ] },
   { key: "settings", label: "Settings", icon: "settings", items: [
     { id: "settings-brand", label: "Settings", path: "/settings", icon: "palette", permission: "settings.view" },
@@ -101,7 +105,7 @@ export function renderShell(): HTMLElement {
     const visible = group.items.filter((item) => appStore.can(item.permission));
     if (!visible.length) return "";
     const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
-    return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}" aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
+    return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}"${group.defaultPath ? ` data-nav-default="${group.defaultPath}"` : ""} aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
   };
   // Resolve groups by their stable keys rather than array positions.  This
   // prevents a reordered navGroups definition from putting Settings under
@@ -114,7 +118,7 @@ export function renderShell(): HTMLElement {
   const nav = [
     renderSection("Home", renderDirect(directNav[0])),
     renderSection("Sales", renderNamedGroup("sales")),
-    renderSection("Payments", renderNamedGroup("payments")),
+    renderSection("Finance", renderNamedGroup("finance")),
     renderSection("Users", renderNamedGroup("users")),
     renderSection("Reports", renderDirect(directNav[1])),
     renderSection("Settings", renderNamedGroup("settings")),
@@ -239,7 +243,11 @@ export function renderShell(): HTMLElement {
       } else if (!open && openFlyoutId === groupId) openFlyoutId = null;
       setGroupOpen(group, open);
     };
-    parent?.addEventListener("click", () => openOnlyThisGroup(!group.classList.contains("is-open")));
+    parent?.addEventListener("click", () => {
+      const defaultPath = parent.dataset.navDefault;
+      if (defaultPath) window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: defaultPath }));
+      openOnlyThisGroup(!group.classList.contains("is-open"));
+    });
     group.addEventListener("mouseenter", () => {
       if (!root.classList.contains("sidebar-collapsed")) return;
       window.clearTimeout(navCloseTimer); openOnlyThisGroup(true);

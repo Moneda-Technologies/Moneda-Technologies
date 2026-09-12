@@ -13,7 +13,7 @@ from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.codes import available_customer_code
 from app.finance.service import IncentiveConfigurationError, create_incentive_for_order, validate_incentive_configuration
-from app.middleware.access import can_view_all_customers, current_user, enforce_active_customer, enforce_customer, login_required, permission_required, permitted_customer_query
+from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.quotations.pdf import render_order_confirmation_pdf
@@ -48,6 +48,41 @@ def _normalise_recipients(values) -> list[str]:
             if address not in result:
                 result.append(address)
     return result
+
+
+def _order_customer_id(order: dict) -> str:
+    return str(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id") or "")
+
+
+def _customer_access(actor: dict, customer_id: str) -> bool:
+    if not customer_id:
+        return False
+    if str(actor.get("role_id") or "") == "superadmin":
+        return True
+    if str(actor.get("role_id") or "") != "admin":
+        return enforce_customer(customer_id)
+    customer = customer_record(customer_id) or {}
+    actor_id = str(actor.get("_id") or "")
+    return actor_id in {str(value) for value in (customer.get("assigned_user_ids") or []) if value} or str(customer.get("created_by_user_id") or "") == actor_id
+
+
+def _can_access_order_record(order: dict, user: dict | None = None) -> bool:
+    """Authorize an OC by global scope, explicit owner, or customer scope."""
+    actor = user or current_user() or {}
+    if str(actor.get("role_id") or "") == "superadmin":
+        return True
+    actor_id = str(actor.get("_id") or "")
+    owner_ids = {
+        str(order.get(field) or "")
+        for field in ("salesperson_id", "prepared_by_user_id", "created_by_user_id", "user_id")
+        if order.get(field)
+    }
+    snapshot = order.get("salesperson_snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("_id"):
+        owner_ids.add(str(snapshot["_id"]))
+    if actor_id in owner_ids and str(actor.get("role_id") or "") in {"user", "manager_sales_admin"}:
+        return bool(_order_customer_id(order))
+    return _customer_access(actor, _order_customer_id(order))
 
 
 def _quotation_recipients(store, quotation: dict) -> tuple[list[str], list[str], list[str]]:
@@ -326,17 +361,16 @@ def _mark_order_email_failed(order: dict, exc: Exception) -> None:
 def list_orders():
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     store = current_app.extensions["store"]
+    user = current_user() or {}
     if customer_id:
-        if not enforce_active_customer(customer_id):
+        if str(user.get("role_id") or "") != "superadmin" and not _customer_access(user, str(customer_id)):
             return failure("Customer access denied", status=403)
         query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
     else:
-        user = current_user() or {}
-        if can_view_all_customers(user):
+        if str(user.get("role_id") or "") == "superadmin":
             query = {}
         else:
-            customers, _ = store.list("customers", permitted_customer_query(user), limit=100_000)
-            customer_ids = [str(row["_id"]) for row in customers if row.get("_id") and not row.get("is_issuer")]
+            customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
             query = ({"$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
     if request.args.get("status"):
         query["status"] = request.args["status"]
@@ -368,7 +402,7 @@ def get_order(order_id: str):
     order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     return success(order)
 
@@ -380,7 +414,7 @@ def send_order_confirmation(order_id: str):
     order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     try:
         pdf, order = _ensure_order_pdf(order)
@@ -410,7 +444,7 @@ def order_confirmation_pdf(order_id: str):
     order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     try:
         content, order = _ensure_order_pdf(order)
@@ -430,7 +464,7 @@ def resend_order_confirmation(order_id: str):
     order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     try:
         pdf, order = _ensure_order_pdf(order)
@@ -459,7 +493,7 @@ def send_order_status(order_id: str):
     order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     try:
         result = _send_order_email(order, "order_status")
@@ -648,7 +682,7 @@ def update_order(order_id: str):
     order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
-    if not enforce_customer(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")):
+    if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
     if order.get("financial_locked") and (current_user() or {}).get("role_id") != "superadmin":
         return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")

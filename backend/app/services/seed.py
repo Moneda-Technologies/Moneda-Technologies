@@ -394,6 +394,22 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": finance_navigation_migration, "applied_at": utcnow()})
 
+    # Reconcile the remaining finance navigation/entry permissions for the
+    # standard sales roles from the canonical role policy. This is deliberately
+    # an allow-list intersection: no role receives a permission that is not
+    # already defined for it in ROLE_PERMISSIONS, and bank confirmation stays
+    # Superadmin-only in the route guard below.
+    finance_role_baseline_migration = "finance-role-baseline-v1"
+    if not store.find_one("system_migrations", {"_id": finance_role_baseline_migration}):
+        finance_permissions = {"payments.view", "payments.create", "incentives.view", "credit_notes.view"}
+        for role_id, canonical_permissions in ROLE_PERMISSIONS.items():
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.update(finance_permissions.intersection(canonical_permissions))
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": finance_role_baseline_migration, "applied_at": utcnow()})
+
     pricing_policy_migration = "eur-only-no-tax-v1"
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
         # This deliberately does not rewrite historical quotations or customer tax fields.

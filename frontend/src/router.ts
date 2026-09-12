@@ -8,7 +8,7 @@ import { dashboardPage } from "./pages/dashboard";
 import { orderDetailPage, ordersPage } from "./pages/orders";
 import { cartPage, quotationDetailPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "./pages/quotations";
 import { reportDetailPage, reportsPage } from "./pages/reports";
-import { creditNotesPage, incentivesPage, paymentsPage } from "./pages/finance";
+import { bankingPage, creditNotesPage, incentivesPage, paymentsPage } from "./pages/finance";
 import { companySelectionPage } from "./pages/company-selection";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
@@ -37,6 +37,7 @@ const routes: Record<string, PageFactory> = {
   "/customers": customersPage,
   "/quotations": quotationsPage,
   "/orders": ordersPage,
+  "/banking": bankingPage,
   "/payments": paymentsPage,
   "/incentives": incentivesPage,
   "/credit-notes": creditNotesPage,
