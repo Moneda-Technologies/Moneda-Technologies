@@ -57,7 +57,7 @@
 .sidebar-foot strong { font-size: .71rem; }
 .sidebar-foot span { color: #858585; font-size: .6rem; margin-top: 3px; }
 .sidebar-foot a { color: #6e6e6e; margin-left: auto; }
-.workspace { margin-left: var(--sidebar-width); min-height: 100vh; position: relative; transition: margin .2s ease; z-index: 1; }
+.workspace { margin-left: var(--sidebar-width); min-height: 100vh; min-width: 0; position: relative; transition: margin .2s ease; z-index: 1; }
 .topbar { align-items: center; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--border); display: flex; height: var(--topbar-height); justify-content: space-between; padding: 0 28px; position: sticky; top: 0; z-index: 30; }
 .search-trigger { align-items: center; background: #f4f4f2; border: 1px solid #e5e5e2; border-radius: 7px; color: #8b8e88; display: flex; font-size: .72rem; gap: 8px; height: 37px; max-width: 420px; padding: 0 10px; text-align: left; width: 38vw; }
 .search-trigger svg { height: 15px; width: 15px; }
@@ -112,7 +112,7 @@
 .demo-pill { align-items: center; background: #fffae3; border: 1px solid #f0e2a0; border-radius: 20px; color: #7a5f00; display: flex; font-size: .62rem; font-weight: 750; gap: 6px; padding: 6px 9px; }
 .demo-pill span { animation: demo-pulse 1.8s ease infinite; background: var(--brand-yellow); border-radius: 50%; height: 6px; width: 6px; }
 @keyframes demo-pulse { 50% { box-shadow: 0 0 0 4px rgba(242,197,0,.15); } }
-#main-content { padding: 0 28px 45px; }
+#main-content { min-width: 0; padding: 0 28px 45px; }
 .page { margin: 0 auto; max-width: 1500px; }
 .page-header { align-items: flex-end; display: flex; justify-content: space-between; min-height: 139px; padding: 26px 0 23px; }
 .breadcrumb { color: #92958f; font-size: .65rem; font-weight: 650; margin-bottom: 11px; }
@@ -185,10 +185,14 @@
 }
 
 @media (max-width: 560px) {
+  .topbar { gap: 6px; min-width: 0; }
+  .top-actions { flex: 0 1 auto; gap: 4px; min-width: 0; }
   .search-trigger span { display: none; }
   .search-trigger { flex: 0 0 38px; justify-content: center; margin-left: auto; }
-  .top-actions { gap: 6px; }
-  .compact-select select { max-width: 130px; }
+  .customer-select { max-width: 112px; min-width: 0; }
+  .customer-select select { max-width: 112px; min-width: 0; padding-left: 7px; padding-right: 20px; }
+  .currency-select select { max-width: 68px; padding-left: 7px; padding-right: 20px; width: 68px; }
+  .compact-select select { height: 36px; }
   .page-header h1 { font-size: 2rem; }
   .page-actions { overflow-x: auto; }
   .page-actions .button { flex: 0 0 auto; }

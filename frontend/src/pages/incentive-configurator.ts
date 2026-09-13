@@ -118,6 +118,50 @@ export async function renderIncentiveConfigurator(_page: HTMLElement, body: HTML
       const heading = `Manager Incentive Rules (${customerTypeLabel(filter.customerType)})`;
       host.innerHTML = visibleRows.length ? `<div class="incentive-product-rule-heading"><div><span class="eyebrow">Manager Incentives</span><h3 id="incentive-rules-heading">${escapeHtml(heading)}</h3><p>Manager team and creator rates are shown independently for each product type.</p></div><span class="incentive-rule-count">${visibleRows.length} rules</span></div><div class="data-table incentive-product-rule-table"><table><thead><tr><th>Manager</th><th>Connected Users</th><th>Customer Type</th><th>Product Type</th><th>Manager Team Incentive</th><th>Manager Creator Incentive</th><th>Status</th><th>Actions</th></tr></thead><tbody>${visibleRows.map((row) => `<tr><td><strong>${escapeHtml(nameOf(row.manager))}</strong><small>${escapeHtml(row.manager?.email || "")}</small></td><td>${row.manager?.connected_users.length || 0}</td><td>${escapeHtml(customerTypeLabel(row.customerType))}</td><td>${escapeHtml(row.product.product_type_name)}</td><td>${escapeHtml(rateText(row.primary))}</td><td>${escapeHtml(rateText(row.secondary))}</td><td>${statusBadge(row.status)}</td><td><button type="button" class="button button-quiet incentive-product-edit-button" data-row-edit="manager:${escapeHtml(row.manager?._id || "")}:${escapeHtml(row.product.product_type_id)}:${escapeHtml(row.customerType)}"><i data-lucide="pencil"></i>Edit</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("users", "No incentive rules match", "Adjust the filters to view active product-level rates.");
     }
+    // Add semantic labels/classes after rendering so the same data table can
+    // reflow into condensed tablet columns and mobile cards without changing
+    // the underlying row data or edit behaviour.
+    const table = host.querySelector<HTMLTableElement>(".incentive-product-rule-table table");
+    if (table) {
+      const headers = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th"));
+      const headerNames = headers.map((header) => header.textContent?.trim() || "");
+      const rateIndexes = activeView === "users"
+        ? [headerNames.indexOf("User Incentive"), headerNames.indexOf("Manager Team Incentive")]
+        : [headerNames.indexOf("Manager Team Incentive"), headerNames.indexOf("Manager Creator Incentive")];
+      rateIndexes.forEach((index) => {
+        if (index >= 0) headers[index].classList.add(activeView === "users" && index === rateIndexes[0] ? "incentive-user-rate-column" : activeView === "managers" && index === rateIndexes[1] ? "incentive-creator-rate-column" : "incentive-team-rate-column");
+      });
+      const combinedIndex = rateIndexes[0] >= 0 ? rateIndexes[0] : -1;
+      if (combinedIndex >= 0) {
+        const combinedHeader = document.createElement("th");
+        combinedHeader.className = "incentive-combined-rate-column";
+        combinedHeader.textContent = "Incentives";
+        headers[combinedIndex].after(combinedHeader);
+        table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => {
+          const cells = Array.from(row.children) as HTMLTableCellElement[];
+          const firstRate = cells[rateIndexes[0]];
+          const secondRate = cells[rateIndexes[1]];
+          if (!firstRate || !secondRate) return;
+          const combined = document.createElement("td");
+          combined.className = "incentive-combined-rate-column";
+          combined.dataset.label = "Incentives";
+          const firstLabel = activeView === "users" ? "User" : "Team";
+          const secondLabel = activeView === "users" ? "Manager" : "Creator";
+          combined.innerHTML = `<span><span>${firstLabel}</span><strong>${escapeHtml(firstRate.textContent?.trim() || "-")}</strong></span><span><span>${secondLabel}</span><strong>${escapeHtml(secondRate.textContent?.trim() || "-")}</strong></span>`;
+          secondRate.after(combined);
+        });
+      }
+      const labels = activeView === "users"
+        ? ["User", "Manager", "Customer Type", "Product Type", "User Incentive", "Manager Team Incentive", "Incentives", "Status", "Actions"]
+        : ["Manager", "Connected Users", "Customer Type", "Product Type", "Manager Team Incentive", "Manager Creator Incentive", "Incentives", "Status", "Actions"];
+      table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => Array.from(row.children).forEach((cell, index) => {
+        const element = cell as HTMLTableCellElement;
+        element.dataset.label = labels[index] || "";
+        if (labels[index] === "User Incentive") element.classList.add("incentive-user-rate-column");
+        if (labels[index] === "Manager Team Incentive") element.classList.add("incentive-team-rate-column");
+        if (labels[index] === "Manager Creator Incentive") element.classList.add("incentive-creator-rate-column");
+      }));
+    }
     host.querySelectorAll<HTMLButtonElement>("[data-row-edit]").forEach((button) => button.addEventListener("click", () => {
       const [view, id, productId, customerType] = String(button.dataset.rowEdit || "").split(":");
       const product = view === "users" ? data.users.find((user) => user._id === id)?.configurations.find((item) => item.product_type_id === productId && item.customer_type === customerType) : data.managers.find((manager) => manager._id === id)?.configurations.find((item) => item.product_type_id === productId && item.customer_type === customerType);

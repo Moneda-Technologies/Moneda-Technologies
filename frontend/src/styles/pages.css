@@ -427,6 +427,74 @@
 .customer-access-modal-heading span { color: var(--text-muted); font-size: .78rem; }
 .customer-access-modal-options { max-height: 260px; }
 .customer-access-modal-options .customer-access-option { padding: 10px; }
+
+/* Incentive rules responsive layout. Keep the desktop table readable, then
+   reduce redundant rate columns on tablets and switch to labelled cards on
+   phones so content never forces the page wider than its viewport. */
+.incentive-configurator,
+.incentive-configurator-head,
+.incentive-configurator-filters,
+.incentive-product-configurations,
+.incentive-product-rule-heading,
+.incentive-product-rule-table { box-sizing: border-box; max-width: 100%; min-width: 0; width: 100%; }
+.incentive-configurator-head > div,
+.incentive-product-rule-heading > div,
+.incentive-configurator-filters label { min-width: 0; }
+.incentive-configurator-head h2,
+.incentive-configurator-head p,
+.incentive-product-rule-heading h3,
+.incentive-product-rule-heading p { overflow-wrap: anywhere; }
+.incentive-product-rule-table { overflow-x: auto; }
+.incentive-product-rule-table table { min-width: 0; table-layout: fixed; width: 100%; }
+.incentive-product-rule-table td,
+.incentive-product-rule-table th { overflow-wrap: anywhere; white-space: normal; }
+.incentive-product-rule-table td:first-child strong,
+.incentive-product-rule-table td:first-child small { overflow-wrap: anywhere; word-break: break-word; }
+.incentive-combined-rate-column { display: none; }
+.incentive-product-rule-table .incentive-combined-rate-column > span { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
+.incentive-product-rule-table .incentive-combined-rate-column > span > span { color: var(--text-muted); font-size: .72rem; }
+
+@media (max-width: 1023px) {
+  .incentive-product-rule-table { overflow-x: visible; }
+  .incentive-product-rule-table table { min-width: 0; table-layout: fixed; }
+  .incentive-product-rule-table .incentive-user-rate-column,
+  .incentive-product-rule-table .incentive-team-rate-column,
+  .incentive-product-rule-table .incentive-creator-rate-column { display: none; }
+  .incentive-product-rule-table .incentive-combined-rate-column { display: table-cell; }
+  .incentive-product-rule-table th,
+  .incentive-product-rule-table td { padding-left: 10px; padding-right: 10px; }
+}
+
+@media (max-width: 620px) {
+  .incentive-product-rule-heading { align-items: stretch; flex-direction: column; gap: 10px; }
+  .incentive-rule-count { align-self: flex-start; }
+  .incentive-product-rule-table { overflow: visible; }
+  .incentive-product-rule-table table,
+  .incentive-product-rule-table tbody,
+  .incentive-product-rule-table tr,
+  .incentive-product-rule-table td { display: block; width: 100%; }
+  .incentive-product-rule-table thead { display: none; }
+  .incentive-product-rule-table tbody { display: grid; gap: 12px; }
+  .incentive-product-rule-table tr { background: #fff; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 10px; padding: 14px; }
+  .incentive-product-rule-table td,
+  .incentive-product-rule-table td:first-child { align-items: flex-start; border: 0; display: flex !important; gap: 12px; justify-content: space-between; min-width: 0; padding: 0; }
+  .incentive-product-rule-table td::before { color: var(--text-muted); content: attr(data-label); flex: 0 0 42%; font-size: .68rem; font-weight: 800; letter-spacing: .05em; line-height: 1.35; text-transform: uppercase; }
+  .incentive-product-rule-table td:first-child { display: grid !important; gap: 2px; }
+  .incentive-product-rule-table td:first-child::before { display: none; }
+  .incentive-product-rule-table td:first-child strong,
+  .incentive-product-rule-table td:first-child small { min-width: 0; }
+  .incentive-product-rule-table td:first-child strong { font-size: .94rem; }
+  .incentive-product-rule-table td:first-child small { font-size: .75rem; }
+  .incentive-product-rule-table td.incentive-user-rate-column,
+  .incentive-product-rule-table td.incentive-team-rate-column,
+  .incentive-product-rule-table td.incentive-creator-rate-column { display: none !important; }
+  .incentive-product-rule-table .incentive-combined-rate-column { display: grid !important; gap: 5px; }
+  .incentive-product-rule-table .incentive-combined-rate-column::before { align-self: start; }
+  .incentive-product-rule-table .incentive-combined-rate-column > span { min-width: 0; }
+  .incentive-product-rule-table .incentive-combined-rate-column > span > strong { font-size: .9rem; }
+  .incentive-product-rule-table td:last-child { align-items: center; }
+  .incentive-product-rule-table .incentive-product-edit-button { min-height: 38px; min-width: 0; }
+}
 .customer-access-modal-options .customer-access-option.is-selected { background: #f3f4f2; }
 .customer-access-modal-options .customer-access-option span { display: grid; gap: 3px; }
 .customer-access-modal-options .customer-access-option small { display: block; }
