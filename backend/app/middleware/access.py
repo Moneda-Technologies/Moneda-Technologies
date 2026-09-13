@@ -7,6 +7,7 @@ from flask import current_app, g, request, session
 
 from app.api.responses import failure
 from app.devices.service import enforce_device_access
+from app.services.business_logic import customer_ids_for_user
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -149,13 +150,8 @@ def customer_access_ids_for_user(user_id: str | None, *, include_created: bool =
     if not user_id:
         return []
     store = current_app.extensions["store"]
-    clauses: list[dict[str, Any]] = [{"assigned_user_ids": user_id}]
-    if include_created:
-        clauses.append({"created_by_user_id": user_id})
-    rows, _ = store.list("customers", {
-        "active": {"$ne": False}, "status": {"$ne": "archived"}, "$or": clauses,
-    }, limit=100_000, sort="name", direction=1)
-    return list(dict.fromkeys(str(row["_id"]) for row in rows if row.get("_id") and not row.get("is_issuer")))
+    user = store.find_one("users", {"_id": user_id}) or {"_id": user_id}
+    return customer_ids_for_user(store, user, include_created=include_created)
 
 
 def customer_access_summary(user: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -240,8 +236,8 @@ def permitted_customer_query(user: dict[str, Any] | None = None) -> dict[str, An
     query: dict[str, Any] = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
     if can_view_all_customers(user):
         return query
-    user_id = user.get("_id")
-    query["$or"] = [{"assigned_user_ids": user_id}, {"created_by_user_id": user_id}]
+    ids = customer_ids_for_user(current_app.extensions["store"], user)
+    query["_id"] = {"$in": ids}
     return query
 
 
@@ -253,9 +249,7 @@ def enforce_customer(customer_id: str | None) -> bool:
         return False
     if can_view_all_customers(user):
         return True
-    customer = customer_record(customer_id) or {}
-    assigned = {str(value) for value in (customer.get("assigned_user_ids") or []) if value}
-    return str(user.get("_id") or "") in assigned or str(customer.get("created_by_user_id") or "") == str(user.get("_id") or "")
+    return str(customer_id) in set(customer_ids_for_user(current_app.extensions["store"], user))
 
 
 def enforce_company(company_id: str | None) -> bool:

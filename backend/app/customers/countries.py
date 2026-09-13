@@ -6,8 +6,11 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from app.services.data_paths import data_file
 
-COUNTRY_CATALOGUE_PATH = Path(__file__).resolve().parents[3] / "data" / "countries.json"
+
+DATA_DIRECTORY = Path(__file__).resolve().parents[3] / "data"
+COUNTRY_CATALOGUE_PATH = data_file(DATA_DIRECTORY, "countries.json")
 
 
 @lru_cache(maxsize=1)

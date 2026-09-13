@@ -6,10 +6,30 @@ from html import escape
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.finance.service import activate_incentive, money, recompute_incentive_totals
+from app.finance.service import (
+    PAYMENT_STATUS_AWAITING,
+    PAYMENT_STATUS_CONFIRMED,
+    PAYMENT_STATUS_REJECTED,
+    activate_incentive,
+    is_confirmed_payment,
+    money,
+    payment_amount,
+    payment_rollup,
+    recompute_incentive_totals,
+    sync_order_payment_state,
+)
+from app.finance.bank_details import (
+    BANK_DETAIL_FIELDS,
+    audit_bank_diff,
+    can_edit_bank_details,
+    can_view_bank_details,
+    normalize_bank_changes,
+    serialize_bank_details,
+)
 from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required, permission_required_any
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.services.business_logic import accessible_user_ids
 
 
 bp = Blueprint("finance", __name__, url_prefix="/api")
@@ -49,6 +69,14 @@ def _user_id(user: dict | None = None) -> str:
     return str((user or current_user() or {}).get("_id") or "")
 
 
+def _bank_detail_permission(actor: dict | None = None) -> bool:
+    actor = actor or current_user() or {}
+    role = str(actor.get("role_id") or "")
+    return role in {"superadmin", "admin", "manager_sales_admin", "manager", "user"} and (
+        role in {"superadmin", "admin"} or "bank_details.view" in set(actor.get("permissions") or [])
+    )
+
+
 def _order_customer_id(order: dict) -> str:
     return str(order.get("customer_id") or order.get("customer_company_id") or order.get("company_id") or "")
 
@@ -79,6 +107,8 @@ def _customer_access(actor: dict, customer_id: str) -> bool:
         return True
     if str(actor.get("role_id") or "") != "admin":
         return enforce_customer(customer_id)
+    if "customers.view_all" in set(actor.get("permissions") or []):
+        return True
     customer = customer_record(customer_id) or {}
     actor_id = _user_id(actor)
     return actor_id in {str(value) for value in (customer.get("assigned_user_ids") or []) if value} or str(customer.get("created_by_user_id") or "") == actor_id
@@ -91,15 +121,12 @@ def _can_access_order(order: dict, user: dict | None = None) -> bool:
     if str(actor.get("role_id") or "") == "superadmin":
         return True
     customer_id = _order_customer_id(order)
-    owner = _user_id(actor) in _order_owner_ids(order)
-    # The OC relationship is authoritative for its creator/salesperson. This
-    # keeps an owner from being blocked by a missing legacy customer assignment
-    # while still requiring customer scope for other sales users/managers.
-    if owner and str(actor.get("role_id") or "") in {"user", "manager_sales_admin"}:
-        return bool(customer_id)
     if not _customer_access(actor, customer_id):
         return False
-    return owner or str(actor.get("role_id") or "") in {"admin", "manager_sales_admin"}
+    # Payment visibility is customer-assignment based. A normal user may work
+    # with every eligible OC for an assigned customer, but cannot gain access
+    # merely by changing an order/customer identifier in the request.
+    return str(actor.get("role_id") or "") in {"admin", "manager_sales_admin", "user"}
 
 
 def _can_view_payment(payment: dict, user: dict | None = None) -> bool:
@@ -114,10 +141,12 @@ def _can_record_payment(order: dict, user: dict | None = None) -> bool:
     actor = user or current_user() or {}
     if not _can_access_order(order, actor):
         return False
-    role_id = str(actor.get("role_id") or "")
-    if role_id in {"admin", "superadmin", "manager_sales_admin"}:
-        return True
-    return role_id == "user" and _user_id(actor) in _order_owner_ids(order)
+    return str(actor.get("role_id") or "") in {"admin", "superadmin", "manager_sales_admin", "user"}
+
+
+def _can_create_payment(user: dict | None = None) -> bool:
+    actor = user or current_user() or {}
+    return str(actor.get("role_id") or "") == "superadmin" or bool({"payments.create", "payments.manage"}.intersection(set(actor.get("permissions") or [])))
 
 
 def _can_view_incentive(row: dict, user: dict | None = None) -> bool:
@@ -127,6 +156,15 @@ def _can_view_incentive(row: dict, user: dict | None = None) -> bool:
     if str(actor.get("role_id") or "") == "superadmin":
         return True
     actor_id = _user_id(actor)
+    if str(actor.get("role_id") or "") in {"manager", "manager_sales_admin"}:
+        team_ids = set(accessible_user_ids(_store(), actor))
+        order = _order(str(row.get("order_id") or ""))
+        owner_ids = _order_owner_ids(order) if order else set()
+        return bool(
+            str(row.get("salesperson_id") or "") in team_ids
+            or owner_ids.intersection(team_ids)
+            or (order and _can_access_order(order, actor))
+        )
     if str(actor.get("role_id") or "") == "admin":
         return _customer_access(actor, str(row.get("customer_id") or ""))
     if str(row.get("salesperson_id") or "") == actor_id:
@@ -194,33 +232,28 @@ def _invoice_amount(order: dict) -> float:
 
 def _confirmed_payment_total(order_id: str) -> float:
     """Return confirmed receipts for an OC without counting rejected entries."""
-    rows, _ = _store().list("payments", {"order_id": order_id, "status": "CONFIRMED"}, limit=100_000)
+    rows, _ = _store().list(
+        "payments",
+        {"status": "CONFIRMED", "$or": [{"order_id": order_id}, {"oc_id": order_id}]},
+        limit=100_000,
+    )
     return money(sum(money(row.get("amount", row.get("payment_amount"))) for row in rows))
 
 
 def _payment_rollup(order: dict, payments: list[dict], current_id: str) -> dict:
-    valid = [row for row in payments if str(row.get("status") or "").upper() != "REJECTED"]
-    total_paid = money(sum(money(row.get("amount", row.get("payment_amount"))) for row in valid))
-    current_index = next((index for index, row in enumerate(valid) if str(row.get("_id")) == current_id), len(valid))
-    previous_paid = money(sum(money(row.get("amount", row.get("payment_amount"))) for row in valid[:current_index]))
-    invoice_amount = _invoice_amount(order)
-    balance = money(max(invoice_amount - total_paid, 0))
-    credit = money(max(total_paid - invoice_amount, 0))
-    status = ""
-    if credit > 0:
-        status = "OVERPAID / CREDIT GENERATED"
-    elif balance <= 0 and total_paid > 0:
-        status = "PAID"
-    elif total_paid > 0:
-        status = "PARTIALLY PAID / OUTSTANDING"
+    rollup = payment_rollup(order, payments)
+    previous_confirmed = money(sum(
+        payment_amount(row)
+        for row in payments
+        if str(row.get("_id") or "") != current_id and is_confirmed_payment(row)
+    ))
     return {
-        "invoice_amount": invoice_amount,
-        "previous_paid": previous_paid,
-        "total_paid": total_paid,
-        "balance": balance,
-        "remaining_balance": balance,
-        "customer_credit": credit,
-        "derived_status": status,
+        **rollup,
+        "previous_paid": previous_confirmed,
+        "total_paid": rollup["confirmed_received"],
+        # Compatibility field for older clients; it now represents invoice
+        # state and never replaces the payment workflow status.
+        "derived_status": rollup["invoice_status"],
     }
 
 
@@ -235,7 +268,11 @@ def _enrich_payment_rows(rows: list[dict]) -> list[dict]:
             order_cache[order_id] = _order(order_id) or {}
         order = order_cache[order_id]
         if order_id not in payment_cache:
-            all_payments, _ = store.list("payments", {"order_id": order_id}, limit=100_000)
+            all_payments, _ = store.list(
+                "payments",
+                {"$or": [{"order_id": order_id}, {"oc_id": order_id}]},
+                limit=100_000,
+            )
             payment_cache[order_id] = sorted(all_payments, key=lambda row: str(row.get("created_at") or ""))
         row = _payment_list_row(payment)
         row.update(_payment_rollup(order, payment_cache[order_id], str(payment.get("_id") or "")))
@@ -255,6 +292,7 @@ def _validate_banking_payload(payload: dict) -> dict[str, str]:
         "bank_account": "Bank account",
         "utr": "UTR / transaction reference",
         "reference_number": "Payment reference",
+        "attachment": "Payment proof",
     }
     errors: dict[str, str] = {}
     for field, label in fields.items():
@@ -262,12 +300,96 @@ def _validate_banking_payload(payload: dict) -> dict[str, str]:
         if field == "amount":
             if money(value) <= 0:
                 errors[field] = f"{label} must be greater than zero"
+        elif field == "attachment":
+            if not isinstance(value, dict) or not str(value.get("data") or "").strip():
+                errors[field] = f"{label} is required"
         elif not str(value or "").strip():
             errors[field] = f"{label} is required"
     currency = str(payload.get("currency") or "EUR").upper()
     if currency != "EUR":
         errors["currency"] = "Payments must use the invoice currency (EUR)"
     return errors
+
+
+def _bank_detail_row_for_user(user_id: str) -> dict:
+    row = _store().find_one("user_bank_details", {"user_id": str(user_id)})
+    return row or {"user_id": str(user_id)}
+
+
+def _bank_detail_user(user_id: str) -> dict | None:
+    return _store().find_one("users", {"_id": str(user_id), "active": {"$ne": False}})
+
+
+@bp.get("/bank-details")
+@login_required
+def list_bank_details():
+    """List bank details inside the requester's ownership/team scope."""
+    actor = current_user() or {}
+    if not _bank_detail_permission(actor):
+        return failure("Bank details access is not permitted", status=403, error="bank_details_forbidden")
+    actor_id = _user_id(actor)
+    if str(actor.get("role_id") or "") in {"superadmin", "admin"}:
+        users, _ = _store().list("users", {"active": {"$ne": False}}, limit=100_000, sort="name", direction=1)
+    else:
+        allowed_ids = set(accessible_user_ids(_store(), actor))
+        users, _ = _store().list("users", {"_id": {"$in": list(allowed_ids)}, "active": {"$ne": False}}, limit=100_000, sort="name", direction=1)
+    rows: list[dict] = []
+    for user in users:
+        target_id = str(user.get("_id") or "")
+        if not target_id or not can_view_bank_details(_store(), actor, target_id):
+            continue
+        row = serialize_bank_details(_bank_detail_row_for_user(target_id), include_sensitive=target_id == actor_id)
+        row["owner"] = {"_id": target_id, "name": user.get("name"), "email": user.get("email"), "role_id": user.get("role_id"), "manager_id": user.get("manager_id")}
+        row["can_edit"] = can_edit_bank_details(_store(), actor, target_id) and (
+            str(actor.get("role_id") or "") in {"superadmin", "admin"} or "bank_details.update" in set(actor.get("permissions") or [])
+        )
+        rows.append(row)
+    return success({"items": rows, "total": len(rows)})
+
+
+@bp.get("/bank-details/<user_id>")
+@login_required
+def get_bank_details(user_id: str):
+    actor = current_user() or {}
+    if not _bank_detail_permission(actor) or not can_view_bank_details(_store(), actor, user_id):
+        return failure("Bank details access denied", status=403, error="bank_details_forbidden")
+    user = _bank_detail_user(user_id)
+    if not user:
+        return failure("User not found", status=404)
+    # Owners may see their own values; delegated manager/admin views remain
+    # masked to reduce unnecessary exposure of account identifiers.
+    row = serialize_bank_details(_bank_detail_row_for_user(user_id), include_sensitive=str(user_id) == _user_id(actor))
+    row["owner"] = {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email"), "role_id": user.get("role_id"), "manager_id": user.get("manager_id")}
+    row["can_edit"] = can_edit_bank_details(_store(), actor, user_id) and (
+        str(actor.get("role_id") or "") in {"superadmin", "admin"} or "bank_details.update" in set(actor.get("permissions") or [])
+    )
+    return success(row)
+
+
+@bp.patch("/bank-details/<user_id>")
+@login_required
+def update_bank_details(user_id: str):
+    actor = current_user() or {}
+    if not _bank_detail_permission(actor) or not can_edit_bank_details(_store(), actor, user_id):
+        return failure("Bank details update is not permitted", status=403, error="bank_details_update_forbidden")
+    if str(actor.get("role_id") or "") not in {"superadmin", "admin"} and "bank_details.update" not in set(actor.get("permissions") or []):
+        return failure("Bank details update is not permitted", status=403, error="bank_details_update_forbidden")
+    target = _bank_detail_user(user_id)
+    if not target:
+        return failure("User not found", status=404)
+    payload = request.get_json(silent=True) or {}
+    changes = normalize_bank_changes(payload)
+    if not changes:
+        return failure("No bank-detail fields were supplied", status=422, error="bank_details_empty")
+    old = _store().find_one("user_bank_details", {"user_id": str(user_id)}) or {"user_id": str(user_id)}
+    row = _store().update_one("user_bank_details", {"user_id": str(user_id)}, changes, upsert=True)
+    if not row:
+        return failure("Bank details could not be saved", status=500)
+    audit("bank_details.update", "user_bank_details", str(user_id), {
+        "changed_by": _user_id(actor), "target_user": str(user_id), "manager_id": target.get("manager_id"),
+        **audit_bank_diff(old, row, sorted(changes)),
+    })
+    return success(serialize_bank_details(row, include_sensitive=str(user_id) == _user_id(actor)), "Bank details updated")
 
 
 @bp.get("/payments")
@@ -304,6 +426,26 @@ def list_payments():
     return success({"items": rows, "total": total})
 
 
+@bp.get("/payments/<payment_id>/proof")
+@login_required
+def payment_proof(payment_id: str):
+    """Return private proof bytes only to an authorized payment viewer."""
+    payment = _store().find_one("payments", {"_id": payment_id})
+    if not payment:
+        return failure("Payment not found", status=404)
+    if not _can_view_payment(payment):
+        return failure("Payment access denied", status=403)
+    attachment = payment.get("attachment")
+    if not isinstance(attachment, dict) or not isinstance(attachment.get("data"), str):
+        return failure("No payment proof is attached", status=404, error="payment_proof_missing")
+    return success({
+        "name": str(attachment.get("name") or "Payment proof"),
+        "type": str(attachment.get("type") or "application/octet-stream"),
+        "size": int(attachment.get("size") or 0),
+        "data": attachment["data"],
+    })
+
+
 @bp.post("/payments")
 @login_required
 def create_payment():
@@ -314,6 +456,8 @@ def create_payment():
         return failure("Order Confirmation not found", status=404, error="order_not_found")
     customer_id = _order_customer_id(order)
     user = current_user() or {}
+    if not _can_create_payment(user):
+        return failure("Payment creation is not permitted", status=403, error="payment_create_forbidden")
     if payload.get("workflow") == "banking":
         errors = _validate_banking_payload({**payload, "customer_id": payload.get("customer_id"), "order_id": order_id})
         if str(payload.get("customer_id") or "") != customer_id:
@@ -348,7 +492,9 @@ def create_payment():
             "data": attachment["data"],
         }
     now = utcnow()
+    actor_id = (current_user() or {}).get("_id")
     row = _store().insert_one("payments", {
+        "payment_number": f"PAY-{_store().next_counter('payment'):05d}",
         "order_id": order_id, "oc_id": order_id, "quotation_id": order.get("quotation_id"),
         "customer_id": customer_id, "customer_snapshot": order.get("customer_snapshot") or order.get("customer_company_snapshot") or {},
         "amount": amount, "payment_amount": amount, "currency": "EUR", "payment_date": payment_date,
@@ -356,11 +502,16 @@ def create_payment():
         "utr": str(payload.get("utr") or payload.get("transaction_reference") or "").strip()[:160],
         "payment_mode": str(payload.get("payment_mode") or "").strip()[:80], "reference_number": str(payload.get("reference_number") or "").strip()[:160],
         "notes": str(payload.get("notes") or "").strip()[:2000], "attachment": attachment,
-        "status": "PAYMENT RECORDED", "created_by_user_id": (current_user() or {}).get("_id"), "workflow": payload.get("workflow"),
-        "audit": [{"action": "created", "by": (current_user() or {}).get("_id"), "at": now}],
+        "status": PAYMENT_STATUS_AWAITING, "created_by_user_id": actor_id, "workflow": payload.get("workflow"),
+        "submitted_at": now, "submitted_by_user_id": actor_id,
+        "audit": [
+            {"action": "created", "by": actor_id, "at": now},
+            {"action": "submitted", "by": actor_id, "at": now},
+        ],
     })
+    sync_order_payment_state(_store(), order_id)
     audit("payment.create", "payment", str(row["_id"]), {"order_id": order_id, "amount": amount})
-    return success(row, "Payment recorded", 201)
+    return success(_enrich_payment_rows([row])[0], "Payment submitted for Superadmin confirmation", 201)
 
 
 @bp.patch("/payments/<payment_id>")
@@ -374,6 +525,8 @@ def update_payment(payment_id: str):
     payment_order = _order(str(payment.get("order_id") or payment.get("oc_id") or ""))
     if not payment_order or not _can_record_payment(payment_order):
         return failure("Payment access denied", status=403)
+    if not _can_create_payment():
+        return failure("Payment editing is not permitted", status=403, error="payment_edit_forbidden")
     if payment.get("financial_locked") or payment.get("status") == "CONFIRMED":
         return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")
     payload = request.get_json(silent=True) or {}
@@ -418,15 +571,29 @@ def update_payment(payment_id: str):
     if not changes:
         return failure("No payment fields were supplied", status=422, error="invalid_payment")
     now = utcnow()
-    changes.update({"status": "PAYMENT RECORDED", "submitted_at": None, "submitted_by_user_id": None, "updated_at": now, "audit": [*payment.get("audit", []), {"action": "updated", "by": (current_user() or {}).get("_id"), "at": now, "fields": sorted(changes)}]})
+    actor_id = (current_user() or {}).get("_id")
+    changes.update({
+        "status": PAYMENT_STATUS_AWAITING,
+        "submitted_at": now,
+        "submitted_by_user_id": actor_id,
+        "updated_at": now,
+        "audit": [
+            *payment.get("audit", []),
+            {"action": "updated", "by": actor_id, "at": now, "fields": sorted(changes)},
+            {"action": "submitted", "by": actor_id, "at": now},
+        ],
+    })
     row = store.update_one("payments", {"_id": payment_id}, changes)
+    sync_order_payment_state(store, str(payment_order.get("_id") or ""))
     audit("payment.update", "payment", payment_id, {"fields": sorted(changes)})
-    return success(row, "Payment details updated")
+    return success(_enrich_payment_rows([row])[0], "Payment updated and submitted for Superadmin confirmation")
 
 
 @bp.post("/payments/<payment_id>/submit")
 @login_required
 def submit_payment(payment_id: str):
+    if not _can_create_payment():
+        return failure("Payment submission is not permitted", status=403, error="payment_submit_forbidden")
     payment = _store().find_one("payments", {"_id": payment_id})
     if not payment:
         return failure("Payment not found", status=404)
@@ -435,12 +602,15 @@ def submit_payment(payment_id: str):
         return failure("Payment access denied", status=403)
     if payment.get("financial_locked") and not _superadmin():
         return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")
-    if payment.get("status") not in {"PAYMENT RECORDED", "REJECTED"}:
+    if payment.get("status") == PAYMENT_STATUS_AWAITING:
+        return success(_enrich_payment_rows([payment])[0], "Payment is awaiting Superadmin confirmation")
+    if payment.get("status") not in {"PAYMENT RECORDED", PAYMENT_STATUS_REJECTED}:
         return failure("Payment cannot be submitted in its current state", status=409)
     now = utcnow()
-    row = _store().update_one("payments", {"_id": payment_id}, {"status": "AWAITING SUPERADMIN CONFIRMATION", "submitted_at": now, "submitted_by_user_id": (current_user() or {}).get("_id"), "audit": [*payment.get("audit", []), {"action": "submitted", "by": (current_user() or {}).get("_id"), "at": now}]})
+    row = _store().update_one("payments", {"_id": payment_id}, {"status": PAYMENT_STATUS_AWAITING, "submitted_at": now, "submitted_by_user_id": (current_user() or {}).get("_id"), "audit": [*payment.get("audit", []), {"action": "submitted", "by": (current_user() or {}).get("_id"), "at": now}]})
+    sync_order_payment_state(_store(), str(payment_order.get("_id") or ""))
     audit("payment.submit", "payment", payment_id, {})
-    return success(row, "Payment submitted for bank confirmation")
+    return success(_enrich_payment_rows([row])[0], "Payment submitted for Superadmin confirmation")
 
 
 @bp.post("/payments/<payment_id>/confirm")
@@ -454,18 +624,17 @@ def confirm_payment(payment_id: str):
         return failure("Payment not found", status=404)
     # Confirmation is a separate privileged step.  A merely entered payment
     # must first be submitted into the Superadmin review queue.
-    if payment.get("status") not in {"AWAITING SUPERADMIN CONFIRMATION", "AWAITING BANK CONFIRMATION"}:
+    if payment.get("status") not in {PAYMENT_STATUS_AWAITING, "AWAITING BANK CONFIRMATION"}:
         return failure("Payment is not awaiting confirmation", status=409)
     confirmed_at = utcnow()
     actor = current_user() or {}
-    row = store.update_one("payments", {"_id": payment_id}, {"status": "CONFIRMED", "confirmed_by_user_id": actor.get("_id"), "confirmed_at": confirmed_at, "financial_locked": True, "audit": [*payment.get("audit", []), {"action": "confirmed", "by": actor.get("_id"), "at": confirmed_at}]})
+    row = store.update_one("payments", {"_id": payment_id}, {"status": PAYMENT_STATUS_CONFIRMED, "confirmed_by_user_id": actor.get("_id"), "confirmed_at": confirmed_at, "financial_locked": True, "audit": [*payment.get("audit", []), {"action": "confirmed", "by": actor.get("_id"), "at": confirmed_at}]})
     incentive = activate_incentive(store, str(payment.get("order_id")), confirmed_at)
     if incentive:
         audit("incentive.activated", "incentive", str(incentive.get("_id")), {"order_id": payment.get("order_id"), "payment_id": payment_id})
-    order = _order(str(payment.get("order_id"))) or {}
-    store.update_one("orders", {"_id": payment.get("order_id")}, {"financial_locked": True, "payment_status": "CONFIRMED"})
-    if order.get("quotation_id"):
-        store.update_one("quotations", {"_id": order.get("quotation_id")}, {"financial_locked": True, "payment_status": "CONFIRMED"})
+    order_id = str(payment.get("order_id") or payment.get("oc_id") or "")
+    order = sync_order_payment_state(store, order_id) or _order(order_id) or {}
+    row = _enrich_payment_rows([row])[0]
     recipients = _payment_recipients(order, payment)
     email_result = None
     if recipients:
@@ -481,7 +650,7 @@ def confirm_payment(payment_id: str):
             current_app.logger.exception("payment confirmation email failed payment_id=%s", payment_id)
     store.insert_one("email_logs", {"payment_id": payment_id, "order_id": payment.get("order_id"), "message_type": "payment_confirmation", "status": "sent" if email_result else "not_sent", "created_at": utcnow()})
     audit("payment.confirm", "payment", payment_id, {"order_id": payment.get("order_id"), "incentive_id": incentive.get("_id") if incentive else None})
-    return success({"payment": row, "incentive": incentive}, "Payment confirmed")
+    return success({"payment": row, "order": order, "incentive": incentive}, "Payment confirmed")
 
 
 @bp.post("/payments/<payment_id>/reject")
@@ -492,10 +661,16 @@ def reject_payment(payment_id: str):
     payment = _store().find_one("payments", {"_id": payment_id})
     if not payment:
         return failure("Payment not found", status=404)
+    if payment.get("status") not in {PAYMENT_STATUS_AWAITING, "AWAITING BANK CONFIRMATION", "PAYMENT RECORDED"}:
+        return failure("Payment cannot be rejected in its current state", status=409)
     reason = str((request.get_json(silent=True) or {}).get("reason") or "").strip()
     if not reason:
         return failure("A rejection reason is required", status=422)
-    row = _store().update_one("payments", {"_id": payment_id}, {"status": "REJECTED", "rejected_by_user_id": (current_user() or {}).get("_id"), "rejected_at": utcnow(), "rejection_reason": reason, "audit": [*payment.get("audit", []), {"action": "rejected", "reason": reason, "by": (current_user() or {}).get("_id"), "at": utcnow()}]})
+    rejected_at = utcnow()
+    row = _store().update_one("payments", {"_id": payment_id}, {"status": PAYMENT_STATUS_REJECTED, "rejected_by_user_id": (current_user() or {}).get("_id"), "rejected_at": rejected_at, "rejection_reason": reason, "financial_locked": False, "audit": [*payment.get("audit", []), {"action": "rejected", "reason": reason, "by": (current_user() or {}).get("_id"), "at": rejected_at}]})
+    order_id = str(payment.get("order_id") or payment.get("oc_id") or "")
+    sync_order_payment_state(_store(), order_id)
+    row = _enrich_payment_rows([row])[0]
     audit("payment.reject", "payment", payment_id, {"reason": reason})
     return success(row, "Payment sent back for correction")
 
@@ -516,21 +691,24 @@ def list_incentives():
     allowed_customer_ids: list[str] | None = None
     if not global_scope:
         allowed_customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
+        team_ids = accessible_user_ids(store, user) if str(user.get("role_id") or "") in {"manager", "manager_sales_admin"} else [user.get("_id")]
         owner_orders, _ = store.list("orders", {"$or": [
-            {"salesperson_id": user.get("_id")}, {"prepared_by_user_id": user.get("_id")},
-            {"created_by_user_id": user.get("_id")}, {"user_id": user.get("_id")},
+            {"salesperson_id": {"$in": team_ids}}, {"prepared_by_user_id": {"$in": team_ids}},
+            {"created_by_user_id": {"$in": team_ids}}, {"user_id": {"$in": team_ids}},
         ]}, limit=100_000)
         owner_order_ids = [row.get("_id") for row in owner_orders if row.get("_id")]
         query["$or"] = [
-            {"salesperson_id": user.get("_id")},
+            {"salesperson_id": {"$in": team_ids}},
             {"order_id": {"$in": owner_order_ids or ["__no_owned_orders__"]}},
         ]
-        if str(user.get("role_id") or "") == "admin" and allowed_customer_ids:
+        if str(user.get("role_id") or "") in {"admin", "manager", "manager_sales_admin"} and allowed_customer_ids:
             query["$or"].append({"customer_id": {"$in": allowed_customer_ids}})
     for key in ("status", "salesperson_id", "customer_id", "order_id"):
         if request.args.get(key):
-            if key == "salesperson_id" and not global_scope and request.args[key] != str(user.get("_id") or ""):
-                return success({"items": [], "total": 0})
+            if key == "salesperson_id" and not global_scope:
+                allowed_salespeople = set(accessible_user_ids(store, user)) if str(user.get("role_id") or "") in {"manager", "manager_sales_admin"} else {str(user.get("_id") or "")}
+                if request.args[key] not in allowed_salespeople:
+                    return success({"items": [], "total": 0})
             if key == "customer_id" and allowed_customer_ids is not None and request.args[key] not in allowed_customer_ids:
                 return success({"items": [], "total": 0})
             query[key] = request.args[key]
@@ -566,7 +744,11 @@ def list_incentives():
         if not row.get("salesperson_snapshot"):
             row["salesperson_snapshot"] = order.get("salesperson_snapshot") or {}
         row["order_number"] = row.get("order_number") or order.get("order_number")
-        payments, _ = store.list("payments", {"order_id": row.get("order_id")}, limit=100)
+        payments, _ = store.list(
+            "payments",
+            {"$or": [{"order_id": row.get("order_id")}, {"oc_id": row.get("order_id")}]},
+            limit=100,
+        )
         payment_status = "Paid" if row.get("payment_confirmation_date") or any(str(payment.get("status") or "").upper() == "CONFIRMED" for payment in payments) else "Pending Payment"
         row["payment_status"] = payment_status
         customer = row.get("customer_snapshot") or {}

@@ -9,6 +9,8 @@ from werkzeug.security import generate_password_hash
 
 from app.repositories.store import Store, utcnow
 from app.customers.codes import customer_code
+from app.services.business_logic import CLIENT_TYPES, MANAGER_ROLE_IDS, normalize_client_type
+from app.services.data_paths import data_file
 
 
 PERMISSIONS = [
@@ -20,6 +22,7 @@ PERMISSIONS = [
     "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
     "payments.view", "payments.create", "payments.confirm", "payments.manage",
+    "bank_details.view", "bank_details.update",
     "incentives.view", "incentives.manage", "credit_notes.view", "credit_notes.create", "credit_notes.manage",
     "reminders.view", "reminders.manage", "reports.view", "users.view", "users.create",
     "users.update", "users.delete", "roles.view", "roles.manage", "companies.view",
@@ -30,21 +33,59 @@ PERMISSIONS = [
 ]
 
 
+# ``allocation_type`` is part of the rule identity.  Creator and manager
+# override rules intentionally share the same client/role/category values but
+# represent different allocations and may carry different rates.
+DEFAULT_INCENTIVE_RULES = (
+    ("creator", "WHOLESALER", "user", 5.0),
+    ("manager_override", "WHOLESALER", "manager_sales_admin", 2.5),
+    ("creator", "DEALER", "user", 5.0),
+    ("manager_override", "DEALER", "manager_sales_admin", 2.5),
+    ("creator", "CUSTOMER", "user", 5.0),
+    ("manager_override", "CUSTOMER", "manager_sales_admin", 2.5),
+    ("creator", "WHOLESALER", "manager_sales_admin", 5.0),
+    ("creator", "DEALER", "manager_sales_admin", 5.0),
+    ("creator", "CUSTOMER", "manager_sales_admin", 5.0),
+)
+
+
+def _seed_default_incentive_rules(store: Store) -> int:
+    """Create missing defaults without overwriting administrator changes."""
+    created = 0
+    for allocation_type, client_type, recipient_role, rate in DEFAULT_INCENTIVE_RULES:
+        key = {
+            "allocation_type": allocation_type,
+            "client_type": client_type,
+            "recipient_role": recipient_role,
+            "category_id": "*",
+        }
+        before = store.find_one("incentive_rules", key)
+        store.upsert_one("incentive_rules", key, {
+            "scope": "default",
+            "rate": rate,
+            "base": "OC_NET_AMOUNT",
+            "active": True,
+        })
+        if before is None:
+            created += 1
+    return created
+
+
 ROLE_PERMISSIONS = {
     "superadmin": PERMISSIONS,
-    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage"}],
+    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage", "payments.confirm"}],
     "manager_sales_admin": [
         permission for permission in PERMISSIONS
         if (permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
             and permission not in {"products.delete", "customers.delete", "quotations.delete", "quotations.view_all", "pricing.edit", "pricing.update"})
-        or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view"}
+        or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update"}
     ],
     "user": [
         "dashboard.view", "calculator.view", "products.view", "pricing.view", "currency.view",
         "cart.view", "cart.manage", "companies.view", "customers.view", "customers.create",
         "customers.update", "quotations.view", "quotations.create", "quotations.edit",
         "quotations.download", "quotations.send", "orders.view", "crm.view", "reminders.view",
-        "payments.view", "payments.create", "incentives.view", "credit_notes.view",
+        "payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update",
     ],
 }
 
@@ -72,6 +113,30 @@ def _valid_price(value: Any) -> bool:
     return value is None or isinstance(value, (int, float)) and value >= 0
 
 
+def _client_pricing_document(dealer_pricing: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the canonical client-type pricing namespace without inventing prices."""
+    existing_prices = ((existing or {}).get("dealer_underpacking") or {}).get("prices") or {}
+    merged_prices = dict(dealer_pricing.get("prices") or {})
+    for key, value in existing_prices.items():
+        if key in merged_prices and value is not None:
+            merged_prices[key] = value
+    dealer_underpacking = {**dealer_pricing, "prices": merged_prices}
+    return {
+        "_id": "client-pricing", "version": 1, "currency": "EUR",
+        "wholesaler": {"source": "pricing_eur.json"},
+        "dealer": {
+            "blankets": {"source": "wholesaler"},
+            "underpacking": {"source": "dealer_underpacking"},
+            "chemicals": {"source": "wholesaler"},
+        },
+        # Keep the existing flat key as a compatibility bridge for the pricing
+        # engine while the nested namespace is the canonical configuration API.
+        "dealer_underpacking": dealer_underpacking,
+        "customer": {"fallback": "WHOLESALER", "blankets": {}, "underpacking": {}, "chemicals": {}},
+        "updated_at": utcnow(),
+    }
+
+
 def _catalog_seed(data_directory: Path) -> dict[str, Any]:
     """Resolve the explicitly named, separated JSON sources into runtime rows."""
     names = (
@@ -79,8 +144,12 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         "blanket_bars.json", "blankets.json", "mpack_types.json", "mpack_options.json",
         "mpacks.json", "mpack_price_list_2026_h2.json", "chemical_categories.json", "chemical_options.json",
         "chemicals.json", "pricing_eur.json", "tax_rules.json",
+        "dealer_underpacking_pricing.json",
     )
-    documents = {name: _load(data_directory / name) for name in names}
+    documents = {name: _load(data_file(data_directory, name)) for name in names}
+    dealer_pricing = documents["dealer_underpacking_pricing.json"]
+    if dealer_pricing.get("client_type") != "DEALER" or dealer_pricing.get("currency") != "EUR":
+        raise ValueError("dealer_underpacking_pricing.json must define DEALER EUR pricing")
     product_types = documents["product_types.json"].get("product_types", [])
     family_ids = [row.get("id") for row in product_types]
     if family_ids != ["blankets", "mpacks", "chemicals"] or len(family_ids) != len(set(family_ids)):
@@ -301,7 +370,75 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
             {"_id": "chemicals", **chemical_options},
         ],
         "tax_rules": documents["tax_rules.json"],
+        "dealer_underpacking_pricing": dealer_pricing,
     }
+
+
+def ensure_business_logic_schema(store: Store, data_directory: Path) -> dict[str, int]:
+    """Apply the non-destructive hierarchy/client-type policy on every boot.
+
+    The full ``seed`` routine is intentionally opt-in in production because it
+    reconciles the catalogue.  These small, idempotent migrations are safe to
+    run against an existing database, so a production process cannot silently
+    miss the manager hierarchy, client-type enum, incentive defaults, or the
+    dealer pricing schema just because AUTO_SEED is disabled.
+    """
+    changed_users = 0
+    changed_customers = 0
+    for user in store.list("users", limit=100_000)[0]:
+        manager_id = user.get("manager_id")
+        manager = store.find_one("users", {"_id": manager_id}) if manager_id else None
+        valid = bool(manager and manager.get("active", True) is not False and str(manager.get("role_id") or "") in MANAGER_ROLE_IDS)
+        if manager_id and not valid:
+            store.update_one("users", {"_id": user.get("_id")}, {"manager_id": None})
+            changed_users += 1
+    for customer in store.list("customers", limit=100_000)[0]:
+        client_type = normalize_client_type(customer.get("client_type"))
+        if customer.get("client_type") != client_type:
+            store.update_one("customers", {"_id": customer.get("_id")}, {"client_type": client_type})
+            changed_customers += 1
+
+    # Keep the role registry current without removing any installation-specific
+    # permissions.  Apply this policy merge once; later role-admin edits must
+    # remain authoritative instead of being re-added on every restart.
+    role_policy_migration = "business-logic-role-policy-v1"
+    if not store.find_one("system_migrations", {"_id": role_policy_migration}):
+        display_names = {
+            "superadmin": "Superadmin", "admin": "Admin",
+            "manager_sales_admin": "Manager / Sales Admin", "user": "User",
+        }
+        for permission in PERMISSIONS:
+            if not store.find_one("permissions", {"_id": permission}):
+                store.insert_one("permissions", {"_id": permission, "name": permission})
+        for role_id, canonical_permissions in ROLE_PERMISSIONS.items():
+            role = store.find_one("roles", {"_id": role_id})
+            if not role:
+                store.insert_one("roles", {
+                    "_id": role_id, "name": role_id, "display_name": display_names[role_id],
+                    "permissions": list(canonical_permissions), "system": True,
+                })
+                continue
+            merged = sorted(set(role.get("permissions") or []).union(canonical_permissions))
+            if merged != sorted(role.get("permissions") or []):
+                store.update_one("roles", {"_id": role_id}, {"permissions": merged})
+        store.insert_one("system_migrations", {"_id": role_policy_migration, "applied_at": utcnow()})
+
+    rules_added = _seed_default_incentive_rules(store)
+
+    # The JSON file defines supported dealer dimensions and null placeholders;
+    # configured Mongo values remain authoritative and are never overwritten.
+    pricing_added = 0
+    pricing_path = data_file(data_directory, "dealer_underpacking_pricing.json")
+    if pricing_path.exists():
+        dealer_pricing = _load(pricing_path)
+        existing = store.find_one("pricing_configurations", {"_id": "client-pricing"})
+        configuration = _client_pricing_document(dealer_pricing, existing)
+        if existing:
+            store.update_one("pricing_configurations", {"_id": "client-pricing"}, configuration)
+        else:
+            store.insert_one("pricing_configurations", configuration)
+            pricing_added = 1
+    return {"users": changed_users, "customers": changed_customers, "rules_added": rules_added, "pricing_added": pricing_added}
 
 
 def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
@@ -410,6 +547,25 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": finance_role_baseline_migration, "applied_at": utcnow()})
 
+    manager_finance_migration = "manager-finance-bank-details-v1"
+    if not store.find_one("system_migrations", {"_id": manager_finance_migration}):
+        # Managers and users receive only scoped bank-detail capabilities. The
+        # existing payment confirmation route remains Superadmin-only.
+        for role_id, allowed in {
+            "superadmin": {"bank_details.view", "bank_details.update", "payments.confirm"},
+            "admin": {"bank_details.view", "bank_details.update"},
+            "manager_sales_admin": {"bank_details.view", "bank_details.update"},
+            "user": {"bank_details.view", "bank_details.update"},
+        }.items():
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.update(allowed)
+                if role_id == "admin":
+                    permissions.discard("payments.confirm")
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": manager_finance_migration, "applied_at": utcnow()})
+
     pricing_policy_migration = "eur-only-no-tax-v1"
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
         # This deliberately does not rewrite historical quotations or customer tax fields.
@@ -455,7 +611,35 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.delete_one("incentive_configurations", {"_id": config.get("_id")})
         store.insert_one("system_migrations", {"_id": incentive_matrix_migration, "applied_at": utcnow()})
 
+    # Explicit hierarchy/client-type migration.  Existing relationships are
+    # preserved; only missing or invalid values receive the documented safe
+    # defaults and no manager is guessed from names or email addresses.
+    hierarchy_migration = "hierarchy-client-type-v1"
+    if not store.find_one("system_migrations", {"_id": hierarchy_migration}):
+        for user in store.list("users", limit=100_000)[0]:
+            manager_id = user.get("manager_id")
+            manager = store.find_one("users", {"_id": manager_id}) if manager_id else None
+            if manager_id and (not manager or str(manager.get("role_id") or "") not in MANAGER_ROLE_IDS):
+                store.update_one("users", {"_id": user["_id"]}, {"manager_id": None})
+        for customer in store.list("customers", limit=100_000)[0]:
+            value = normalize_client_type(customer.get("client_type"))
+            if customer.get("client_type") != value:
+                store.update_one("customers", {"_id": customer["_id"]}, {"client_type": value})
+        store.insert_one("system_migrations", {"_id": hierarchy_migration, "applied_at": utcnow()})
+
+    # Defaults live in data, not in a frontend constant.  They are used only
+    # for the manager allocation branch; existing per-user category settings
+    # remain authoritative for creator eligibility.
+    _seed_default_incentive_rules(store)
+
     catalog = _catalog_seed(data_directory)
+    dealer_pricing = catalog["dealer_underpacking_pricing"]
+    existing_client_pricing = store.find_one("pricing_configurations", {"_id": "client-pricing"})
+    pricing_configuration = _client_pricing_document(dealer_pricing, existing_client_pricing)
+    if existing_client_pricing:
+        store.update_one("pricing_configurations", {"_id": "client-pricing"}, pricing_configuration)
+    else:
+        store.insert_one("pricing_configurations", pricing_configuration)
     families = catalog["families"]
     canonical_products = catalog["products"]
     blanket_bars = catalog["blanket_bars"]
@@ -760,7 +944,7 @@ def sync_blanket_catalog(store: Store, data_directory: Path) -> dict[str, int]:
 
 def sync_machine_catalog(store: Store, data_directory: Path) -> int:
     """Load the dedicated machine JSON into MongoDB on every startup."""
-    document = _load(data_directory / "machines.json")
+    document = _load(data_file(data_directory, "machines.json"))
     rows = document.get("machines", [])
     canonical_ids = {row.get("id") for row in rows}
     if any(not value for value in canonical_ids) or len(canonical_ids) != len(rows):

@@ -9,7 +9,7 @@ import { hasCustomerContext, customerGuardMessage } from "../guards/customer-con
 import { logout } from "../auth/logout";
 import { createWatermark, setWatermarkEnabled } from "../components/watermark";
 
-interface NavItem { id: string; label: string; path: string; icon: string; permission: string }
+interface NavItem { id: string; label: string; path: string; icon: string; permission: string; roles?: string[] }
 interface NavGroup { key: string; label: string; icon: string; items: NavItem[]; defaultPath?: string }
 type FxSnapshot = Awaited<ReturnType<typeof rateApi.get>>;
 
@@ -53,7 +53,6 @@ function renderFxPopover(popover: HTMLElement): void {
 
 const directNav: NavItem[] = [
   { id: "dashboard", label: "Dashboard", path: "/dashboard", icon: "layout-dashboard", permission: "dashboard.view" },
-  { id: "reports", label: "Reports", path: "/reports", icon: "chart-spline", permission: "reports.view" },
   { id: "crm", label: "CRM", path: "/crm", icon: "chart-no-axes-combined", permission: "crm.view" },
 ];
 
@@ -63,28 +62,43 @@ const navGroups: NavGroup[] = [
     { id: "calculator", label: "Calculator", path: "/calculator", icon: "calculator", permission: "calculator.view" },
     { id: "cart", label: "Cart", path: "/cart", icon: "shopping-cart", permission: "cart.view" },
     { id: "quotations", label: "Quotations", path: "/quotations", icon: "file-text", permission: "quotations.view" },
-    { id: "orders", label: "Order Confirmations", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
-    { id: "incentives", label: "Incentives", path: "/incentives", icon: "badge-euro", permission: "incentives.view" },
-    { id: "credit-notes", label: "Credit Notes", path: "/credit-notes", icon: "file-minus", permission: "credit_notes.view" },
+    { id: "orders", label: "Orders", path: "/orders", icon: "shopping-bag", permission: "orders.view" },
+    { id: "order-confirmations", label: "Order Confirmations", path: "/order-confirmations", icon: "file-check-2", permission: "orders.view" },
   ] },
-  { key: "users", label: "Users", icon: "users", items: [
-    { id: "user-list", label: "User List", path: "/users", icon: "users", permission: "users.view" },
+  { key: "finance", label: "Finance", icon: "landmark", defaultPath: "/payments", items: [
+    { id: "payments-banking", label: "Payments / Banking", path: "/payments", icon: "wallet-cards", permission: "payments.view" },
+    { id: "credit-notes", label: "Credit Notes", path: "/credit-notes", icon: "file-minus", permission: "credit_notes.view" },
+    { id: "customer-credits", label: "Customer Credits", path: "/customer-credits", icon: "coins", permission: "payments.view" },
+  ] },
+  { key: "users-access", label: "Users & Access", icon: "users", items: [
+    { id: "user-list", label: "Users", path: "/users", icon: "users", permission: "users.view" },
     { id: "roles-permissions", label: "Roles & Permissions", path: "/users?section=roles", icon: "shield-check", permission: "users.view" },
+    { id: "customer-assignments", label: "Customer Assignments", path: "/users?section=assignments", icon: "building-2", permission: "users.view" },
     { id: "activity-devices", label: "Activity / Login Devices", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
   ] },
-  { key: "finance", label: "Finance", icon: "landmark", defaultPath: "/banking", items: [
-    { id: "banking", label: "Banking", path: "/banking", icon: "landmark", permission: "payments.view" },
-    { id: "payments", label: "Payments", path: "/payments", icon: "wallet-cards", permission: "payments.view" },
-    { id: "pending-payments", label: "Pending Payments", path: "/payments?status=AWAITING%20SUPERADMIN%20CONFIRMATION", icon: "clock-3", permission: "payments.view" },
-    { id: "bank-transactions", label: "Bank Transactions", path: "/payments?view=transactions", icon: "arrow-left-right", permission: "payments.view" },
-    { id: "reconciliation", label: "Reconciliation", path: "/payments?view=reconciliation", icon: "clipboard-check", permission: "payments.view" },
+  { key: "my-account", label: "My Account", icon: "user-round", items: [
+    { id: "my-account-profile", label: "My Account", path: "/profile", icon: "user-round", permission: "account.view" },
+    { id: "my-incentives", label: "My Incentives", path: "/incentives/overview", icon: "badge-euro", permission: "incentives.view", roles: ["user"] },
+    { id: "my-bank-details", label: "My Bank Details", path: "/my-bank-details", icon: "landmark", permission: "account.view", roles: ["user"] },
+  ] },
+  { key: "account-admin", label: "Account", icon: "user-round", items: [
+    { id: "account-settings", label: "Account Settings", path: "/profile", icon: "user-round", permission: "account.view" },
+    { id: "account-security", label: "Security", path: "/settings/security", icon: "shield-check", permission: "account.view" },
+    { id: "login-activity", label: "Login Activity", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
+  ] },
+  { key: "incentives-admin", label: "Incentives", icon: "badge-euro", items: [
+    { id: "incentive-overview", label: "Incentive Overview", path: "/incentives/overview", icon: "badge-euro", permission: "incentives.view" },
+    { id: "incentive-rules", label: "Incentive Rules", path: "/incentives/rules", icon: "sliders-horizontal", permission: "incentives.manage" },
+    { id: "incentive-payouts", label: "Incentive Payouts", path: "/incentives/payouts", icon: "wallet-cards", permission: "incentives.manage" },
+  ] },
+  { key: "reports", label: "Reports", icon: "chart-spline", items: [
+    { id: "reports-page", label: "Reports", path: "/reports", icon: "chart-spline", permission: "reports.view" },
   ] },
   { key: "settings", label: "Settings", icon: "settings", items: [
     { id: "settings-brand", label: "Settings", path: "/settings", icon: "palette", permission: "settings.view" },
     { id: "product-pricing", label: "Product & Pricing", path: "/admin", icon: "badge-euro", permission: "pricing.history" },
     { id: "currencies", label: "Currencies", path: "/settings/currencies", icon: "euro", permission: "settings.view" },
     { id: "communication", label: "Communication", path: "/settings/communication", icon: "mail", permission: "settings.view" },
-    { id: "security", label: "Security", path: "/settings/security", icon: "shield-check", permission: "settings.view" },
   ] },
 ];
 
@@ -102,7 +116,11 @@ export function renderShell(): HTMLElement {
   };
   const renderDirect = (item: NavItem) => appStore.can(item.permission) ? renderNavLink(item, false, true) : "";
   const renderGroup = (group: NavGroup) => {
-    const visible = group.items.filter((item) => appStore.can(item.permission));
+    // Account links are available to every authenticated user.  They do not
+    // represent a server permission and therefore must not disappear merely
+    // because an older session has a partial permission snapshot.
+    const roleId = String(appStore.state.user?.role_id || "");
+    const visible = group.items.filter((item) => (!item.roles || item.roles.includes(roleId)) && (item.permission === "account.view" ? Boolean(appStore.state.user) : appStore.can(item.permission)));
     if (!visible.length) return "";
     const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
     return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}"${group.defaultPath ? ` data-nav-default="${group.defaultPath}"` : ""} aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
@@ -115,14 +133,17 @@ export function renderShell(): HTMLElement {
     return group ? renderGroup(group) : "";
   };
   const renderSection = (label: string, content: string) => content ? `<div class="nav-section">${label}</div>${content}` : "";
+  const isAdministrator = ["admin", "superadmin"].includes(String(state.user?.role_id || ""));
   const nav = [
-    renderSection("Home", renderDirect(directNav[0])),
+    renderSection("Workspace", renderDirect(directNav[0])),
     renderSection("Sales", renderNamedGroup("sales")),
     renderSection("Finance", renderNamedGroup("finance")),
-    renderSection("Users", renderNamedGroup("users")),
-    renderSection("Reports", renderDirect(directNav[1])),
+    renderSection(isAdministrator ? "Incentives" : "My Account", renderNamedGroup(isAdministrator ? "incentives-admin" : "my-account")),
+    renderSection(isAdministrator ? "Account" : "Users & Access", renderNamedGroup(isAdministrator ? "account-admin" : "users-access")),
+    ...(!isAdministrator ? [] : [renderSection("Users & Access", renderNamedGroup("users-access"))]),
+    renderSection("Reports", renderNamedGroup("reports")),
+    renderSection("CRM", renderDirect(directNav[1])),
     renderSection("Settings", renderNamedGroup("settings")),
-    renderSection("CRM", renderDirect(directNav[2])),
   ].join("");
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
@@ -483,6 +504,9 @@ export function updateActiveNav(path: string): void {
     if (target === "/settings") return routePath === target || routePath.startsWith(`${target}/`);
     if (target === "/calculator") return routePath === target || routePath === "/products" || routePath.startsWith("/products/");
     if (target === "/quotations") return routePath === target || routePath.startsWith("/quotations/") || routePath.startsWith("/quotation");
+    if (target === "/incentives/overview") return routePath === target || (routePath === "/incentives" && !routeQuery.includes("view=rules") && !routeQuery.includes("view=payouts"));
+    if (target === "/incentives/rules") return routePath === target || (routePath === "/incentives" && routeQuery.includes("view=rules"));
+    if (target === "/incentives/payouts") return routePath === target || (routePath === "/incentives" && routeQuery.includes("view=payouts"));
     return routePath === target || routePath.startsWith(`${target}/`);
   };
   document.querySelectorAll(".nav-link").forEach((node) => {

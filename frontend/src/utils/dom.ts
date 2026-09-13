@@ -21,9 +21,32 @@ export function formatMoney(amount: number, currency = "EUR"): string {
   return new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 2 }).format(amount || 0);
 }
 
-export function formatDate(value: string | undefined): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
+export function safeDate(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const raw = typeof value === "string" ? value.trim() : value;
+  if (raw === "") return null;
+  const parsed = new Date(raw);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+export function formatDate(value: unknown, fallback = "\u2014"): string {
+  const parsed = safeDate(value);
+  if (!parsed) return fallback;
+  try {
+    return new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", year: "numeric" }).format(parsed);
+  } catch {
+    return fallback;
+  }
+}
+
+export function formatDateInput(value: unknown = new Date()): string {
+  const parsed = safeDate(value);
+  if (!parsed) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /** Return a greeting from the browser's local clock (never the server clock).

@@ -38,6 +38,9 @@ export interface User {
   email: string;
   phone?: string;
   role_id: string;
+  manager_id?: string | null;
+  manager?: { _id?: string; name?: string; email?: string } | null;
+  managed_user_count?: number;
   role_display_name: string;
   incentive_percentage?: number | null;
   incentive_rates?: Record<string, number>;
@@ -71,6 +74,8 @@ export interface SessionPayload {
   device_access?: { device_status: "pending" | "approved" | "denied" | "revoked"; application_access: boolean; device_id?: string; device_name?: string; registered_at?: string; reinstated_at?: string; reinstatement_reason?: string };
   watermark_enabled?: boolean;
 }
+
+export type ClientType = "WHOLESALER" | "DEALER" | "CUSTOMER";
 
 export interface Issuer {
   name: string;
@@ -158,6 +163,7 @@ export interface Customer {
   company_id?: string;
   company_name?: string;
   name: string;
+  client_type?: ClientType;
   contact_name?: string;
   email?: string;
   phone?: string;
@@ -185,6 +191,7 @@ export interface Customer {
   access?: {
     created_by?: { name: string; email?: string } | null;
     assigned_users?: Array<{ name: string; email?: string }>;
+    assigned_managers?: Array<{ name: string; email?: string }>;
   };
   status: string;
   active?: boolean;

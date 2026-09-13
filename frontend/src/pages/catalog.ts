@@ -673,7 +673,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       input.setAttribute("aria-expanded", String(!menu.hidden));
     };
     const select = (option: HTMLButtonElement) => {
-      input.value = option.dataset.label ?? "";
+      input.value = option.dataset.label ?? ""; 
       valueInput.value = option.dataset.value ?? "";
       setValidity();
       render(false);

@@ -93,29 +93,25 @@ These credentials exist only in demo mode and must not be used in production.
 
 ## Catalog and pricing seed
 
-The active, human-editable seed inputs are exactly:
+The active, human-editable seed inputs are grouped by domain:
 
 ```text
-data/product_types.json
-data/blanket_categories.json
-data/blanket_options.json
-data/blanket_bars.json
-data/blankets.json
-data/mpack_types.json
-data/mpack_options.json
-data/mpacks.json
-data/chemical_categories.json
-data/chemical_options.json
-data/chemicals.json
-data/pricing_eur.json
-data/tax_rules.json
+data/catalog/product_types.json
+data/catalog/blankets/{blanket_categories,blanket_options,blanket_bars,blankets}.json
+data/catalog/underpacking/{mpack_types,mpack_options,mpacks}.json
+data/catalog/chemicals/{chemical_categories,chemical_options,chemicals}.json
+data/machines/machines.json
+data/pricing/{pricing_eur,dealer_underpacking_pricing,mpack_price_list_2026_h2}.json
+data/geography/countries.json
+data/tax/tax_rules.json
 ```
 
 Product files own identity and technical specifications only. Shared type,
-category and option files own reusable configuration. `pricing_eur.json` owns
-all product master prices; `blanket_bars.json` owns bar identity and EUR/bar
-pricing; `tax_rules.json` owns tax rules. Underlays remain a distinct section
-inside `blankets.json`. No legacy or future catalogue is loaded.
+category and option files own reusable configuration. `data/pricing/pricing_eur.json`
+owns all product master prices; `data/catalog/blankets/blanket_bars.json` owns
+bar identity and EUR/bar pricing; `data/tax/tax_rules.json` owns tax rules.
+Underlays remain a distinct section inside `blankets.json`. No legacy or future
+catalogue is loaded.
 
 Validate the canonical files with:
 

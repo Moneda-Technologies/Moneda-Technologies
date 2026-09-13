@@ -7,6 +7,7 @@ import re
 from email_validator import EmailNotValidError, validate_email
 
 from app.customers.countries import countries_by_code, countries_by_name
+from app.services.business_logic import CLIENT_TYPES, normalize_client_type
 
 
 PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
@@ -26,6 +27,7 @@ VALIDATION_MESSAGES = {
     "PAYMENT_TERMS_REQUIRED": "Payment terms are required",
     "CUSTOM_PAYMENT_DAYS_REQUIRED": "Custom payment term must be a positive whole number of days",
     "CUSTOMER_ADDRESS_REQUIRED": "Address is required",
+    "CLIENT_TYPE_INVALID": "Customer Type must be Wholesaler, Dealer or Customer",
 }
 
 
@@ -95,6 +97,10 @@ def normalize_customer_profile(payload: dict, existing: dict | None = None, *, r
     """Normalize region, display-currency, and payment fields."""
     existing = existing or {}
     changes = dict(payload)
+    client_type = normalize_client_type(changes.get("client_type", existing.get("client_type")))
+    if "client_type" in changes and str(changes.get("client_type") or "").strip().upper() not in CLIENT_TYPES:
+        return None, "CLIENT_TYPE_INVALID"
+    changes["client_type"] = client_type
     required = lambda key: require_complete or key in changes
     name = str(changes.get("name") or changes.get("company_name") or existing.get("name") or "").strip()
     if required("name") and not name:

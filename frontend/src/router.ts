@@ -1,6 +1,6 @@
 import { refreshIcons } from "./components/icons";
 import { updateActiveNav } from "./layouts/shell";
-import { adminPage, companiesPage, profilePage, settingsPage, usersPage } from "./pages/management";
+import { adminPage, companiesPage, myBankDetailsPage, profilePage, settingsPage, usersPage } from "./pages/management";
 import { catalogPage } from "./pages/catalog";
 import { crmPage, remindersWorkspacePage } from "./pages/crm";
 import { customerDetailPage, customersPage } from "./pages/customers";
@@ -8,7 +8,7 @@ import { dashboardPage } from "./pages/dashboard";
 import { orderDetailPage, ordersPage } from "./pages/orders";
 import { cartPage, quotationDetailPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "./pages/quotations";
 import { reportDetailPage, reportsPage } from "./pages/reports";
-import { bankingPage, creditNotesPage, incentivesPage, paymentsPage } from "./pages/finance";
+import { bankingPage, creditNotesPage, customerCreditsPage, incentivesPage, paymentsPage } from "./pages/finance";
 import { companySelectionPage } from "./pages/company-selection";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
@@ -37,10 +37,15 @@ const routes: Record<string, PageFactory> = {
   "/customers": customersPage,
   "/quotations": quotationsPage,
   "/orders": ordersPage,
+  "/order-confirmations": ordersPage,
   "/banking": bankingPage,
   "/payments": paymentsPage,
   "/incentives": incentivesPage,
+  "/incentives/overview": incentivesPage,
+  "/incentives/rules": incentivesPage,
+  "/incentives/payouts": incentivesPage,
   "/credit-notes": creditNotesPage,
+  "/customer-credits": customerCreditsPage,
   "/crm": crmPage,
   "/reminders": remindersWorkspacePage,
   "/reports": reportsPage,
@@ -58,6 +63,7 @@ const routes: Record<string, PageFactory> = {
   "/settings/communication": () => settingsPage("communication"),
   "/settings/security": () => settingsPage("security"),
   "/profile": profilePage,
+  "/my-bank-details": myBankDetailsPage,
 };
 
 export async function navigate(path: string, push = true): Promise<void> {

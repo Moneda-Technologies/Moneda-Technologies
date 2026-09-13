@@ -6,6 +6,7 @@ import { appStore } from "../state/store";
 import { beginCustomerContextChange, customerContextSignal, isCurrentCustomerContextRevision } from "../state/customer-context";
 import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
+import { customerTypeLabel } from "../config/businessConfig";
 
 const RECENT_KEY = "moneda-recent-customer-companies";
 const SELECTED_KEY = "moneda-active-customer-id";
@@ -44,7 +45,7 @@ async function selectCustomerCompany(customerCompany: Customer, nextPath = "/pro
 function customerCompanyCard(customerCompany: Customer, recent: boolean, selected: boolean): string {
   const id = customerCompany.customer_id ?? customerCompany._id;
   const name = customerCompany.company_name ?? customerCompany.name;
-  return `<button class="company-select-card ${selected ? "selected" : ""}" data-company="${escapeHtml(id)}" role="option" aria-selected="${selected}"><span class="company-logo-mini">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><span class="company-select-copy"><small>${recent ? "Recently used customer" : "Available customer"}</small><strong>${escapeHtml(name)}</strong><span>${escapeHtml(customerCompany.contact_name ?? customerCompany.email ?? customerCompany.country ?? "Customer details pending")}</span></span><span class="company-currency">${escapeHtml(customerCompany.preferred_currency ?? customerCompany.default_currency ?? "EUR")}</span><i data-lucide="arrow-right"></i></button>`;
+  return `<button class="company-select-card ${selected ? "selected" : ""}" data-company="${escapeHtml(id)}" role="option" aria-selected="${selected}"><span class="company-logo-mini">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><span class="company-select-copy"><small>${recent ? "Recently used customer" : "Available customer"}</small><strong>${escapeHtml(name)}</strong><span>${escapeHtml(customerCompany.contact_name ?? customerCompany.email ?? customerCompany.country ?? "Customer details pending")}</span><small class="customer-type-label">Customer Type: ${escapeHtml(customerTypeLabel(customerCompany.client_type))}</small></span><span class="company-currency">${escapeHtml(customerCompany.preferred_currency ?? customerCompany.default_currency ?? "EUR")}</span><i data-lucide="arrow-right"></i></button>`;
 }
 
 export async function companySelectionPage(configOptions: { preserveCurrent?: boolean; nextPath?: string } = {}): Promise<HTMLElement> {

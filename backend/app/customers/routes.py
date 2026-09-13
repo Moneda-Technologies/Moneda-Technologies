@@ -9,6 +9,7 @@ from app.middleware.access import can_view_all_customers, customer_record, curre
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
+from app.services.business_logic import normalize_client_type
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
@@ -20,6 +21,7 @@ FIELDS = {
     "default_tax_rate", "default_tax_mode", "tax_enabled", "assigned_salesperson", "credit_limit",
     "notes", "status", "active", "continent", "country_code", "country_name", "region",
     "tax_profile", "custom_payment_days", "payment_terms_display",
+    "client_type",
 }
 
 
@@ -32,6 +34,7 @@ def _view(row: dict) -> dict:
     customer["preferred_currency"] = preferred_currency
     customer["default_currency"] = preferred_currency
     customer.setdefault("active", customer.get("status", "active") != "archived")
+    customer["client_type"] = normalize_client_type(customer.get("client_type"))
     return customer
 
 
@@ -52,13 +55,19 @@ def _access_view(row: dict) -> dict | None:
         creator_id = creator_id or row["created_by"].get("_id") or row["created_by"].get("user_id")
     creator = store.find_one("users", {"_id": creator_id}) if creator_id else None
     assigned = []
+    managers: dict[str, dict] = {}
     for user_id in user_ids:
         member = store.find_one("users", {"_id": user_id})
         if member:
             assigned.append({"name": member.get("name") or member.get("email") or "User", "email": member.get("email")})
+            manager_id = member.get("manager_id")
+            manager = store.find_one("users", {"_id": manager_id}) if manager_id else None
+            if manager:
+                managers[str(manager.get("_id"))] = {"name": manager.get("name") or manager.get("email") or "Manager", "email": manager.get("email")}
     return {
         "created_by": {"name": creator.get("name") or creator.get("email") or "User", "email": creator.get("email")} if creator else None,
         "assigned_users": assigned,
+        "assigned_managers": list(managers.values()),
     }
 
 
@@ -77,6 +86,7 @@ def list_customers():
     else:
         query = _permitted_query()
         status = request.args.get("status")
+        client_type_filter = str(request.args.get("client_type") or "").strip().upper()
         if not status:
             # The directory's All view intentionally includes archived records;
             # authorization is still enforced by the assignment/global query.
@@ -86,6 +96,8 @@ def list_customers():
             query["status"] = status
             if status == "archived":
                 query.pop("active", None)
+        if client_type_filter in {"WHOLESALER", "DEALER", "CUSTOMER"}:
+            query["client_type"] = client_type_filter
         term = request.args.get("search", "").strip()[:100]
         if term:
             query = {"$and": [query, {"$or": [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]}]}
@@ -182,7 +194,10 @@ def update_customer(customer_id: str):
     row = store.update_one("customers", {"_id": customer_id}, changes)
     if not row:
         return failure("Customer not found", status=404)
-    audit("customer.update", "customer", customer_id, {"fields": sorted(changes)})
+    audit_details = {"fields": sorted(changes)}
+    if "client_type" in changes and changes.get("client_type") != existing.get("client_type"):
+        audit_details.update({"old_client_type": normalize_client_type(existing.get("client_type")), "new_client_type": changes.get("client_type")})
+    audit("customer.update", "customer", customer_id, audit_details)
     return success(_view(row), "Customer updated")
 
 

@@ -4,6 +4,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { PAYMENT_TERMS } from "../config/customer-metadata";
+import { customerTypeLabel, customerTypeOptions } from "../config/businessConfig";
 import type { CountryMeta } from "../config/customer-metadata";
 import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
@@ -39,6 +40,7 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
     <div class="form-grid">
       <label>Customer company name *<input name="company_name" required placeholder="Registered company" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"><small class="field-error" data-error-for="company_name"></small></label>
       <label>Primary contact *<input name="contact_name" required autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"><small class="field-error" data-error-for="contact_name"></small></label>
+      <label>Customer Type *<select name="client_type" required>${customerTypeOptions(existing?.client_type ?? "WHOLESALER")}</select><small>Controls the canonical pricing and incentive namespace.</small><small class="field-error" data-error-for="client_type"></small></label>
       <label>Email *<input name="email" type="text" inputmode="email" required placeholder="procurement@company.com or -" value="${escapeHtml(existing?.email ?? "")}"><small>Use - if the email is not known.</small><small class="field-error" data-error-for="email"></small></label>
       <label>Phone *<input name="phone" type="tel" required inputmode="tel" placeholder="International phone number or -" value="${escapeHtml(existing?.phone ?? "")}"><small>Use - if the phone number is not known.</small><small class="field-error" data-error-for="phone"></small></label>
       <label>Region / Continent *<select name="continent" required><option value="">Select a region</option>${regions.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select><small>Select a region to filter countries, or search for a country and the region will be selected automatically.</small><small class="field-error" data-error-for="continent"></small></label>
@@ -160,7 +162,7 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
     delete value.country_search;
     if (value.payment_terms !== "Custom") { delete value.custom_payment_days; }
     const errors: Record<string, string> = {};
-    const required = [["company_name", "Company name is required"], ["contact_name", "Primary contact is required"], ["email", "Email is required; use - if unknown"], ["phone", "Phone is required; use - if unknown"], ["continent", "Region / Continent is required"], ["country_code", "Country is required"], ["preferred_currency", "Display currency is required"], ["payment_terms", "Payment terms are required"], ["address", "Address is required"]] as const;
+    const required = [["company_name", "Company name is required"], ["contact_name", "Primary contact is required"], ["client_type", "Customer Type is required"], ["email", "Email is required; use - if unknown"], ["phone", "Phone is required; use - if unknown"], ["continent", "Region / Continent is required"], ["country_code", "Country is required"], ["preferred_currency", "Display currency is required"], ["payment_terms", "Payment terms are required"], ["address", "Address is required"]] as const;
     required.forEach(([field, message]) => { if (!String(value[field] ?? "").trim()) errors[field] = message; });
     if (value.email && value.email !== "-" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value.email))) errors.email = "Enter a valid email address or - if unknown";
     const phone = String(value.phone ?? "").trim();
@@ -197,13 +199,37 @@ export async function customersPage(): Promise<HTMLElement> {
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(6);
   let statusFilter = "active";
+  let clientTypeFilter = "";
   const load = async () => {
-    const result = await customerApi.list(undefined, statusFilter);
+    const result = await customerApi.list(undefined, statusFilter, clientTypeFilter);
     body.innerHTML = `<div class="table-toolbar"><div class="field-search"><i data-lucide="search"></i><input placeholder="Search customers" aria-label="Search customers"></div><div class="segmented"><button class="active">All</button><button>Active</button><button>Archived</button></div><span>${result.pagination?.total ?? result.items.length} records</span></div>${result.items.length ? `<div class="data-table panel"><table><thead><tr><th>Customer company</th><th>Primary contact</th><th>Email / phone</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${result.items.map((customer) => { const name = customerName(customer); const id = customer.customer_id ?? customer._id; return `<tr><td><div class="table-identity"><span>${escapeHtml(name.slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(name)}</strong><small>${escapeHtml(customer.address ?? "")}</small></p></div></td><td>${escapeHtml(customer.contact_name ?? "—")}</td><td><strong>${escapeHtml(customer.email ?? "No email")}</strong><small>${escapeHtml(customer.phone ?? "")}</small></td><td><span class="currency-tag">${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</span></td><td>${statusBadge(customer.status ?? "active")}</td><td><a class="icon-button" href="/customers/${encodeURIComponent(id)}" data-route="/customers/${encodeURIComponent(id)}" aria-label="View customer" title="View customer"><i data-lucide="arrow-up-right"></i></a></td></tr>`; }).join("")}</tbody></table></div>` : emptyState("building-2", "No customers yet", "Add a customer business to prepare a quotation.")}`;
+    const customerTable = body.querySelector<HTMLTableElement>("table");
+    if (customerTable) {
+      const headerRow = customerTable.tHead?.rows[0];
+      const typeHeader = document.createElement("th");
+      typeHeader.textContent = "Customer Type";
+      headerRow?.insertBefore(typeHeader, headerRow.cells[1] ?? null);
+      customerTable.tBodies[0]?.querySelectorAll("tr").forEach((row, index) => {
+        const typeCell = document.createElement("td");
+        typeCell.innerHTML = `<span class="customer-type-badge">${escapeHtml(customerTypeLabel(result.items[index]?.client_type))}</span>`;
+        row.insertBefore(typeCell, row.cells[1] ?? null);
+      });
+    }
     const currencyHeading = [...body.querySelectorAll("th")].find((node) => node.textContent === "Currency");
     if (currencyHeading) currencyHeading.textContent = "Display";
     const actionHeading = body.querySelector("th:last-child");
     if (actionHeading) actionHeading.textContent = "Actions";
+    const toolbar = body.querySelector<HTMLElement>(".table-toolbar");
+    if (toolbar && !toolbar.querySelector("[data-client-type-filter]")) {
+      const typeSelect = document.createElement("select");
+      typeSelect.className = "client-type-filter";
+      typeSelect.dataset.clientTypeFilter = "true";
+      typeSelect.setAttribute("aria-label", "Filter by customer type");
+      typeSelect.innerHTML = customerTypeOptions(clientTypeFilter, true);
+      typeSelect.value = clientTypeFilter;
+      typeSelect.addEventListener("change", () => { clientTypeFilter = typeSelect.value; void load(); });
+      toolbar.append(typeSelect);
+    }
     refreshIcons(body);
     body.querySelectorAll<HTMLButtonElement>(".segmented button").forEach((button) => {
       const label = button.textContent?.trim().toLowerCase();
@@ -249,6 +275,19 @@ export async function customerDetailPage(customerId: string): Promise<HTMLElemen
     const crmHref = `/crm?customer_id=${encodeURIComponent(customerId)}`;
     const accessMarkup = customer.access ? `<section class="panel customer-access-panel"><div class="section-title"><div><span class="eyebrow">Access & ownership</span><h2>Customer access</h2></div></div><div class="detail-grid"><div><span>Created by</span><strong>${escapeHtml(customer.access.created_by?.name ?? "Unknown")}</strong></div><div><span>Assigned users</span><strong>${customer.access.assigned_users?.length ?? 0}</strong></div></div>${customer.access.assigned_users?.length ? `<div class="customer-activity-list">${customer.access.assigned_users.map((member) => `<div><div><strong>${escapeHtml(member.name)}</strong><small>${escapeHtml(member.email ?? "")}</small></div></div>`).join("")}</div>` : '<p class="muted">No assigned users.</p>'}</section>` : "";
     body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</div><div><span class="eyebrow">Customer</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(customer.contact_name ?? "Primary contact not configured")}</p>${statusBadge(customer.status ?? "active")}</div><div class="detail-hero-actions"><a class="button button-secondary" href="${crmHref}" data-route="${crmHref}"><i data-lucide="chart-no-axes-combined"></i>View CRM</a><button class="button button-primary" id="edit-customer"><i data-lucide="pencil"></i>Edit customer</button></div></section><section class="panel customer-profile-panel"><div class="section-title"><div><span class="eyebrow">Contact & business information</span><h2>Customer profile</h2></div></div><div class="detail-grid"><div><span>Company name</span><strong>${escapeHtml(name)}</strong></div><div><span>Primary contact</span><strong>${escapeHtml(customer.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escapeHtml(customer.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escapeHtml(customer.phone ?? "—")}</strong></div><div><span>Region</span><strong>${escapeHtml(customer.region?.continent ?? customer.continent ?? "—")}</strong></div><div><span>Country</span><strong>${escapeHtml(customer.region?.country_name ?? customer.country_name ?? customer.country ?? "—")}</strong></div><div><span>Display currency</span><strong>${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</strong></div><div><span>Payment terms</span><strong>${escapeHtml(customer.payment_terms_display ?? customer.payment_terms ?? "—")}</strong></div><div class="detail-grid-wide"><span>Address</span><strong>${escapeHtml(customer.address ?? "—")}</strong></div></div></section>${accessMarkup}<section class="panel customer-history-panel"><div class="section-title"><div><span class="eyebrow">Related records</span><h2>Customer history</h2></div></div><div class="metric-grid compact-metrics"><a class="metric-card" href="/quotations?customer_id=${encodeURIComponent(customerId)}" data-route="/quotations?customer_id=${encodeURIComponent(customerId)}"><span>Quotations</span><strong>${related.quotations?.length ?? 0}</strong></a><a class="metric-card" href="/orders?customer_id=${encodeURIComponent(customerId)}" data-route="/orders?customer_id=${encodeURIComponent(customerId)}"><span>Orders</span><strong>${related.orders?.length ?? 0}</strong></a><a class="metric-card" href="${crmHref}" data-route="${crmHref}"><span>Leads</span><strong>${related.leads?.length ?? 0}</strong></a><a class="metric-card" href="${crmHref}" data-route="${crmHref}"><span>Opportunities</span><strong>${related.opportunities?.length ?? 0}</strong></a></div></section><section class="panel customer-activity-panel"><div class="section-title"><div><span class="eyebrow">CRM</span><h2>Sales activity</h2></div><a class="button button-quiet" href="${crmHref}" data-route="${crmHref}">Open pipeline<i data-lucide="arrow-up-right"></i></a></div>${leads.length ? `<div class="customer-activity-list">${leads.slice(0, 5).map((lead) => `<div><div><strong>${escapeHtml(String(lead.title ?? lead.notes ?? "Sales lead"))}</strong><small>${escapeHtml(String(lead.next_action ?? lead.follow_up_date ?? "No next action"))}</small></div>${statusBadge(String(lead.status ?? "Lead"))}</div>`).join("")}</div>` : '<p class="muted">No CRM activity yet.</p>'}</section></div>`;
+    const profileGrid = body.querySelector<HTMLElement>(".customer-profile-panel .detail-grid");
+    if (profileGrid) {
+      const typeField = document.createElement("div");
+      typeField.innerHTML = `<span>Customer Type</span><strong>${escapeHtml(customerTypeLabel(customer.client_type))}</strong>`;
+      profileGrid.insertBefore(typeField, profileGrid.children[1] ?? null);
+    }
+    const accessGrid = body.querySelector<HTMLElement>(".customer-access-panel .detail-grid");
+    if (accessGrid) {
+      const managers = customer.access?.assigned_managers ?? [];
+      const managerField = document.createElement("div");
+      managerField.innerHTML = `<span>Manager</span><strong>${escapeHtml(managers.length ? managers.map((manager) => manager.name).join(", ") : "No manager assigned")}</strong>`;
+      accessGrid.append(managerField);
+    }
     body.querySelector("#edit-customer")?.addEventListener("click", () => { void openCustomerEditor(customer, load); });
     body.querySelectorAll<HTMLAnchorElement>("a[data-route]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: link.getAttribute("href") })); }));
     refreshIcons(body);

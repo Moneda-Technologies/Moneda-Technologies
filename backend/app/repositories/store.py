@@ -1,14 +1,47 @@
 from __future__ import annotations
 
 import copy
+import logging
 import re
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import ConfigurationError, OperationFailure, PyMongoError, ServerSelectionTimeoutError
+from pymongo.errors import AutoReconnect, ConfigurationError, OperationFailure, PyMongoError, ServerSelectionTimeoutError
+
+
+_MONGO_URI_CREDENTIALS = re.compile(r"(mongodb(?:\+srv)?://)([^@\s]+)@", re.IGNORECASE)
+_LOGGER = logging.getLogger(__name__)
+
+
+def _mongo_connection_metadata(uri: str, database: str) -> dict[str, str]:
+    """Return safe connection metadata; never include MongoDB credentials."""
+    try:
+        parts = urlsplit(uri)
+        return {
+            "configured": "true" if bool(uri) else "false",
+            "scheme": parts.scheme or "unknown",
+            "host": parts.hostname or "unknown",
+            "database": database or "unknown",
+            "tls": "srv-default" if parts.scheme.lower() == "mongodb+srv" else "uri-controlled",
+        }
+    except ValueError:
+        return {
+            "configured": "true" if bool(uri) else "false",
+            "scheme": "invalid",
+            "host": "unknown",
+            "database": database or "unknown",
+            "tls": "unknown",
+        }
+
+
+def _safe_mongo_error(error: BaseException) -> str:
+    """Keep driver diagnostics useful while redacting credential-bearing URIs."""
+    message = _MONGO_URI_CREDENTIALS.sub(r"\1[REDACTED]@", str(error))
+    return message[:600]
 
 
 def utcnow() -> datetime:
@@ -32,6 +65,7 @@ class Store(Protocol):
     def find_one(self, collection: str, query: dict[str, Any]) -> dict[str, Any] | None: ...
     def insert_one(self, collection: str, document: dict[str, Any]) -> dict[str, Any]: ...
     def update_one(self, collection: str, query: dict[str, Any], changes: dict[str, Any], *, upsert: bool = False, unset_fields: list[str] | None = None) -> dict[str, Any] | None: ...
+    def upsert_one(self, collection: str, query: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]: ...
     def unset_many(self, collection: str, query: dict[str, Any], fields: list[str]) -> int: ...
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool: ...
     def count(self, collection: str, query: dict[str, Any] | None = None) -> int: ...
@@ -119,6 +153,14 @@ class MemoryStore:
             return self.insert_one(collection, {**query, **changes})
         return None
 
+    def upsert_one(self, collection: str, query: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+        """Create a document once, preserving it exactly on later calls."""
+        with self._lock:
+            for row in self._data.setdefault(collection, []):
+                if _matches(row, query):
+                    return copy.deepcopy(row)
+            return self.insert_one(collection, {**query, **document})
+
     def delete_one(self, collection: str, query: dict[str, Any]) -> bool:
         with self._lock:
             rows = self._data.setdefault(collection, [])
@@ -163,24 +205,69 @@ class MemoryStore:
 
 class MongoStore:
     def __init__(self, uri: str, database: str) -> None:
+        metadata = _mongo_connection_metadata(uri, database)
+        stage = "client_creation"
+        _LOGGER.info(
+            "mongodb startup connection configured=%s scheme=%s host=%s database=%s tls=%s",
+            metadata["configured"], metadata["scheme"], metadata["host"], metadata["database"], metadata["tls"],
+        )
         try:
-            self.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            # Keep startup bounded while allowing Atlas SRV discovery and a
+            # transient socket reset to recover once. These options do not
+            # mask a failure: ping and index initialization still have to
+            # complete before the application is considered healthy.
+            self.client = MongoClient(
+                uri,
+                serverSelectionTimeoutMS=10_000,
+                connectTimeoutMS=5_000,
+                socketTimeoutMS=10_000,
+                retryWrites=True,
+                retryReads=True,
+                appname="moneda-api",
+            )
+            stage = "server_selection_ping"
             self.client.admin.command("ping")
+            _LOGGER.info("mongodb startup ping=ok host=%s database=%s", metadata["host"], metadata["database"])
             self.db = self.client[database]
+            stage = "index_initialization"
             self._indexes()
+            _LOGGER.info("mongodb startup indexes=ready database=%s", metadata["database"])
         except OperationFailure as exc:
+            _LOGGER.error(
+                "mongodb startup failed category=authentication_or_authorization stage=%s host=%s database=%s error_type=%s error=%s",
+                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+            )
             raise RuntimeError("MongoDB authentication or authorization failed") from exc
         except ConfigurationError as exc:
+            _LOGGER.error(
+                "mongodb startup failed category=configuration_or_dns stage=%s host=%s database=%s error_type=%s error=%s",
+                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+            )
             raise RuntimeError("MongoDB connection string or DNS configuration is invalid") from exc
         except ServerSelectionTimeoutError as exc:
+            _LOGGER.error(
+                "mongodb startup failed category=server_selection_network_tls stage=%s host=%s database=%s error_type=%s error=%s",
+                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+            )
             raise RuntimeError("MongoDB network, DNS, TLS, or timeout failure") from exc
+        except AutoReconnect as exc:
+            _LOGGER.error(
+                "mongodb startup failed category=transient_network_reset stage=%s host=%s database=%s error_type=%s error=%s",
+                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+            )
+            raise RuntimeError("MongoDB connection was reset during startup") from exc
         except PyMongoError as exc:
+            _LOGGER.error(
+                "mongodb startup failed category=driver_or_index stage=%s host=%s database=%s error_type=%s error=%s",
+                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+            )
             raise RuntimeError("MongoDB connection failed") from exc
 
     def _indexes(self) -> None:
         self.db.users.create_index("email", unique=True)
         self.db.users.create_index("username", unique=True, sparse=True)
         self.db.users.create_index("username_normalized", unique=True, sparse=True)
+        self.db.users.create_index("manager_id")
         self.db.companies.create_index("name")
         self.db.products.create_index([("category_id", ASCENDING), ("active", ASCENDING)])
         self.db.customers.create_index([("customer_id", ASCENDING), ("name", ASCENDING)])
@@ -189,6 +276,7 @@ class MongoStore:
         self.db.customers.create_index([("company_id", ASCENDING), ("name", ASCENDING)])  # legacy bridge
         self.db.customers.create_index("assigned_user_ids")
         self.db.customers.create_index("created_by_user_id")
+        self.db.customers.create_index("client_type")
         self.db.quotations.create_index("quotation_number", unique=True)
         self.db.quotations.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
         self.db.quotations.create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])  # legacy bridge
@@ -214,6 +302,7 @@ class MongoStore:
         self.db.orders.create_index("quotation_id")
         self.db.order_documents.create_index("order_id", unique=True)
         self.db.payments.create_index([("order_id", ASCENDING), ("status", ASCENDING)])
+        self.db.user_bank_details.create_index("user_id", unique=True)
         self.db.incentives.create_index([("salesperson_id", ASCENDING), ("status", ASCENDING)])
         self.db.incentives.create_index("order_id", unique=True)
         self.db.credit_notes.create_index([("order_id", ASCENDING), ("created_at", DESCENDING)])
@@ -226,6 +315,64 @@ class MongoStore:
         except Exception:
             pass
         self.db.incentive_configurations.create_index([("user_id", ASCENDING), ("category_id", ASCENDING)], unique=True)
+        # ``allocation_type`` is part of the rule scope: a manager override
+        # and a creator rule may legitimately share client/role/category while
+        # carrying different rates. Replace the legacy three-field unique
+        # index before seeding those distinct scopes.
+        incentive_rules = self.db.incentive_rules
+        legacy_rule_key = [("client_type", ASCENDING), ("recipient_role", ASCENDING), ("category_id", ASCENDING)]
+        for name, info in incentive_rules.index_information().items():
+            if info.get("unique") and list(info.get("key", [])) == legacy_rule_key:
+                incentive_rules.drop_index(name)
+        # A database created before the corrected scope index may contain
+        # duplicate documents. Preserve the most recently updated active row
+        # and archive every other row before enforcing the new constraint.
+        grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        for row in incentive_rules.find({}):
+            key = (
+                str(row.get("allocation_type") or ""),
+                str(row.get("client_type") or ""),
+                str(row.get("recipient_role") or ""),
+                str(row.get("category_id") or ""),
+            )
+            grouped.setdefault(key, []).append(row)
+        for key, rows in grouped.items():
+            if len(rows) < 2:
+                continue
+            def _rule_timestamp(row: dict[str, Any]) -> datetime:
+                value = row.get("updated_at") or row.get("created_at")
+                if not isinstance(value, datetime):
+                    return datetime.min.replace(tzinfo=timezone.utc)
+                return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+            rows.sort(key=lambda row: (
+                row.get("active") is not False,
+                _rule_timestamp(row),
+                str(row.get("_id") or ""),
+            ), reverse=True)
+            winner = rows[0]
+            for duplicate in rows[1:]:
+                duplicate_id = duplicate.get("_id")
+                if not duplicate_id:
+                    continue
+                self.db.incentive_rule_archives.replace_one(
+                    {"_id": f"duplicate:{duplicate_id}"},
+                    {
+                        "_id": f"duplicate:{duplicate_id}",
+                        "source_id": duplicate_id,
+                        "winner_id": winner.get("_id"),
+                        "scope": key,
+                        "reason": "duplicate_incentive_rule_scope",
+                        "archived_at": utcnow(),
+                        "document": duplicate,
+                    },
+                    upsert=True,
+                )
+                incentive_rules.delete_one({"_id": duplicate_id})
+        incentive_rules.create_index([
+            ("allocation_type", ASCENDING), ("client_type", ASCENDING),
+            ("recipient_role", ASCENDING), ("category_id", ASCENDING),
+        ], unique=True, sparse=True)
+        self.db.incentive_allocations.create_index([("incentive_id", ASCENDING), ("recipient_user_id", ASCENDING)])
 
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]:
@@ -252,6 +399,17 @@ class MongoStore:
             update["$unset"] = {field: "" for field in unset_fields}
         return self.db[collection].find_one_and_update(
             query, update, upsert=upsert,
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def upsert_one(self, collection: str, query: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+        """Insert a document if its business key is absent; never overwrite it."""
+        now = utcnow()
+        insert_document = {**copy.deepcopy(document), "created_at": now, "updated_at": now}
+        return self.db[collection].find_one_and_update(
+            query,
+            {"$setOnInsert": insert_document},
+            upsert=True,
             return_document=ReturnDocument.AFTER,
         )
 

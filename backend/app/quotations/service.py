@@ -12,6 +12,7 @@ from app.pricing.engine import (
 )
 from app.repositories.store import Store, utcnow
 from app.customers.codes import available_customer_code
+from app.services.business_logic import customer_client_type, manager_snapshot
 
 
 class QuotationService:
@@ -123,6 +124,8 @@ class QuotationService:
                     privileged_discount="pricing.discount.override" in user.get("permissions", []),
                     adjustments=resolve_product_adjustments(self.store, product, configuration), business_rules=settings,
                     apply_tax=False, tax_mode_override="no_tax",
+                    client_type=customer_client_type(customer_company),
+                    client_pricing=self.store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {},
                 )
                 pricing_source = "legacy_cart_recalculated_eur"
             line["discount_source"] = "saved_cart_item"
@@ -198,6 +201,10 @@ class QuotationService:
             "customer_company_id": customer_id, "customer_company_snapshot": customer_snapshot,
             "company_id": customer_id, "company_snapshot": customer_snapshot,
             "created_by_user_id": user["_id"], "creator_snapshot": creator_snapshot,
+            "created_by_role": user.get("role_id"),
+            "manager_id_at_creation": user.get("manager_id"),
+            "manager_at_creation": manager_snapshot(self.store, user),
+            "client_type_at_creation": customer_client_type(customer_company),
             "prepared_by_user_id": user["_id"], "salesperson_id": user["_id"],
             "salesperson_snapshot": self._snapshot(user), "user_id": user["_id"],
             "master_currency": "EUR", "base_currency": "EUR", "quotation_currency": currency,

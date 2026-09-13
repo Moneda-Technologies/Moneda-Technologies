@@ -8,12 +8,26 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-FILES = {
-    "product_types.json", "blanket_categories.json", "blanket_options.json",
-    "blanket_bars.json", "blankets.json", "mpack_types.json", "mpack_options.json",
-    "mpacks.json", "chemical_categories.json", "chemical_options.json",
-    "chemicals.json", "pricing_eur.json", "tax_rules.json",
+PATHS = {
+    "product_types.json": Path("catalog") / "product_types.json",
+    "blanket_categories.json": Path("catalog") / "blankets" / "blanket_categories.json",
+    "blanket_options.json": Path("catalog") / "blankets" / "blanket_options.json",
+    "blanket_bars.json": Path("catalog") / "blankets" / "blanket_bars.json",
+    "blankets.json": Path("catalog") / "blankets" / "blankets.json",
+    "mpack_types.json": Path("catalog") / "underpacking" / "mpack_types.json",
+    "mpack_options.json": Path("catalog") / "underpacking" / "mpack_options.json",
+    "mpacks.json": Path("catalog") / "underpacking" / "mpacks.json",
+    "mpack_price_list_2026_h2.json": Path("pricing") / "mpack_price_list_2026_h2.json",
+    "chemical_categories.json": Path("catalog") / "chemicals" / "chemical_categories.json",
+    "chemical_options.json": Path("catalog") / "chemicals" / "chemical_options.json",
+    "chemicals.json": Path("catalog") / "chemicals" / "chemicals.json",
+    "pricing_eur.json": Path("pricing") / "pricing_eur.json",
+    "dealer_underpacking_pricing.json": Path("pricing") / "dealer_underpacking_pricing.json",
+    "tax_rules.json": Path("tax") / "tax_rules.json",
+    "machines.json": Path("machines") / "machines.json",
+    "countries.json": Path("geography") / "countries.json",
 }
+FILES = set(PATHS)
 FAMILIES = ["blankets", "mpacks", "chemicals"]
 PRICE_FIELDS = {"price", "price_eur", "pricing", "variant_prices", "dimension_prices", "package_prices"}
 
@@ -25,7 +39,7 @@ def load(name: str) -> dict[str, Any]:
             assert key not in row, f"Duplicate key {key!r} in {name}"
             row[key] = value
         return row
-    return json.loads((DATA / name).read_text(encoding="utf-8"), object_pairs_hook=unique)
+    return json.loads((DATA / PATHS[name]).read_text(encoding="utf-8"), object_pairs_hook=unique)
 
 
 def assert_no_embedded_price(value: Any, path: str) -> None:
@@ -43,8 +57,9 @@ def valid_price(value: Any) -> bool:
 
 
 def main() -> None:
-    active_files = {path.name for path in DATA.glob("*.json")}
-    assert active_files == FILES, f"Data directory must contain exactly the 13 canonical files: {sorted(active_files)}"
+    active_files = {path.relative_to(DATA).as_posix() for path in DATA.rglob("*.json")}
+    expected_files = {path.as_posix() for path in PATHS.values()}
+    assert active_files == expected_files, f"Data directory layout differs from the canonical map: {sorted(active_files)}"
     documents = {name: load(name) for name in FILES}
     assert [row["id"] for row in documents["product_types.json"]["product_types"]] == FAMILIES
 
@@ -98,7 +113,7 @@ def main() -> None:
     tax = documents["tax_rules.json"]
     assert tax["rates"] == [0, 5, 12, 18]
     assert tax["product_override_only"] is True and tax["quotation_override_allowed"] is False
-    print(f"Catalog audit passed: 13 files, 3 families, 6 bars, {len(all_ids)} unique products.")
+    print(f"Catalog audit passed: {len(FILES)} files, 3 families, 6 bars, {len(all_ids)} unique products.")
 
 
 if __name__ == "__main__":

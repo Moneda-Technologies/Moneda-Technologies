@@ -59,7 +59,7 @@ export const companyApi = customerCompanyApi;
 
 export const customerApi = {
   countries: () => api<{ countries: CountryMeta[]; total: number }>("/countries"),
-  list: (customerId?: string, status?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${status ? `status=${encodeURIComponent(status)}&` : ""}limit=100`),
+  list: (customerId?: string, status?: string, clientType?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${status ? `status=${encodeURIComponent(status)}&` : ""}${clientType ? `client_type=${encodeURIComponent(clientType)}&` : ""}limit=100`),
   get: (id: string) => api<Customer & { related?: Record<string, unknown[]> }>(`/customers/${encodeURIComponent(id)}`),
   create: (value: unknown) => api<Customer>("/customers", jsonBody(value)),
   update: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}`, patchBody(value)),
@@ -116,6 +116,10 @@ export const orderApi = {
 };
 export const financeApi = {
   payments: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/payments${query ? `?${query}` : ""}`),
+  bankDetails: () => api<{ items: Record<string, unknown>[]; total: number }>("/bank-details"),
+  bankDetail: (userId: string) => api<Record<string, unknown>>(`/bank-details/${encodeURIComponent(userId)}`),
+  updateBankDetails: (userId: string, value: unknown) => api<Record<string, unknown>>(`/bank-details/${encodeURIComponent(userId)}`, patchBody(value)),
+  paymentProof: (id: string) => api<{ name: string; type: string; size: number; data: string }>(`/payments/${encodeURIComponent(id)}/proof`),
   createPayment: (value: unknown) => api<Record<string, unknown>>("/payments", jsonBody(value)),
   updatePayment: (id: string, value: unknown) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}`, patchBody(value)),
   submitPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/submit`, jsonBody({})),
@@ -129,7 +133,8 @@ export const financeApi = {
   createCreditNote: (value: unknown) => api<Record<string, unknown>>("/credit-notes", jsonBody(value)),
 };
 export const adminApi = {
-  users: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/users"),
+  users: () => api<{ items: Record<string, unknown>[]; total: number; manager_options?: Record<string, unknown>[] }>("/admin/users"),
+  relationships: (id: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}/relationships`),
   createUser: (value: unknown) => api<{ user: Record<string, unknown>; invitation: { email_sent: boolean; status: "sent" | "failed"; diagnostic_id: string; error_code?: string } }>("/admin/users", jsonBody(value)),
   userDevices: (userId: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/admin/users/${encodeURIComponent(userId)}/devices`),
   approveDevice: (userId: string, deviceId: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/approve`, jsonBody({})),
@@ -139,6 +144,21 @@ export const adminApi = {
   deleteDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
+  incentiveRules: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/incentive-rules"),
+  incentiveConfigurator: () => api<{
+    customer_types: string[];
+    product_types: Array<{ id: string; name: string }>;
+    users: Record<string, unknown>[];
+    managers: Record<string, unknown>[];
+    customers: Record<string, unknown>[];
+    rules: Record<string, unknown>[];
+    rules_total: number;
+    resolution: Record<string, unknown>;
+  }>("/admin/incentive-configurator"),
+  createIncentiveRule: (value: unknown) => api<Record<string, unknown>>("/admin/incentive-rules", jsonBody(value)),
+  configureProductIncentiveRules: (value: unknown) => api<{ items: Record<string, unknown>[]; rates: Record<string, number> }>("/admin/incentive-rules/configure-products", jsonBody(value)),
+  updateIncentiveRule: (id: string, value: number | { rate?: number; active?: boolean }) => api<Record<string, unknown>>(`/admin/incentive-rules/${encodeURIComponent(id)}`, patchBody(typeof value === "number" ? { rate: value } : value)),
+  clientPricing: () => api<Record<string, unknown>>("/admin/pricing/client-types"),
   settings: () => api<Record<string, unknown>>("/settings"),
   auditLogs: () => api<{ items: Record<string, unknown>[]; total: number; page: number }>("/admin/audit-logs"),
   updateSettings: (value: unknown) => api<Record<string, unknown>>("/settings", patchBody(value)),

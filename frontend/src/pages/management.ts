@@ -1,4 +1,4 @@
-import { adminApi, authApi, companyApi, customerCompanyApi, profileApi, rateApi } from "../api";
+import { adminApi, authApi, companyApi, customerCompanyApi, financeApi, profileApi, rateApi } from "../api";
 import { apiEndpoint } from "../api/client";
 import { logout } from "../auth/logout";
 import { refreshIcons } from "../components/icons";
@@ -7,7 +7,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
-import { emptyState, escapeHtml, skeleton } from "../utils/dom";
+import { emptyState, escapeHtml, formatDate, skeleton } from "../utils/dom";
 import { pricingAdminPage } from "./pricing-management";
 
 export async function companiesPage(): Promise<HTMLElement> {
@@ -20,7 +20,9 @@ export async function companiesPage(): Promise<HTMLElement> {
 
 export async function usersPage(): Promise<HTMLElement> {
   const canInviteUsers = appStore.state.user?.role_id === "superadmin";
-  const page = pageScaffold("Management", "Users & access", "Assign customer scope and permission-backed roles without email-based exceptions.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
+  const section = new URLSearchParams(window.location.search).get("section");
+  const pageTitle = section === "assignments" ? "Customer Assignments" : section === "roles" ? "Roles & Permissions" : section === "devices" ? "Activity / Login Devices" : "Users & access";
+  const page = pageScaffold("Management", pageTitle, "Assign customer scope and permission-backed roles without email-based exceptions.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
   page.classList.add("users-access-page");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   const actorRole = appStore.state.user?.role_id;
@@ -130,7 +132,7 @@ export async function usersPage(): Promise<HTMLElement> {
     render();
     refreshIcons(content);
   };
-  const editUser = (user: Record<string, unknown>, roles: Record<string, unknown>[], customers: Record<string, unknown>[], reload: () => Promise<void>) => {
+  const editUser = (user: Record<string, unknown>, roles: Record<string, unknown>[], customers: Record<string, unknown>[], managers: Record<string, unknown>[], reload: () => Promise<void>) => {
     const content = document.createElement("div");
     const assigned = new Set((user.assigned_customer_ids as unknown[] ?? []).map(String));
     const roleHasGlobalCustomerAccess = (roleId: string) => {
@@ -146,12 +148,13 @@ export async function usersPage(): Promise<HTMLElement> {
      const canConfigureIncentive = String(appStore.state.user?.role_id ?? "") === "superadmin";
      const incentiveRoles = new Set(["admin", "manager_sales_admin", "user"]);
      const initialRoleId = String(user.role_id ?? "");
-     const incentiveOptions = [1, 2, 3, 4, 5, 6];
-     const incentiveCategories = (user.incentive_categories as Record<string, unknown>[] | undefined) ?? [{ _id: "blankets", name: "Blanket" }, { _id: "mpacks", name: "Underpacking" }, { _id: "chemicals", name: "Chemical" }];
+     const incentiveOptions = Array.from({ length: 13 }, (_, index) => index / 2);
+     const incentiveCategories = (user.incentive_categories as Record<string, unknown>[] | undefined) ?? [];
      const incentiveProducts = incentiveCategories;
      const incentiveRates = (user.incentive_rates as Record<string, unknown> | undefined) ?? {};
      const incentiveField = canConfigureIncentive ? `<section class="admin-user-section incentive-configuration" data-incentive-field ${incentiveRoles.has(initialRoleId) ? "" : 'style="display:none"'}><span class="eyebrow">Incentive configuration</span><p class="form-hint">Set the incentive percentage for each category. These rates are snapshotted when an Order Confirmation is created.</p><div class="incentive-category-grid">${incentiveProducts.length ? incentiveProducts.map((category) => { const id = String(category._id); const selected = Number(incentiveRates[id] ?? 0); return `<label>${escapeHtml(String(category.name ?? id))}<select data-incentive-category="${escapeHtml(id)}"><option value="">Not configured</option>${incentiveOptions.map((rate) => `<option value="${rate}" ${rate === selected ? "selected" : ""}>${rate}%</option>`).join("")}</select></label>`; }).join("") : '<span class="muted">No incentive categories available.</span>'}</div></section>` : "";
-     content.innerHTML = `<form class="stack-form admin-user-form"><section class="admin-user-section"><span class="eyebrow">User details</span><div class="form-grid"><label>Full name<input name="name" required value="${escapeHtml(String(user.name ?? ""))}"></label><label>Email<input value="${escapeHtml(String(user.email ?? ""))}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(String(user.phone ?? ""))}"></label></div></section><section class="admin-user-section"><span class="eyebrow">Access</span><div class="form-grid"><label>Role<select name="role_id">${roles.map((role) => `<option value="${escapeHtml(String(role._id))}" ${String(role._id) === String(user.role_id) ? "selected" : ""}>${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label><label>Device policy<select name="device_access_mode"><option value="approved_devices_only" ${user.device_access_mode !== "any_authorized_device" ? "selected" : ""}>Approved devices only</option><option value="any_authorized_device" ${user.device_access_mode === "any_authorized_device" ? "selected" : ""}>Any authorized device</option></select></label><label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""}><span>Account active</span></label></div></section>${incentiveField}<section class="admin-user-section admin-user-security" data-device-security><span class="eyebrow">Security &amp; devices</span><div class="device-security-summary"><span class="form-hint">Loading device information...</span></div></section>${canManageCustomerAccess ? `<section class="admin-user-section customer-access-editor" data-customer-access-section><span class="eyebrow">Customer access</span><p class="form-hint" data-customer-access-note>${globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user."}</p><div class="customer-access-actions"><button type="button" class="button button-quiet" data-select-all>Select all</button><button type="button" class="button button-quiet" data-clear-all>Clear all</button></div><input class="customer-access-search" type="search" placeholder="Search name, code, contact or email" aria-label="Search customers"><div class="customer-access-selected" data-selected-customers>${selectedRows() || '<span class="muted">No customers assigned</span>'}</div><div class="customer-access-options" data-customer-options>${customerOptions() || '<span class="muted">No customers found</span>'}</div></section>` : ""}<small class="field-error" data-admin-user-error></small><button class="button button-primary button-full" type="submit">Save user</button></form>`;
+     const managerField = `<label data-manager-field ${initialRoleId === "user" ? "" : 'style="display:none"'}>Manager<select name="manager_id"><option value="">No manager assigned</option>${managers.filter((manager) => String(manager._id) !== String(user._id)).map((manager) => `<option value="${escapeHtml(String(manager._id))}" ${String(manager._id) === String(user.manager_id ?? "") ? "selected" : ""}>${escapeHtml(String(manager.name ?? manager.email ?? "Manager"))}</option>`).join("")}</select></label>`;
+     content.innerHTML = `<form class="stack-form admin-user-form"><section class="admin-user-section"><span class="eyebrow">User details</span><div class="form-grid"><label>Full name<input name="name" required value="${escapeHtml(String(user.name ?? ""))}"></label><label>Email<input value="${escapeHtml(String(user.email ?? ""))}" disabled></label><label>Phone<input name="phone" type="tel" inputmode="tel" value="${escapeHtml(String(user.phone ?? ""))}"></label></div></section><section class="admin-user-section"><span class="eyebrow">Access</span><div class="form-grid"><label>Role<select name="role_id">${roles.map((role) => `<option value="${escapeHtml(String(role._id))}" ${String(role._id) === String(user.role_id) ? "selected" : ""}>${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label>${managerField}<label>Device policy<select name="device_access_mode"><option value="approved_devices_only" ${user.device_access_mode !== "any_authorized_device" ? "selected" : ""}>Approved devices only</option><option value="any_authorized_device" ${user.device_access_mode === "any_authorized_device" ? "selected" : ""}>Any authorized device</option></select></label><label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""}><span>Account active</span></label></div></section>${incentiveField}<section class="admin-user-section admin-user-security" data-device-security><span class="eyebrow">Security &amp; devices</span><div class="device-security-summary"><span class="form-hint">Loading device information...</span></div></section>${canManageCustomerAccess ? `<section class="admin-user-section customer-access-editor" data-customer-access-section><span class="eyebrow">Customer access</span><p class="form-hint" data-customer-access-note>${globalRole() ? "This role has global access to all customers." : "Only selected customers are accessible to this user."}</p><div class="customer-access-actions"><button type="button" class="button button-quiet" data-select-all>Select all</button><button type="button" class="button button-quiet" data-clear-all>Clear all</button></div><input class="customer-access-search" type="search" placeholder="Search name, code, contact or email" aria-label="Search customers"><div class="customer-access-selected" data-selected-customers>${selectedRows() || '<span class="muted">No customers assigned</span>'}</div><div class="customer-access-options" data-customer-options>${customerOptions() || '<span class="muted">No customers found</span>'}</div></section>` : ""}<small class="field-error" data-admin-user-error></small><button class="button button-primary button-full" type="submit">Save user</button></form>`;
      const dialog = openModal("Edit user", content, "wide");
      const incentiveHint = content.querySelector<HTMLElement>("[data-incentive-field] .form-hint");
      if (incentiveHint) incentiveHint.textContent = "Set the incentive percentage for each category. These rates are snapshotted when an Order Confirmation is created.";
@@ -235,19 +238,21 @@ export async function usersPage(): Promise<HTMLElement> {
       if (field) field.style.display = incentiveRoles.has(roleId) ? "" : "none";
     };
      content.querySelector<HTMLInputElement>(".customer-access-search")?.addEventListener("input", renderAssignments);
-     content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", () => { renderAssignments(); syncIncentiveField(); });
+     content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", () => { renderAssignments(); syncIncentiveField(); const field = content.querySelector<HTMLElement>("[data-manager-field]"); if (field) field.style.display = (content.querySelector<HTMLSelectElement>('[name="role_id"]')?.value === "user") ? "" : "none"; });
      syncIncentiveField();
       renderAssignments();
-     content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const selectedRoleId = String(data.get("role_id") ?? ""); const incentiveRates: Record<string, number> = {}; content.querySelectorAll<HTMLSelectElement>("[data-incentive-category]").forEach((select) => { if (select.value) incentiveRates[String(select.dataset.incentiveCategory)] = Number(select.value); }); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: selectedRoleId, device_access_mode: data.get("device_access_mode"), ...(canConfigureIncentive ? { incentive_rates: incentiveRoles.has(selectedRoleId) ? incentiveRates : {} } : {}), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
+     content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const selectedRoleId = String(data.get("role_id") ?? ""); const incentiveRates: Record<string, number> = {}; content.querySelectorAll<HTMLSelectElement>("[data-incentive-category]").forEach((select) => { if (select.value) incentiveRates[String(select.dataset.incentiveCategory)] = Number(select.value); }); try { await adminApi.updateUser(String(user._id), { name: data.get("name"), phone: data.get("phone"), role_id: selectedRoleId, manager_id: selectedRoleId === "user" ? (data.get("manager_id") || null) : null, device_access_mode: data.get("device_access_mode"), ...(canConfigureIncentive ? { incentive_rates: incentiveRoles.has(selectedRoleId) ? incentiveRates : {} } : {}), active: data.get("active") === "on", ...(canManageCustomerAccess ? { customer_ids: [...assigned] } : {}) }); dialog.close(); toast("User updated"); await reload(); } catch (error) { const node = content.querySelector<HTMLElement>("[data-admin-user-error]"); if (node) node.textContent = error instanceof Error ? error.message : "User could not be updated"; } });
      refreshIcons(content);
   };
   let availableRoles: Record<string, unknown>[] = [];
-  const inviteUser = (roles: Record<string, unknown>[], reload: () => Promise<void>) => {
+  let availableManagers: Record<string, unknown>[] = [];
+  const inviteUser = (roles: Record<string, unknown>[], managers: Record<string, unknown>[], reload: () => Promise<void>) => {
     const content = document.createElement("div");
-    content.innerHTML = `<form class="stack-form admin-user-form invite-user-form"><section class="admin-user-section"><span class="eyebrow">Account details</span><div class="form-grid"><label>Name<input name="name" maxlength="100" autocomplete="name" required></label><label>Username / User ID<input name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,79}" autocomplete="username" required></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email" required></label><label>Role<select name="role_id" required><option value="">Select role</option>${roles.map((role) => `<option value="${escapeHtml(String(role._id))}">${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label></div></section><section class="admin-user-section"><span class="eyebrow">Initial password</span><p class="form-hint">Use at least 8 characters with 1 uppercase letter, 1 lowercase letter, and 1 number.</p><div class="form-grid"><label>Password<input name="password" type="password" minlength="8" maxlength="200" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}" autocomplete="new-password" required></label><label>Confirm Password<input name="confirm_password" type="password" minlength="8" maxlength="200" autocomplete="new-password" required></label></div></section><small class="field-error" data-invite-error aria-live="polite"></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel-invite>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Create &amp; invite</button></div></form>`;
+    content.innerHTML = `<form class="stack-form admin-user-form invite-user-form"><section class="admin-user-section"><span class="eyebrow">Account details</span><div class="form-grid"><label>Name<input name="name" maxlength="100" autocomplete="name" required></label><label>Username / User ID<input name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,79}" autocomplete="username" required></label><label>Email<input name="email" type="email" maxlength="254" autocomplete="email" required></label><label>Role<select name="role_id" required><option value="">Select role</option>${roles.map((role) => `<option value="${escapeHtml(String(role._id))}">${escapeHtml(String(role.display_name ?? role._id))}</option>`).join("")}</select></label><label data-invite-manager style="display:none">Manager<select name="manager_id"><option value="">No manager assigned</option>${managers.map((manager) => `<option value="${escapeHtml(String(manager._id))}">${escapeHtml(String(manager.name ?? manager.email ?? "Manager"))}</option>`).join("")}</select></label></div></section><section class="admin-user-section"><span class="eyebrow">Initial password</span><p class="form-hint">Use at least 8 characters with 1 uppercase letter, 1 lowercase letter, and 1 number.</p><div class="form-grid"><label>Password<input name="password" type="password" minlength="8" maxlength="200" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}" autocomplete="new-password" required></label><label>Confirm Password<input name="confirm_password" type="password" minlength="8" maxlength="200" autocomplete="new-password" required></label></div></section><small class="field-error" data-invite-error aria-live="polite"></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel-invite>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Create &amp; invite</button></div></form>`;
     enhancePasswordFields(content);
     const dialog = openModal("Invite user", content, "wide");
     content.querySelector<HTMLButtonElement>("[data-cancel-invite]")?.addEventListener("click", () => dialog.close());
+    content.querySelector<HTMLSelectElement>('[name="role_id"]')?.addEventListener("change", (event) => { const field = content.querySelector<HTMLElement>("[data-invite-manager]"); if (field) field.style.display = (event.currentTarget as HTMLSelectElement).value === "user" ? "" : "none"; });
     content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget as HTMLFormElement;
@@ -271,6 +276,7 @@ export async function usersPage(): Promise<HTMLElement> {
           password: passwordInput.value,
           confirm_password: confirmationInput.value,
           role_id: data.get("role_id"),
+          manager_id: data.get("role_id") === "user" ? (data.get("manager_id") || null) : null,
           customer_ids: [],
         });
         passwordInput.value = "";
@@ -289,8 +295,9 @@ export async function usersPage(): Promise<HTMLElement> {
   const load = async () => {
     const [users, roles, customerResult] = await Promise.all([adminApi.users(), adminApi.roles(), customerCompanyApi.list()]);
     availableRoles = roles.items;
+    availableManagers = (users.manager_options ?? users.items.filter((user) => ["manager", "manager_sales_admin"].includes(String(user.role_id))));
     const customers = customerResult.items as unknown as Record<string, unknown>[];
-     body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
+     body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Record<string, unknown> | null)?.name ?? "—"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
     body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => {
       const user = users.items.find((item) => String(item._id) === button.dataset.id);
       if (!user) return;
@@ -300,13 +307,13 @@ export async function usersPage(): Promise<HTMLElement> {
         button.setAttribute("aria-label", `View customer access for ${String(user.name ?? "user")}`);
         button.title = "View customer access";
         button.addEventListener("click", () => openCustomerAccess(user, customers, load));
-      } else button.addEventListener("click", () => editUser(user, roles.items, customers, load));
+      } else button.addEventListener("click", () => editUser(user, roles.items, customers, availableManagers, load));
     });
     refreshIcons(body);
   };
   try { await load(); }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Users unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
-  page.querySelector<HTMLButtonElement>("#invite-user")?.addEventListener("click", () => inviteUser(availableRoles, load));
+  page.querySelector<HTMLButtonElement>("#invite-user")?.addEventListener("click", () => inviteUser(availableRoles, availableManagers, load));
   refreshIcons(page); return page;
 }
 
@@ -620,4 +627,44 @@ export async function profilePage(): Promise<HTMLElement> {
     await logout();
   });
   refreshIcons(page); return page;
+}
+
+export async function myBankDetailsPage(): Promise<HTMLElement> {
+  const manager = ["manager", "manager_sales_admin"].includes(String(appStore.state.user?.role_id ?? ""));
+  const page = pageScaffold(manager ? "Finance" : "My Account", manager ? "Team Bank Details" : "My Bank Details", manager ? "View and maintain bank details for yourself and users in your authorized team." : "Manage the bank details associated with your Moneda account.");
+  const body = page.querySelector<HTMLElement>(".page-body")!;
+  const render = async () => {
+    body.innerHTML = skeleton(3);
+    try {
+      const result = await financeApi.bankDetails();
+      const rows = result.items;
+      body.innerHTML = `<section class="panel banking-summary"><div class="section-title"><div><span class="eyebrow">${manager ? "Team banking" : "Personal banking"}</span><h2>${manager ? "Authorized team bank details" : "Your bank details"}</h2></div><span class="form-hint">${rows.filter((row) => row.has_details).length} / ${rows.length} completed</span></div></section>${rows.length ? `<div class="data-table panel banking-table"><table><thead><tr><th>User</th><th>Bank details</th><th>Account</th><th>Updated</th><th>Action</th></tr></thead><tbody>${rows.map((row) => { const owner = row.owner as Record<string, unknown> | undefined; const editable = row.can_edit === true; return `<tr><td><strong>${escapeHtml(String(owner?.name ?? owner?.email ?? owner?._id ?? "User"))}</strong><small>${escapeHtml(String(owner?.email ?? ""))}</small></td><td>${row.has_details ? statusBadge("Completed") : statusBadge("Missing")}</td><td>${escapeHtml(String(row.account_number || "—"))}${row.bank_name ? `<small>${escapeHtml(String(row.bank_name))}</small>` : ""}</td><td>${escapeHtml(formatDate(String(row.updated_at ?? "")))}</td><td>${editable ? `<button class="button button-quiet" type="button" data-bank-edit="${escapeHtml(String(row.user_id))}">${row.has_details ? "View / Edit" : "Add details"}</button>` : "—"}</td></tr>`; }).join("")}</tbody></table></div>` : emptyState("landmark", "No bank details records", "Bank detail records will appear here when configured.")}`;
+      body.querySelectorAll<HTMLButtonElement>("[data-bank-edit]").forEach((button) => button.addEventListener("click", async () => {
+        const targetId = String(button.dataset.bankEdit || "");
+        const row = rows.find((item) => String(item.user_id) === targetId);
+        if (!row) return;
+        const owner = row.owner as Record<string, unknown> | undefined;
+        const content = document.createElement("div");
+        content.innerHTML = `<form class="stack-form" data-bank-form><p class="form-hint">Owner: <strong>${escapeHtml(String(owner?.name ?? owner?.email ?? targetId))}</strong>. Sensitive account identifiers remain masked in team views.</p><div class="form-grid"><label>Account holder<input name="account_holder" value="${escapeHtml(String(row.account_holder ?? ""))}"></label><label>Bank name<input name="bank_name" value="${escapeHtml(String(row.bank_name ?? ""))}"></label><label>Account number<input name="account_number" inputmode="numeric" placeholder="Leave blank to keep existing"></label><label>IFSC / local code<input name="ifsc" value="${escapeHtml(String(row.ifsc ?? ""))}"></label><label>IBAN<input name="iban" placeholder="Leave blank to keep existing"></label><label>SWIFT / BIC<input name="swift" placeholder="Leave blank to keep existing"></label><label class="span-2">Notes<textarea name="notes" rows="2">${escapeHtml(String(row.notes ?? ""))}</textarea></label></div><small class="field-error" data-bank-error></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Save bank details</button></div></form>`;
+        const dialog = openModal("Bank Details", content, "wide");
+        content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
+        content.querySelector<HTMLFormElement>("[data-bank-form]")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget as HTMLFormElement;
+          const data = new FormData(form);
+          const payload: Record<string, string> = {};
+          ["account_holder", "bank_name", "account_number", "ifsc", "iban", "swift", "notes"].forEach((field) => { const value = String(data.get(field) ?? "").trim(); if (value) payload[field] = value; });
+          try { await financeApi.updateBankDetails(targetId, payload); dialog.close(); toast("Bank details updated"); await render(); }
+          catch (error) { const node = content.querySelector<HTMLElement>("[data-bank-error]"); if (node) node.textContent = error instanceof Error ? error.message : "Bank details could not be saved"; }
+        });
+        refreshIcons(content);
+      }));
+      refreshIcons(body);
+    } catch (error) {
+      body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Bank details unavailable")}</div>`;
+    }
+  };
+  await render();
+  refreshIcons(page);
+  return page;
 }

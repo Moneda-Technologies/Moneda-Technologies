@@ -5,7 +5,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
-import { emptyState, escapeHtml, formatDate, formatMoney, skeleton } from "../utils/dom";
+import { emptyState, escapeHtml, formatDate, formatDateInput, formatMoney, skeleton } from "../utils/dom";
 
 function snapshotValue(value: unknown, key: string): string {
   return escapeHtml(String((value as Record<string, unknown> | undefined)?.[key] ?? "—"));
@@ -33,7 +33,7 @@ function paymentFormContent(order: Record<string, unknown>, existing?: Record<st
   content.innerHTML = `<form class="stack-form" data-payment-form>
     <p class="form-hint">Record or update the customer payment for this Order Confirmation. It will remain awaiting Superadmin confirmation until submitted.</p>
     <section class="panel"><strong>${snapshotValue(order, "order_number")}</strong><p>${escapeHtml(String(customer?.company_name ?? customer?.name ?? order.customer_id ?? "Customer"))} · Expected ${formatMoney(Number(order.order_amount ?? (order.totals as Record<string, unknown> | undefined)?.grand_total ?? 0), "EUR")}</p></section>
-    <div class="form-grid"><label>Payment amount (EUR)<input name="amount" type="number" min="0.01" step="0.01" required value="${Number(snapshot.amount ?? order.order_amount ?? 0).toFixed(2)}"></label><label>Payment date<input name="payment_date" type="date" required value="${escapeHtml(String(snapshot.payment_date ?? new Date().toISOString().slice(0, 10)).slice(0, 10))}"></label><label>Bank name<input name="bank_name" value="${snapshotValue(snapshot, "bank_name") === "—" ? "" : snapshotValue(snapshot, "bank_name")}"></label><label>Bank account<input name="bank_account" value="${snapshotValue(snapshot, "bank_account") === "—" ? "" : snapshotValue(snapshot, "bank_account")}"></label><label>UTR / transaction reference<input name="utr" value="${snapshotValue(snapshot, "utr") === "—" ? "" : snapshotValue(snapshot, "utr")}"></label><label>Payment mode<input name="payment_mode" value="${snapshotValue(snapshot, "payment_mode") === "—" ? "" : snapshotValue(snapshot, "payment_mode")}"></label><label>Payment reference<input name="reference_number" value="${snapshotValue(snapshot, "reference_number") === "—" ? "" : snapshotValue(snapshot, "reference_number")}"></label><label class="span-2">Payment proof<input name="attachment" type="file" accept="image/*,.pdf"></label><label class="span-2">Notes<textarea name="notes" rows="2">${snapshotValue(snapshot, "notes") === "—" ? "" : snapshotValue(snapshot, "notes")}</textarea></label></div>
+    <div class="form-grid"><label>Payment amount (EUR)<input name="amount" type="number" min="0.01" step="0.01" required value="${Number(snapshot.amount ?? order.order_amount ?? 0).toFixed(2)}"></label><label>Payment date<input name="payment_date" type="date" required value="${escapeHtml(formatDateInput(snapshot.payment_date || new Date()))}"></label><label>Bank name<input name="bank_name" value="${snapshotValue(snapshot, "bank_name") === "—" ? "" : snapshotValue(snapshot, "bank_name")}"></label><label>Bank account<input name="bank_account" value="${snapshotValue(snapshot, "bank_account") === "—" ? "" : snapshotValue(snapshot, "bank_account")}"></label><label>UTR / transaction reference<input name="utr" value="${snapshotValue(snapshot, "utr") === "—" ? "" : snapshotValue(snapshot, "utr")}"></label><label>Payment mode<input name="payment_mode" value="${snapshotValue(snapshot, "payment_mode") === "—" ? "" : snapshotValue(snapshot, "payment_mode")}"></label><label>Payment reference<input name="reference_number" value="${snapshotValue(snapshot, "reference_number") === "—" ? "" : snapshotValue(snapshot, "reference_number")}"></label><label class="span-2">Payment proof<input name="attachment" type="file" accept="image/*,.pdf"></label><label class="span-2">Notes<textarea name="notes" rows="2">${snapshotValue(snapshot, "notes") === "—" ? "" : snapshotValue(snapshot, "notes")}</textarea></label></div>
     <small class="field-error" data-payment-error></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit">${existing ? "Update & submit" : "Record & submit"}</button></div>
   </form>`;
   const form = content.querySelector<HTMLFormElement>("[data-payment-form]");
@@ -56,25 +56,14 @@ function paymentFormContent(order: Record<string, unknown>, existing?: Record<st
 }
 
 async function openPaymentForm(order: Record<string, unknown>, existing?: Record<string, unknown>): Promise<void> {
-  const content = paymentFormContent(order, existing);
-  const dialog = openModal(existing ? "Update Banking & Payment" : "Banking & Payment", content, "wide");
-  content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
-  content.querySelector<HTMLFormElement>("[data-payment-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const data = new FormData(form);
-    const file = data.get("attachment");
-    const attachment = file instanceof File ? await readPaymentProof(file) : undefined;
-    const payload = { amount: Number(data.get("amount")), payment_date: data.get("payment_date"), bank_name: data.get("bank_name"), bank_account: data.get("bank_account"), utr: data.get("utr"), payment_mode: data.get("payment_mode"), reference_number: data.get("reference_number"), notes: data.get("notes"), ...(attachment ? { attachment } : {}) };
-    const error = content.querySelector<HTMLElement>("[data-payment-error]");
-    try {
-      const payment = existing ? await financeApi.updatePayment(String(existing._id), payload) : await financeApi.createPayment({ ...payload, order_id: order._id });
-      if (existing) await financeApi.submitPayment(String(existing._id)); else await financeApi.submitPayment(String(payment._id));
-      dialog.close(); toast("Payment submitted for Superadmin confirmation");
-      window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/orders" }));
-    } catch (err) { if (error) error.textContent = err instanceof Error ? err.message : "Payment could not be saved"; }
-  });
-  refreshIcons(content);
+  // New and editable payments use the single Banking workflow. It starts with
+  // the server-authorized customer and eligible OC selectors instead of a
+  // second order-only form with different validation/state behavior.
+  void paymentFormContent;
+  void readPaymentProof;
+  const params = new URLSearchParams({ order_id: String(order._id || "") });
+  if (!existing) params.set("new", "1");
+  window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: `/payments?${params.toString()}` }));
 }
 
 async function confirmPayment(order: Record<string, unknown>, paymentId: string, payment?: Record<string, unknown>): Promise<void> {

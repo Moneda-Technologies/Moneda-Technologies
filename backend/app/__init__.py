@@ -19,10 +19,11 @@ from app.config import Config
 from app.exchange_rates.provider import FrankfurterProvider
 from app.exchange_rates.service import ExchangeRateService
 from app.extensions import limiter
+from app.finance.service import repair_payment_states
 from app.middleware.access import repair_customer_assignments
 from app.quotations.service import QuotationService
 from app.repositories.store import build_store
-from app.services.seed import seed, sync_blanket_catalog, sync_commercial_units, sync_machine_catalog, sync_underpacking_catalog
+from app.services.seed import ensure_business_logic_schema, seed, sync_blanket_catalog, sync_commercial_units, sync_machine_catalog, sync_underpacking_catalog
 
 
 _OAUTH_QUERY_SECRET = re.compile(r"([?&](?:code|state)=)[^&\s\"]+", re.IGNORECASE)
@@ -108,6 +109,13 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     limiter.init_app(app)
     if app.config.get("AUTO_SEED") or app.config.get("TESTING"):
         seed(store, Path(app.config["DATA_DIRECTORY"]), demo_mode=app.config["DEMO_MODE"])
+    business_logic_sync = ensure_business_logic_schema(store, Path(app.config["DATA_DIRECTORY"]))
+    if any(business_logic_sync.values()):
+        app.logger.info(
+            "business_logic_schema_sync users=%s customers=%s incentive_rules_added=%s pricing_config_added=%s",
+            business_logic_sync["users"], business_logic_sync["customers"],
+            business_logic_sync["rules_added"], business_logic_sync["pricing_added"],
+        )
     # The full catalog remains opt-in for production restarts, but the
     # Underpacking catalog is source-owned and must not serve retired products
     # or stale pending MPack configuration. Reconcile that focused slice on
@@ -136,6 +144,12 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     repaired_assignments = repair_customer_assignments(store)
     if repaired_assignments:
         app.logger.info("customer_access_migration repaired=%s", repaired_assignments)
+    payment_repairs = repair_payment_states(store)
+    if payment_repairs["payments"] or payment_repairs["orders"]:
+        app.logger.info(
+            "payment_state_migration repaired_payments=%s synchronized_orders=%s",
+            payment_repairs["payments"], payment_repairs["orders"],
+        )
     configured_provider = str(app.config.get("EMAIL_PROVIDER") or "zoho_mail_api").strip().lower()
     if configured_provider != "zoho_mail_api":
         raise RuntimeError("EMAIL_PROVIDER must be zoho_mail_api; SMTP fallback is not supported")

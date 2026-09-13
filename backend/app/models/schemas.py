@@ -6,6 +6,7 @@ from pydantic import AliasChoices, BaseModel, EmailStr, Field
 
 
 Currency = Literal["USD", "INR", "EUR"]
+ClientType = Literal["WHOLESALER", "DEALER", "CUSTOMER"]
 TaxMode = Literal["exclusive", "inclusive", "no_tax"]
 PricingType = Literal[
     "fixed", "quantity", "per_piece", "per_bar", "per_sqm", "per_meter", "per_litre",
@@ -46,6 +47,7 @@ class CustomerCreate(BaseModel):
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=30)
     preferred_currency: Currency | None = None
+    client_type: ClientType = "WHOLESALER"
 
 
 class QuotationCreate(BaseModel):

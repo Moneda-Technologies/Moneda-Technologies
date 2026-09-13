@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from typing import Any
 
 from app.pricing.tax import money
+from app.services.business_logic import normalize_client_type
 
 
 MASTER_CURRENCY = "EUR"
@@ -190,9 +191,32 @@ def validate_blanket_machine_selection(
         raise ValueError("Selected machine name is not available for this product")
 
 
-def calculate_master_unit_price(product: dict[str, Any], configuration: dict[str, Any]) -> Decimal:
+def _client_mpack_override(client_pricing: dict[str, Any] | None, configuration: dict[str, Any]) -> dict[str, Any] | None:
+    if not client_pricing:
+        return None
+    prices = client_pricing.get("dealer_underpacking", {}).get("prices", {})
+    if not isinstance(prices, dict):
+        return None
+    key = f"{configuration.get('width_mm')}x{configuration.get('length_mm')}"
+    row = prices.get(key)
+    if isinstance(row, (int, float)):
+        return {"price_per_box_eur": row}
+    if isinstance(row, dict) and row.get("price_per_box_eur") is not None:
+        return row
+    return None
+
+
+def calculate_master_unit_price(
+    product: dict[str, Any], configuration: dict[str, Any], *,
+    client_type: str = "WHOLESALER", client_pricing: dict[str, Any] | None = None,
+) -> Decimal:
     mpack_selection = resolve_mpack_selection(product, configuration)
     if mpack_selection:
+        override = _client_mpack_override(client_pricing if normalize_client_type(client_type) == "DEALER" else None, configuration)
+        if override:
+            mpack_selection["price_per_box_eur"] = float(override["price_per_box_eur"])
+            if override.get("price_per_sheet_eur") is not None:
+                mpack_selection["price_per_sheet_eur"] = float(override["price_per_sheet_eur"])
         # Client-supplied price fields are deliberately ignored.  The exact
         # per-box amount always comes from the seeded official price matrix.
         return money(decimal_value(mpack_selection["price_per_box_eur"], "price_per_box_eur"))
@@ -370,6 +394,8 @@ def calculate_line(
     business_rules: dict[str, Any] | None = None,
     apply_tax: bool = True,
     tax_mode_override: str | None = None,
+    client_type: str = "WHOLESALER",
+    client_pricing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     configuration = dict(configuration)
     if product.get("category_id") == "blankets" and configuration.get("format_type") == "cut_format":
@@ -392,9 +418,15 @@ def calculate_line(
     if discount > max_discount:
         raise ValueError(f"Discount exceeds the allowed {max_discount}% maximum")
 
+    client_type = normalize_client_type(client_type)
     validate_configuration(product, configuration)
     mpack_selection = resolve_mpack_selection(product, configuration)
     if mpack_selection:
+        override = _client_mpack_override(client_pricing if normalize_client_type(client_type) == "DEALER" else None, configuration)
+        if override:
+            mpack_selection["price_per_box_eur"] = float(override["price_per_box_eur"])
+            if override.get("price_per_sheet_eur") is not None:
+                mpack_selection["price_per_sheet_eur"] = float(override["price_per_sheet_eur"])
         configuration.update(mpack_selection)
         price_list = product.get("configuration", {}).get("machine_price_list") or {}
         configuration["price_list_id"] = str(price_list.get("id", ""))
@@ -403,7 +435,7 @@ def calculate_line(
     rate = decimal_value(exchange_rate, "exchange_rate")
     if not rate:
         raise ValueError("Exchange rate must be greater than zero")
-    base_master = calculate_master_unit_price(product, configuration)
+    base_master = calculate_master_unit_price(product, configuration, client_type=client_type, client_pricing=client_pricing)
     all_adjustments = [*(adjustments or []), *_rule_adjustments(product, configuration, base_master, business_rules or {})]
     adjustment_master = money(sum((Decimal(str(item.get("amount_master", 0))) for item in all_adjustments), Decimal("0")))
     unit_master = money(base_master + adjustment_master)
@@ -424,6 +456,7 @@ def calculate_line(
 
     result = {
         "product_id": product["_id"], "article_no": product.get("article_no"),
+        "client_type": client_type,
         "product_name": product["name"], "description": product.get("description", ""),
         "sku": product.get("sku"), "configuration": configuration,
         "commercial_unit": product.get("commercial_unit") or (

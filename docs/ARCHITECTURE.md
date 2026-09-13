@@ -14,10 +14,12 @@ Roles resolve into explicit permission strings. Route decorators enforce a permi
 
 ## Data ownership
 
-The data directory contains exactly thirteen explicit sources: product types;
+The data directory contains explicitly named, grouped sources: product types;
 blanket categories, options, bars and products; Underpacking types, options and
-products; chemical categories, options and products; EUR pricing; and tax
-rules. The seed service names every file and never auto-discovers catalogues.
+products; chemical categories, options and products; the dedicated machine
+catalogue; EUR/customer-type pricing; the country catalogue; and tax rules.
+`backend/app/services/data_paths.py` names every file and provides a legacy-flat
+fallback; the seed service never auto-discovers catalogues.
 Product documents contain identity/specification only. Product master prices
 live only in `pricing_eur.json`, while bar pricing lives with the reusable bar
 components in `blanket_bars.json`. MongoDB becomes authoritative after an

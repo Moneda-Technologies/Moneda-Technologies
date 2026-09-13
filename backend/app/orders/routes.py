@@ -12,10 +12,11 @@ from flask import Blueprint, Response, current_app, request
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.codes import available_customer_code
-from app.finance.service import IncentiveConfigurationError, create_incentive_for_order, validate_incentive_configuration
+from app.finance.service import IncentiveConfigurationError, create_incentive_for_order, payment_rollup, validate_incentive_configuration
 from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.services.business_logic import customer_client_type, manager_snapshot
 from app.quotations.pdf import render_order_confirmation_pdf
 
 
@@ -379,14 +380,23 @@ def list_orders():
     # Payment proofs are intentionally omitted from the list payload.
     enriched = []
     for row in rows:
-        payments, _ = store.list("payments", {"order_id": row.get("_id")}, limit=100)
+        payments, _ = store.list(
+            "payments",
+            {"$or": [{"order_id": row.get("_id")}, {"oc_id": row.get("_id")}]},
+            limit=100,
+        )
         latest_payment = payments[-1] if payments else None
+        rollup = payment_rollup(row, payments)
         if latest_payment:
             payment_snapshot = {key: value for key, value in latest_payment.items() if key != "attachment"}
             row["payment_snapshot"] = payment_snapshot
-            row["payment_status"] = latest_payment.get("status")
-        else:
-            row["payment_status"] = "PENDING PAYMENT"
+        row.update({
+            "payment_status": rollup["payment_status"],
+            "confirmed_received": rollup["confirmed_received"],
+            "remaining_balance": rollup["remaining_balance"],
+            "customer_credit": rollup["customer_credit"],
+            "pending_payment_count": rollup["pending_payment_count"],
+        })
         incentive = store.find_one("incentives", {"order_id": row.get("_id")})
         if incentive:
             row["incentive_id"] = incentive.get("_id")
@@ -399,11 +409,25 @@ def list_orders():
 @bp.get("/orders/<order_id>")
 @permission_required("orders.view")
 def get_order(order_id: str):
-    order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
     if not order:
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
+    payments, _ = store.list(
+        "payments",
+        {"$or": [{"order_id": order_id}, {"oc_id": order_id}]},
+        limit=100_000,
+    )
+    rollup = payment_rollup(order, payments)
+    order.update({
+        "payment_status": rollup["payment_status"],
+        "confirmed_received": rollup["confirmed_received"],
+        "remaining_balance": rollup["remaining_balance"],
+        "customer_credit": rollup["customer_credit"],
+        "pending_payment_count": rollup["pending_payment_count"],
+    })
     return success(order)
 
 
@@ -571,6 +595,10 @@ def convert_quotation(quotation_id: str):
         "customer_company_snapshot": quotation.get("customer_company_snapshot") or quotation.get("company_snapshot"),
         "company_snapshot": quotation.get("company_snapshot"), "customer_snapshot": quotation.get("customer_snapshot"),
         "salesperson_id": salesperson_id, "prepared_by_user_id": quotation.get("prepared_by_user_id") or salesperson_id, "created_by_user_id": user.get("_id"), "salesperson_snapshot": salesperson_snapshot,
+        "created_by_role": user.get("role_id"),
+        "manager_id_at_creation": user.get("manager_id"),
+        "manager_at_creation": manager_snapshot(store, user),
+        "client_type_at_creation": quotation.get("client_type_at_creation") or customer_client_type(quotation.get("customer_snapshot") or {}),
         "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
@@ -580,6 +608,9 @@ def convert_quotation(quotation_id: str):
         "totals": quotation["totals"], "order_amount": float((quotation.get("totals") or {}).get("grand_total") or 0),
         "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payment_terms,
         "oc_date": payload.get("oc_date") or now.date().isoformat(), "document_type": "order_confirmation", "status": "Pending",
+        "payment_status": "PENDING", "confirmed_received": 0.0,
+        "remaining_balance": float((quotation.get("totals") or {}).get("grand_total") or 0),
+        "customer_credit": 0.0, "pending_payment_count": 0,
         "created_at": now, "document_status": "Pending", "email_status": "Pending",
         "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
         "additional_recipients": additional_recipients,
