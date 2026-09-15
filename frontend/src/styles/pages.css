@@ -291,8 +291,24 @@
 .incentive-product-rule-table td:first-child small { color: var(--text-muted); font-size: .75rem; }
 .incentive-product-rule-table td { vertical-align: middle; }
 .incentive-product-rule-table .incentive-product-edit-button { min-width: 78px; }
-.incentive-edit-context { background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0; padding: 13px 15px; }
-.incentive-edit-context span { color: var(--text-muted); }
+.incentive-logical-rule-table { margin: 0; overflow-x: auto; }
+.incentive-logical-rule-table table { min-width: 0; table-layout: fixed; width: 100%; }
+.incentive-logical-rule-table th,
+.incentive-logical-rule-table td { vertical-align: middle; }
+.incentive-logical-rule-table td:first-child { width: 28%; }
+.incentive-logical-rule-table td:nth-child(2) { width: 18%; }
+.incentive-logical-rule-table td:nth-child(3) { width: 31%; }
+.incentive-logical-rule-table td:nth-child(4) { width: 13%; }
+.incentive-logical-rule-table td:nth-child(5) { width: 10%; }
+.incentive-logical-rule-table td small { color: var(--text-muted); display: block; font-size: .76rem; margin-top: 3px; overflow-wrap: anywhere; }
+.incentive-logical-edit-button { align-items: center; display: inline-flex; gap: 6px; min-width: 78px; }
+.incentive-logical-edit-button svg { height: 15px; width: 15px; }
+.incentive-product-rate-fields { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 8px 0 16px; }
+.incentive-product-rate-fields label { display: grid; gap: 7px; }
+.incentive-edit-context { background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 12px 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0; padding: 13px 15px; }
+.incentive-edit-context label { color: var(--text-muted); display: grid; font-size: .75rem; font-weight: 750; gap: 7px; }
+.incentive-edit-context label > span { color: var(--text); }
+.incentive-edit-context select { min-height: 40px; width: 100%; }
 .incentive-configurable-button { align-items: center; display: inline-flex; gap: 6px; white-space: nowrap; }
 .incentive-configurable-button svg { height: 15px; width: 15px; }
 .incentive-product-rate-list { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
@@ -436,7 +452,8 @@
 .incentive-configurator-filters,
 .incentive-product-configurations,
 .incentive-product-rule-heading,
-.incentive-product-rule-table { box-sizing: border-box; max-width: 100%; min-width: 0; width: 100%; }
+.incentive-product-rule-table,
+.incentive-logical-rule-table { box-sizing: border-box; max-width: 100%; min-width: 0; width: 100%; }
 .incentive-configurator-head > div,
 .incentive-product-rule-heading > div,
 .incentive-configurator-filters label { min-width: 0; }
@@ -445,6 +462,7 @@
 .incentive-product-rule-heading h3,
 .incentive-product-rule-heading p { overflow-wrap: anywhere; }
 .incentive-product-rule-table { overflow-x: auto; }
+.incentive-logical-rule-table { overflow-x: auto; }
 .incentive-product-rule-table table { min-width: 0; table-layout: fixed; width: 100%; }
 .incentive-product-rule-table td,
 .incentive-product-rule-table th { overflow-wrap: anywhere; white-space: normal; }
@@ -453,6 +471,8 @@
 .incentive-combined-rate-column { display: none; }
 .incentive-product-rule-table .incentive-combined-rate-column > span { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
 .incentive-product-rule-table .incentive-combined-rate-column > span > span { color: var(--text-muted); font-size: .72rem; }
+.incentive-mobile-filter-bar,
+.incentive-mobile-groups { display: none; }
 
 @media (max-width: 1023px) {
   .incentive-product-rule-table { overflow-x: visible; }
@@ -466,9 +486,54 @@
 }
 
 @media (max-width: 620px) {
+  .incentive-mobile-filter-bar { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+  .incentive-mobile-filter-bar strong { font-size: .78rem; }
+  .incentive-mobile-filter-bar .button { min-height: 38px; width: auto; }
+  .incentive-configurator-filters:not(.is-mobile-open) label:not(.incentive-mobile-primary-filter) { display: none; }
+  .incentive-configurator-filters.is-mobile-open label:not(.incentive-mobile-primary-filter) { display: grid; }
+  .incentive-product-rule-table { display: none; }
+  .incentive-mobile-groups { display: grid; gap: 10px; }
+  .incentive-mobile-group { background: #fff; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 10px; min-width: 0; padding: 12px; }
+  .incentive-mobile-group-head { align-items: center; display: flex; justify-content: space-between; min-width: 0; }
+  .incentive-mobile-group-head strong { display: block; font-size: .94rem; overflow-wrap: anywhere; }
+  .incentive-mobile-group-head small { color: var(--text-muted); display: block; font-size: .72rem; margin-top: 2px; overflow-wrap: anywhere; }
+  .incentive-mobile-group-meta { color: var(--text-muted); display: flex; flex-wrap: wrap; font-size: .75rem; gap: 3px 15px; line-height: 1.35; }
+  .incentive-mobile-group-meta span { min-width: 0; overflow-wrap: anywhere; }
+  .incentive-mobile-group-meta strong { color: var(--text); font-weight: 700; }
+  .incentive-mobile-product-table { border-top: 1px solid var(--border); min-width: 0; overflow: hidden; }
+  .incentive-mobile-product-table table { min-width: 0; table-layout: fixed; width: 100%; }
+  .incentive-mobile-product-table th { background: transparent; border-bottom: 1px solid var(--border); font-size: .64rem; padding: 7px 4px; }
+  .incentive-mobile-product-table td { border-bottom: 1px solid #efefec; font-size: .78rem; padding: 8px 4px; vertical-align: middle; }
+  .incentive-mobile-product-table tbody tr:last-child td { border-bottom: 0; }
+  .incentive-mobile-product-table th:first-child,
+  .incentive-mobile-product-table td:first-child { overflow-wrap: anywhere; text-align: left; width: 52%; }
+  .incentive-mobile-product-table th:not(:first-child),
+  .incentive-mobile-product-table td:not(:first-child) { text-align: right; }
+  .incentive-mobile-product-table td:nth-child(2),
+  .incentive-mobile-product-table td:nth-child(3) { font-weight: 750; white-space: nowrap; }
+  .mobile-rate-label { display: none; }
+  .incentive-mobile-edit-button { border: 1px solid var(--border); flex: 0 0 32px; height: 32px; width: 32px; }
+  .incentive-mobile-edit-button svg { height: 15px; width: 15px; }
+  .incentive-mobile-group-foot { align-items: center; display: flex; justify-content: flex-start; }
   .incentive-product-rule-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .incentive-rule-count { align-self: flex-start; }
   .incentive-product-rule-table { overflow: visible; }
+  .incentive-logical-rule-table { overflow: visible; }
+  .incentive-logical-rule-table table,
+  .incentive-logical-rule-table tbody,
+  .incentive-logical-rule-table tr,
+  .incentive-logical-rule-table td { display: block; width: 100%; }
+  .incentive-logical-rule-table thead { display: none; }
+  .incentive-logical-rule-table tbody { display: grid; gap: 12px; }
+  .incentive-logical-rule-table tr { background: #fff; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 11px; padding: 14px; }
+  .incentive-logical-rule-table td { align-items: flex-start; border: 0; display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 0; }
+  .incentive-logical-rule-table td::before { color: var(--text-muted); content: attr(data-label); flex: 0 0 40%; font-size: .68rem; font-weight: 800; letter-spacing: .05em; line-height: 1.35; text-transform: uppercase; }
+  .incentive-logical-rule-table td:first-child { width: 100%; }
+  .incentive-logical-rule-table td:first-child::before { display: none; }
+  .incentive-logical-rule-table td:last-child { align-items: center; }
+  .incentive-logical-rule-table .incentive-logical-edit-button { min-height: 38px; }
+  .incentive-product-rate-fields { grid-template-columns: 1fr; }
+  .incentive-edit-context { grid-template-columns: 1fr; }
   .incentive-product-rule-table table,
   .incentive-product-rule-table tbody,
   .incentive-product-rule-table tr,

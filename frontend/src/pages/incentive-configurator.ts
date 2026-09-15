@@ -8,15 +8,28 @@ import { emptyState, escapeHtml } from "../utils/dom";
 
 type BusinessRuleType = "user" | "manager_team" | "manager_creator";
 interface ProductType { id: string; name: string }
-interface ProductConfig { customer_type: string; product_type_id: string; product_type_name: string; user_rate: number | null; manager_team_rate: number | null; user_configured: boolean; manager_configured: boolean; team_rate: number | null; creator_rate: number | null; team_configured: boolean; creator_configured: boolean }
-interface UserConfiguration { _id: string; name?: string; email?: string; manager_id?: string | null; manager?: { _id?: string; name?: string; email?: string } | null; configurations: ProductConfig[] }
-interface ManagerConfiguration { _id: string; name?: string; email?: string; connected_users: Array<{ _id?: string; name?: string; email?: string }>; configurations: ProductConfig[] }
-interface ProductRate { product_type_id: string; product_type_name: string; rate: number | null; configured: boolean; active?: boolean }
-interface IncentiveRuleGroup { id: string; incentive_type: string; allocation_type: "creator" | "manager_override"; recipient_role: string; customer_type: string; customer_id?: string | null; active?: boolean; product_rates: ProductRate[] }
-interface ConfiguratorData { customer_types: string[]; product_types: ProductType[]; users: UserConfiguration[]; managers: ManagerConfiguration[]; rule_groups?: IncentiveRuleGroup[] }
+interface ProductRate { product_type_id: string; product_type_name: string; rate: number | null; configured: boolean; active?: boolean; rule_id?: string | null }
+interface IncentiveRuleGroup {
+  id: string;
+  incentive_type: string;
+  allocation_type: "creator" | "manager_override";
+  recipient_role: string;
+  customer_type: string;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  active?: boolean;
+  configured_count?: number;
+  product_type_label?: string;
+  product_rates: ProductRate[];
+}
+interface ConfiguratorData {
+  customer_types: string[];
+  product_types: ProductType[];
+  users: Record<string, unknown>[];
+  managers: Record<string, unknown>[];
+  rule_groups?: IncentiveRuleGroup[];
+}
 
-const nameOf = (r: { _id?: string; name?: string; email?: string } | null | undefined) => String(r?.name || r?.email || r?._id || "—");
-const rateText = (rate: number | null | undefined) => rate == null || !Number.isFinite(Number(rate)) ? "—" : `${Number(rate)}%`;
 const rateOptions = (selected: number | null | undefined) => Array.from({ length: 13 }, (_, i) => i / 2).map((rate) => `<option value="${rate}" ${Number(selected ?? 0) === rate ? "selected" : ""}>${rate}%</option>`).join("");
 
 function groupFor(data: ConfiguratorData, type: BusinessRuleType, customerType: string): IncentiveRuleGroup | undefined {
@@ -25,22 +38,57 @@ function groupFor(data: ConfiguratorData, type: BusinessRuleType, customerType: 
   return (data.rule_groups || []).find((group) => group.allocation_type === allocation && group.recipient_role === role && group.customer_type === customerType && !group.customer_id);
 }
 
-function openRowEditor(data: ConfiguratorData, row: { view: "users" | "managers"; customerType: string; product: ProductConfig; managerId?: string; userName?: string; managerName?: string }): void {
-  const product = data.product_types.find((item) => item.id === row.product.product_type_id);
-  if (!product) return;
-  const userRate = row.view === "users" ? row.product.user_rate : row.product.team_rate;
-  const teamRate = row.view === "users" ? row.product.manager_team_rate : row.product.creator_rate;
-  const title = row.view === "users" ? "Edit User Incentive" : "Edit Manager Incentive";
+function defaultGroup(data: ConfiguratorData, type: BusinessRuleType, customerType: string): IncentiveRuleGroup {
+  const allocation = type === "manager_team" ? "manager_override" : "creator";
+  const role = type === "user" ? "user" : "manager_sales_admin";
+  const incentiveType = type === "user" ? "User Incentive" : type === "manager_team" ? "Manager Team Incentive" : "Manager Creator Incentive";
+  return {
+    id: `default:${allocation}:${customerType}:${role}`,
+    incentive_type: incentiveType,
+    allocation_type: allocation,
+    recipient_role: role,
+    customer_type: customerType,
+    customer_id: null,
+    active: true,
+    product_rates: data.product_types.map((product) => ({ product_type_id: product.id, product_type_name: product.name, rate: null, configured: false, active: true })),
+  };
+}
+
+function logicalGroups(data: ConfiguratorData, activeView: "users" | "managers", customerType: string): IncentiveRuleGroup[] {
+  const types: BusinessRuleType[] = activeView === "users" ? ["user"] : ["manager_team", "manager_creator"];
+  return types.map((type) => groupFor(data, type, customerType) || defaultGroup(data, type, customerType));
+}
+
+function openGroupEditor(data: ConfiguratorData, group: IncentiveRuleGroup): void {
   const content = document.createElement("div");
-  content.innerHTML = `<form class="incentive-config-form" data-incentive-row-form>
+  const ruleType: BusinessRuleType = group.incentive_type === "User Incentive" ? "user" : group.incentive_type === "Manager Team Incentive" ? "manager_team" : "manager_creator";
+  let selectedGroup = group;
+  content.innerHTML = `<form class="incentive-config-form" data-incentive-group-form>
     <p class="form-hint">Changes apply to future Order Confirmations only. Historical incentive snapshots are preserved.</p>
-    <div class="incentive-edit-context"><strong>${escapeHtml(product.name)}</strong><span>${escapeHtml(customerTypeLabel(row.customerType))}</span>${row.userName ? `<span>User: ${escapeHtml(row.userName)}</span>` : ""}${row.managerName ? `<span>Manager: ${escapeHtml(row.managerName)}</span>` : ""}</div>
-    <div class="form-grid"><label>${row.view === "users" ? "User Incentive" : "Manager Team Incentive"}<select name="primary_rate">${rateOptions(userRate)}</select></label><label>${row.view === "users" ? "Manager Team Incentive" : "Manager Creator Incentive"}<select name="secondary_rate" ${row.view === "users" && !row.managerId ? "disabled" : ""}>${rateOptions(teamRate)}</select></label></div>
+    <div class="incentive-edit-context"><label>Incentive Type<span class="field-readonly">${escapeHtml(group.incentive_type)}</span></label><label>Customer Type<select name="customer_type" data-edit-customer-type>${data.customer_types.map((type) => `<option value="${escapeHtml(type)}" ${type === group.customer_type ? "selected" : ""}>${escapeHtml(customerTypeLabel(type))}</option>`).join("")}</select></label></div>
+    <div class="notice compact" data-incentive-empty hidden>No configuration exists yet for this Customer Type. Set the product rates below to create it.</div>
+    <span class="eyebrow">Product rates</span><div class="incentive-product-rate-fields"></div>
+    <label>Status<select name="status"><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
     <small class="field-error" data-incentive-row-error aria-live="polite"></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Save Changes</button></div>
   </form>`;
-  const dialog = openModal(title, content, "wide");
+  const dialog = openModal(`Edit ${group.incentive_type}`, content, "wide");
   content.querySelector<HTMLButtonElement>("[data-cancel]")?.addEventListener("click", () => dialog.close());
-  content.querySelector<HTMLFormElement>("[data-incentive-row-form]")?.addEventListener("submit", async (event) => {
+  const renderSelectedGroup = (next: IncentiveRuleGroup) => {
+    selectedGroup = next;
+    const fields = content.querySelector<HTMLElement>(".incentive-product-rate-fields");
+    if (fields) fields.innerHTML = next.product_rates.map((product) => `<label>${escapeHtml(product.product_type_name)}<select name="rate:${escapeHtml(product.product_type_id)}">${rateOptions(product.rate)}</select></label>`).join("");
+    const empty = content.querySelector<HTMLElement>("[data-incentive-empty]");
+    if (empty) empty.hidden = !next.id.startsWith("default:");
+    const status = content.querySelector<HTMLSelectElement>('select[name="status"]');
+    if (status) status.value = next.active === false ? "inactive" : "active";
+  };
+  renderSelectedGroup(group);
+  content.querySelector<HTMLSelectElement>("[data-edit-customer-type]")?.addEventListener("change", (event) => {
+    const customerType = (event.currentTarget as HTMLSelectElement).value;
+    const next = logicalGroups(data, ruleType === "user" ? "users" : "managers", customerType).find((item) => item.incentive_type === selectedGroup.incentive_type) || defaultGroup(data, ruleType, customerType);
+    renderSelectedGroup(next);
+  });
+  content.querySelector<HTMLFormElement>("[data-incentive-group-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
@@ -48,17 +96,15 @@ function openRowEditor(data: ConfiguratorData, row: { view: "users" | "managers"
     submit.disabled = true;
     try {
       const values = new FormData(form);
-      const primary = Number(values.get("primary_rate"));
-      const secondary = Number(values.get("secondary_rate"));
-      const calls: Promise<unknown>[] = [];
-      const primaryGroup = groupFor(data, row.view === "users" ? "user" : "manager_team", row.customerType);
-      if (primaryGroup) calls.push(adminApi.configureProductIncentiveRules({ allocation_type: primaryGroup.allocation_type, recipient_role: primaryGroup.recipient_role, client_type: row.customerType, customer_id: null, rates: { [product.id]: primary } }));
-      if (!(row.view === "users" && !row.managerId)) {
-        const secondaryGroup = groupFor(data, row.view === "users" ? "manager_team" : "manager_creator", row.customerType);
-        if (secondaryGroup) calls.push(adminApi.configureProductIncentiveRules({ allocation_type: secondaryGroup.allocation_type, recipient_role: secondaryGroup.recipient_role, client_type: row.customerType, customer_id: null, rates: { [product.id]: secondary } }));
+      const rates: Record<string, number> = {};
+      selectedGroup.product_rates.forEach((product) => { rates[product.product_type_id] = Number(values.get(`rate:${product.product_type_id}`)); });
+      const selectedCustomerType = String(values.get("customer_type") || "").toUpperCase();
+      if (!data.customer_types.includes(selectedCustomerType)) throw new Error("Select a valid Customer Type");
+      const result = await adminApi.configureProductIncentiveRules({ allocation_type: selectedGroup.allocation_type, recipient_role: selectedGroup.recipient_role, client_type: selectedCustomerType, customer_id: selectedGroup.customer_id ?? null, rates });
+      if (String(values.get("status")) === "inactive") {
+        const savedItems = (result.items || []) as Record<string, unknown>[];
+        await Promise.all(savedItems.map((item) => item._id ? adminApi.updateIncentiveRule(String(item._id), { active: false }) : Promise.resolve()));
       }
-      if (!calls.length) throw new Error("No editable incentive rule is available for this row");
-      await Promise.all(calls);
       dialog.close();
       toast("Incentive rates saved");
       window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/incentives/rules" }));
@@ -80,100 +126,73 @@ export async function renderIncentiveConfigurator(_page: HTMLElement, body: HTML
     <div class="incentive-configurator-head"><div><span class="eyebrow">Incentives / Incentive Rules</span><h2>Incentive Rules</h2><p>Configure incentive rates for users and managers based on customer type and product type.</p></div></div>
     <div class="incentive-rule-tabs" role="tablist" aria-label="Incentive configuration view"><button type="button" class="button button-dark" data-rule-view="users" role="tab" aria-selected="true">User Incentives</button><button type="button" class="button button-quiet" data-rule-view="managers" role="tab" aria-selected="false">Manager Incentives</button></div>
     <div class="incentive-configurator-filters">
-      <label data-user-filter>User<select data-rule-user><option value="">All Users</option>${data.users.map((user) => `<option value="${escapeHtml(user._id)}">${escapeHtml(nameOf(user))}</option>`).join("")}</select></label>
-      <label data-manager-filter>Manager<select data-rule-manager><option value="">All Managers</option>${data.managers.map((manager) => `<option value="${escapeHtml(manager._id)}">${escapeHtml(nameOf(manager))}</option>`).join("")}</select></label>
       <label>Customer Type<select data-rule-client>${data.customer_types.map((type) => `<option value="${escapeHtml(type)}" ${type === initialType ? "selected" : ""}>${escapeHtml(customerTypeLabel(type))}</option>`).join("")}</select></label>
       <label>Incentive Type<select data-rule-type><option value="">All Types</option><option value="user">User Incentive</option><option value="manager_team">Manager Team Incentive</option><option value="manager_creator">Manager Creator Incentive</option></select></label>
       <label>Status<select data-rule-status><option value="active" selected>Active</option><option value="">All statuses</option><option value="inactive">Inactive</option></select></label>
       <label>Product Type<select data-rule-product><option value="">All Product Types</option>${data.product_types.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
-      <label class="incentive-filter-search">Search<input type="search" data-rule-search placeholder="Search users or managers"></label>
+      <label class="incentive-filter-search">Search<input type="search" data-rule-search placeholder="Search incentive configurations"></label>
     </div>
     <section class="incentive-product-configurations" aria-labelledby="incentive-rules-heading"><div data-product-rule-list></div></section>
   </section>`;
+  const filterPanel = body.querySelector<HTMLElement>(".incentive-configurator-filters");
+  if (filterPanel) {
+    filterPanel.querySelector("select[data-rule-client]")?.parentElement?.classList.add("incentive-mobile-primary-filter");
+    const filterBar = document.createElement("div");
+    filterBar.className = "incentive-mobile-filter-bar";
+    filterBar.innerHTML = `<strong>Filters</strong><button type="button" class="button button-quiet" data-mobile-filter-toggle aria-expanded="false">Show filters</button>`;
+    filterPanel.before(filterBar);
+    filterBar.querySelector<HTMLButtonElement>("[data-mobile-filter-toggle]")?.addEventListener("click", (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const open = filterPanel.classList.toggle("is-mobile-open");
+      button.setAttribute("aria-expanded", String(open));
+      button.textContent = open ? "Hide filters" : "Show filters";
+    });
+  }
 
-  const filters = () => ({ user: body.querySelector<HTMLSelectElement>("[data-rule-user]")?.value || "", manager: body.querySelector<HTMLSelectElement>("[data-rule-manager]")?.value || "", customerType: body.querySelector<HTMLSelectElement>("[data-rule-client]")?.value || initialType, incentiveType: body.querySelector<HTMLSelectElement>("[data-rule-type]")?.value || "", status: body.querySelector<HTMLSelectElement>("[data-rule-status]")?.value || "", product: body.querySelector<HTMLSelectElement>("[data-rule-product]")?.value || "", search: (body.querySelector<HTMLInputElement>("[data-rule-search]")?.value || "").trim().toLowerCase() });
-  const matches = (values: string, filter: ReturnType<typeof filters>) => !filter.search || values.toLowerCase().includes(filter.search);
-  const rowStatus = (active: boolean) => active ? "Active" : "Inactive";
-  const rateActive = (type: BusinessRuleType, customerType: string, productId: string): boolean => {
-    const group = groupFor(data, type, customerType);
-    return group?.product_rates.find((item) => item.product_type_id === productId)?.active !== false;
-  };
+  const filters = () => ({
+    customerType: body.querySelector<HTMLSelectElement>("[data-rule-client]")?.value || initialType,
+    incentiveType: body.querySelector<HTMLSelectElement>("[data-rule-type]")?.value || "",
+    status: body.querySelector<HTMLSelectElement>("[data-rule-status]")?.value || "",
+    product: body.querySelector<HTMLSelectElement>("[data-rule-product]")?.value || "",
+    search: (body.querySelector<HTMLInputElement>("[data-rule-search]")?.value || "").trim().toLowerCase(),
+  });
 
   const render = () => {
-    const host = body.querySelector<HTMLElement>("[data-product-rule-list]"); if (!host) return;
+    const host = body.querySelector<HTMLElement>("[data-product-rule-list]");
+    if (!host) return;
     const filter = filters();
-    body.querySelector<HTMLElement>("[data-user-filter]")?.toggleAttribute("hidden", activeView === "managers");
-    body.querySelector<HTMLElement>("[data-manager-filter]")?.toggleAttribute("hidden", activeView === "users");
-    body.querySelectorAll<HTMLButtonElement>("[data-rule-view]").forEach((button) => { const selected = button.dataset.ruleView === activeView; button.classList.toggle("button-dark", selected); button.classList.toggle("button-quiet", !selected); button.setAttribute("aria-selected", String(selected)); });
-    type FlatRow = { customerType: string; product: ProductConfig; primary: number | null; secondary: number | null; status: string; user?: UserConfiguration; manager?: ManagerConfiguration };
-    const rows: FlatRow[] = [];
-    if (activeView === "users") {
-      data.users.filter((user) => (!filter.user || user._id === filter.user) && (!filter.manager || String(user.manager_id || "") === filter.manager)).forEach((user) => user.configurations.filter((product) => product.customer_type === filter.customerType && (!filter.product || product.product_type_id === filter.product) && (!filter.incentiveType || filter.incentiveType === "user" || filter.incentiveType === "manager_team") && matches(`${nameOf(user)} ${nameOf(user.manager)} ${product.product_type_name} ${customerTypeLabel(product.customer_type)}`, filter)).forEach((product) => rows.push({ customerType: product.customer_type, product, primary: product.user_rate, secondary: product.manager_team_rate, status: rowStatus(rateActive("user", product.customer_type, product.product_type_id)), user })));
-      const visibleRows = rows.filter((row) => !filter.status || (filter.status === "active" ? row.status === "Active" : row.status === "Inactive"));
-      const heading = `User Incentive Rules (${customerTypeLabel(filter.customerType)})`;
-      host.innerHTML = visibleRows.length ? `<div class="incentive-product-rule-heading"><div><span class="eyebrow">User Incentives</span><h3 id="incentive-rules-heading">${escapeHtml(heading)}</h3><p>Each user and their connected manager receive the rates shown for each product type.</p></div><span class="incentive-rule-count">${visibleRows.length} rules</span></div><div class="data-table incentive-product-rule-table"><table><thead><tr><th>User</th><th>Manager</th><th>Customer Type</th><th>Product Type</th><th>User Incentive</th><th>Manager Team Incentive</th><th>Status</th><th>Actions</th></tr></thead><tbody>${visibleRows.map((row) => `<tr><td><strong>${escapeHtml(nameOf(row.user))}</strong><small>${escapeHtml(row.user?.email || "")}</small></td><td>${escapeHtml(nameOf(row.user?.manager))}</td><td>${escapeHtml(customerTypeLabel(row.customerType))}</td><td>${escapeHtml(row.product.product_type_name)}</td><td>${escapeHtml(rateText(row.primary))}</td><td>${row.user?.manager ? escapeHtml(rateText(row.secondary)) : "—"}</td><td>${statusBadge(row.status)}</td><td><button type="button" class="button button-quiet incentive-product-edit-button" data-row-edit="user:${escapeHtml(row.user?._id || "")}:${escapeHtml(row.product.product_type_id)}:${escapeHtml(row.customerType)}"><i data-lucide="pencil"></i>Edit</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("users", "No incentive rules match", "Adjust the filters to view active product-level rates.");
-    } else {
-      data.managers.filter((manager) => !filter.manager || manager._id === filter.manager).forEach((manager) => manager.configurations.filter((product) => product.customer_type === filter.customerType && (!filter.product || product.product_type_id === filter.product) && (!filter.incentiveType || filter.incentiveType === "manager_team" || filter.incentiveType === "manager_creator") && matches(`${nameOf(manager)} ${manager.connected_users.map(nameOf).join(" ")} ${product.product_type_name} ${customerTypeLabel(product.customer_type)}`, filter)).forEach((product) => rows.push({ customerType: product.customer_type, product, primary: product.team_rate, secondary: product.creator_rate, status: rowStatus(rateActive("manager_team", product.customer_type, product.product_type_id) || rateActive("manager_creator", product.customer_type, product.product_type_id)), manager })));
-      const visibleRows = rows.filter((row) => !filter.status || (filter.status === "active" ? row.status === "Active" : row.status === "Inactive"));
-      const heading = `Manager Incentive Rules (${customerTypeLabel(filter.customerType)})`;
-      host.innerHTML = visibleRows.length ? `<div class="incentive-product-rule-heading"><div><span class="eyebrow">Manager Incentives</span><h3 id="incentive-rules-heading">${escapeHtml(heading)}</h3><p>Manager team and creator rates are shown independently for each product type.</p></div><span class="incentive-rule-count">${visibleRows.length} rules</span></div><div class="data-table incentive-product-rule-table"><table><thead><tr><th>Manager</th><th>Connected Users</th><th>Customer Type</th><th>Product Type</th><th>Manager Team Incentive</th><th>Manager Creator Incentive</th><th>Status</th><th>Actions</th></tr></thead><tbody>${visibleRows.map((row) => `<tr><td><strong>${escapeHtml(nameOf(row.manager))}</strong><small>${escapeHtml(row.manager?.email || "")}</small></td><td>${row.manager?.connected_users.length || 0}</td><td>${escapeHtml(customerTypeLabel(row.customerType))}</td><td>${escapeHtml(row.product.product_type_name)}</td><td>${escapeHtml(rateText(row.primary))}</td><td>${escapeHtml(rateText(row.secondary))}</td><td>${statusBadge(row.status)}</td><td><button type="button" class="button button-quiet incentive-product-edit-button" data-row-edit="manager:${escapeHtml(row.manager?._id || "")}:${escapeHtml(row.product.product_type_id)}:${escapeHtml(row.customerType)}"><i data-lucide="pencil"></i>Edit</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("users", "No incentive rules match", "Adjust the filters to view active product-level rates.");
-    }
-    // Add semantic labels/classes after rendering so the same data table can
-    // reflow into condensed tablet columns and mobile cards without changing
-    // the underlying row data or edit behaviour.
-    const table = host.querySelector<HTMLTableElement>(".incentive-product-rule-table table");
-    if (table) {
-      const headers = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th"));
-      const headerNames = headers.map((header) => header.textContent?.trim() || "");
-      const rateIndexes = activeView === "users"
-        ? [headerNames.indexOf("User Incentive"), headerNames.indexOf("Manager Team Incentive")]
-        : [headerNames.indexOf("Manager Team Incentive"), headerNames.indexOf("Manager Creator Incentive")];
-      rateIndexes.forEach((index) => {
-        if (index >= 0) headers[index].classList.add(activeView === "users" && index === rateIndexes[0] ? "incentive-user-rate-column" : activeView === "managers" && index === rateIndexes[1] ? "incentive-creator-rate-column" : "incentive-team-rate-column");
-      });
-      const combinedIndex = rateIndexes[0] >= 0 ? rateIndexes[0] : -1;
-      if (combinedIndex >= 0) {
-        const combinedHeader = document.createElement("th");
-        combinedHeader.className = "incentive-combined-rate-column";
-        combinedHeader.textContent = "Incentives";
-        headers[combinedIndex].after(combinedHeader);
-        table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => {
-          const cells = Array.from(row.children) as HTMLTableCellElement[];
-          const firstRate = cells[rateIndexes[0]];
-          const secondRate = cells[rateIndexes[1]];
-          if (!firstRate || !secondRate) return;
-          const combined = document.createElement("td");
-          combined.className = "incentive-combined-rate-column";
-          combined.dataset.label = "Incentives";
-          const firstLabel = activeView === "users" ? "User" : "Team";
-          const secondLabel = activeView === "users" ? "Manager" : "Creator";
-          combined.innerHTML = `<span><span>${firstLabel}</span><strong>${escapeHtml(firstRate.textContent?.trim() || "-")}</strong></span><span><span>${secondLabel}</span><strong>${escapeHtml(secondRate.textContent?.trim() || "-")}</strong></span>`;
-          secondRate.after(combined);
-        });
-      }
-      const labels = activeView === "users"
-        ? ["User", "Manager", "Customer Type", "Product Type", "User Incentive", "Manager Team Incentive", "Incentives", "Status", "Actions"]
-        : ["Manager", "Connected Users", "Customer Type", "Product Type", "Manager Team Incentive", "Manager Creator Incentive", "Incentives", "Status", "Actions"];
-      table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => Array.from(row.children).forEach((cell, index) => {
-        const element = cell as HTMLTableCellElement;
-        element.dataset.label = labels[index] || "";
-        if (labels[index] === "User Incentive") element.classList.add("incentive-user-rate-column");
-        if (labels[index] === "Manager Team Incentive") element.classList.add("incentive-team-rate-column");
-        if (labels[index] === "Manager Creator Incentive") element.classList.add("incentive-creator-rate-column");
-      }));
-    }
-    host.querySelectorAll<HTMLButtonElement>("[data-row-edit]").forEach((button) => button.addEventListener("click", () => {
-      const [view, id, productId, customerType] = String(button.dataset.rowEdit || "").split(":");
-      const product = view === "users" ? data.users.find((user) => user._id === id)?.configurations.find((item) => item.product_type_id === productId && item.customer_type === customerType) : data.managers.find((manager) => manager._id === id)?.configurations.find((item) => item.product_type_id === productId && item.customer_type === customerType);
-      if (!product) return;
-      const user = view === "users" ? data.users.find((item) => item._id === id) : undefined;
-      const manager = view === "managers" ? data.managers.find((item) => item._id === id) : user?.manager;
-      openRowEditor(data, { view: view as "users" | "managers", customerType, product, managerId: user?.manager_id || undefined, userName: user ? nameOf(user) : undefined, managerName: manager ? nameOf(manager) : undefined });
+    body.querySelectorAll<HTMLButtonElement>("[data-rule-view]").forEach((button) => {
+      const selected = button.dataset.ruleView === activeView;
+      button.classList.toggle("button-dark", selected);
+      button.classList.toggle("button-quiet", !selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    const groups = logicalGroups(data, activeView, filter.customerType).filter((group) => {
+      const typeMatches = !filter.incentiveType || (filter.incentiveType === "user" && group.incentive_type === "User Incentive") || (filter.incentiveType === "manager_team" && group.incentive_type === "Manager Team Incentive") || (filter.incentiveType === "manager_creator" && group.incentive_type === "Manager Creator Incentive");
+      const statusMatches = !filter.status || (filter.status === "active" ? group.active !== false : group.active === false);
+      const products = filter.product ? group.product_rates.filter((product) => product.product_type_id === filter.product) : group.product_rates;
+      const searchValues = `${group.incentive_type} ${customerTypeLabel(group.customer_type)} ${products.map((product) => product.product_type_name).join(" ")}`.toLowerCase();
+      return typeMatches && statusMatches && (!filter.search || searchValues.includes(filter.search));
+    });
+    const heading = `${activeView === "users" ? "User" : "Manager"} Incentive Rules (${customerTypeLabel(filter.customerType)})`;
+    const description = activeView === "users" ? "Each user incentive configuration contains an independent rate for every product type." : "Manager team and creator incentives are separate configurations with independent product rates.";
+    const countLabel = `${groups.length} ${groups.length === 1 ? "rule" : "rules"}`;
+    const rows = groups.map((group) => {
+      const products = filter.product ? group.product_rates.filter((product) => product.product_type_id === filter.product) : group.product_rates;
+      const productNames = products.map((product) => product.product_type_name).join(" · ");
+      return `<tr><td data-label="Incentive Type"><strong>${escapeHtml(group.incentive_type)}</strong></td><td data-label="Customer Type">${escapeHtml(customerTypeLabel(group.customer_type))}</td><td data-label="Product Types"><strong>${products.length} product ${products.length === 1 ? "rate" : "rates"}</strong><small>${escapeHtml(productNames || "No product rates")}</small></td><td data-label="Status">${statusBadge(group.active === false ? "Inactive" : "Active")}</td><td data-label="Actions"><button type="button" class="button button-quiet incentive-logical-edit-button" data-group-edit="${escapeHtml(encodeURIComponent(group.id))}"><i data-lucide="pencil"></i>Edit</button></td></tr>`;
+    }).join("");
+    host.innerHTML = groups.length ? `<div class="incentive-product-rule-heading"><div><span class="eyebrow">${activeView === "users" ? "User Incentives" : "Manager Incentives"}</span><h3 id="incentive-rules-heading">${escapeHtml(heading)}</h3><p>${escapeHtml(description)}</p></div><span class="incentive-rule-count">${countLabel}</span></div><div class="data-table incentive-logical-rule-table"><table><thead><tr><th>Incentive Type</th><th>Customer Type</th><th>Product Types</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>` : emptyState("users", "No incentive configurations match", "Adjust the filters to view the available configurations.");
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    host.querySelectorAll<HTMLButtonElement>("[data-group-edit]").forEach((button) => button.addEventListener("click", () => {
+      const group = groupById.get(decodeURIComponent(button.dataset.groupEdit || ""));
+      if (group) openGroupEditor(data, group);
     }));
     refreshIcons(host);
   };
+
   body.querySelectorAll<HTMLButtonElement>("[data-rule-view]").forEach((button) => button.addEventListener("click", () => { activeView = button.dataset.ruleView === "managers" ? "managers" : "users"; render(); }));
-  body.querySelectorAll<HTMLSelectElement>("[data-rule-user], [data-rule-manager], [data-rule-client], [data-rule-product], [data-rule-type], [data-rule-status]").forEach((control) => control.addEventListener("change", render));
+  body.querySelectorAll<HTMLSelectElement>("[data-rule-client], [data-rule-product], [data-rule-type], [data-rule-status]").forEach((control) => control.addEventListener("change", render));
   body.querySelector<HTMLInputElement>("[data-rule-search]")?.addEventListener("input", render);
   render();
   refreshIcons(body);
