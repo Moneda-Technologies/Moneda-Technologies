@@ -7,6 +7,7 @@ import hmac
 from datetime import timedelta
 
 from flask import Blueprint, current_app, g, request, session
+from markupsafe import escape
 from pydantic import ValidationError
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -29,6 +30,14 @@ from app.repositories.store import ensure_utc, utcnow
 
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+
+# Email OTP is a recovery/login path reserved for the Superadmin account. Keep
+# this wording shared by the request and verification guards so the browser
+# cannot turn a forbidden request into an OTP challenge.
+SUPERADMIN_OTP_ONLY_MESSAGE = (
+    "Email OTP login is available only for Superadmin accounts. "
+    "Please contact your Superadmin to change or reset your password."
+)
 
 
 def _request_id(prefix: str) -> str:
@@ -168,9 +177,19 @@ def password_login():
             current_app.logger.info("auth session established authenticated=%s method=%s", False, "password")
             audit("auth.login_failed", "user", metadata={"method": "password"})
             return failure("Invalid username or password", status=401)
+        # Password authentication is a complete login method. Do not require
+        # an email address or silently convert a successful password login
+        # into an OTP challenge; email OTP is an explicit alternative exposed
+        # by /request-otp and /verify-otp.
         device = _establish_session(user, method="password")
-        audit("auth.login", "user", str(user["_id"]), {"method": "password"})
-        return success(_session_result(device), "Signed in successfully" if device.get("application_access") else "Device approval pending")
+        audit("auth.login", "user", str(user["_id"]), {
+            "method": "password",
+            "role": str(user.get("role_id") or "unknown"),
+        })
+        return success(
+            _session_result(device),
+            "Signed in successfully" if device.get("application_access") else "Device approval pending",
+        )
     except ValidationError as exc:
         return failure("Validation failed", exc.errors(include_url=False), 422)
 
@@ -202,10 +221,100 @@ def request_otp():
         payload = OtpRequest.model_validate(request.get_json(silent=True) or {})
         if payload.purpose == "signup" and not is_allowed_signup_email(payload.email, current_app.config.get("ALLOWED_SIGNUP_EMAIL_DOMAINS")):
             return failure(SIGNUP_EMAIL_DOMAIN_MESSAGE, status=422, error="signup_email_domain_not_allowed")
+        if payload.purpose == "reset":
+            # Password recovery is deliberately a Superadmin-only flow.  Do
+            # not create an OTP challenge for ordinary accounts.  The public
+            # response remains generic so an email probe cannot enumerate
+            # accounts; a known non-Superadmin request is audited and routed
+            # to the administrators through the existing server email path.
+            store = current_app.extensions["store"]
+            target = store.find_one("users", {"email": str(payload.email).strip().lower(), "active": {"$ne": False}})
+            if not target:
+                return success({"next_step": "contact_superadmin"}, message="Please contact your Superadmin to update your password.")
+            if str(target.get("role_id") or "") != "superadmin":
+                actor_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",", 1)[0].strip()
+                requested_at = utcnow()
+                target_id = str(target.get("_id") or "unknown")
+                target_name = str(target.get("name") or "A user")
+                target_email = str(target.get("email") or "")
+                target_username = str(target.get("username") or target.get("username_normalized") or "")
+                target_role = str(target.get("role_id") or "unknown")
+                audit("auth.password_reset.blocked", "user", target_id, {
+                    "reason": "superadmin_required", "source": "forgot_password",
+                    "target_username": target_username, "target_email": target_email,
+                    "target_role": target_role, "requested_at": requested_at,
+                })
+                current_app.logger.info("password_reset_request blocked=true target_role=non_superadmin ip_present=%s", bool(actor_ip))
+                admins, _ = store.list("users", {"role_id": "superadmin", "active": True}, limit=100)
+                recipients = [str(row.get("email") or "").strip().lower() for row in admins if "@" in str(row.get("email") or "")]
+                for admin in admins:
+                    if admin.get("_id"):
+                        store.insert_one("notifications", {
+                            "user_id": admin["_id"], "type": "password_reset_requested",
+                            "title": "Password update requested",
+                            "message": f"{target_name} ({target_role}) requested a password update · Superadmin action required",
+                            "read": False, "created_at": requested_at,
+                        })
+                if recipients:
+                    try:
+                        current_app.extensions["email_service"].send(
+                            to=recipients,
+                            subject="Moneda Technologies — Password update requested",
+                            html=("<h2>Password update requested</h2>"
+                                  f"<p><strong>Name:</strong> {escape(target_name)}<br>"
+                                  f"<strong>User ID:</strong> {escape(target_id)}<br>"
+                                  f"<strong>Username:</strong> {escape(target_username or '—')}<br>"
+                                  f"<strong>Email:</strong> {escape(target_email)}<br>"
+                                  f"<strong>Role:</strong> {escape(target_role)}<br>"
+                                  f"<strong>Requested:</strong> {escape(requested_at.isoformat())}<br>"
+                                  "<strong>Source:</strong> Forgot Password</p>"
+                                  "<p>Use the Users &amp; Access screen to set the new password. "
+                                  "No reset token was issued to this account.</p>"),
+                            request_id=_request_id("password-admin"),
+                            purpose="general",
+                        )
+                    except Exception:
+                        current_app.logger.exception("password_reset_admin_notification result=FAIL")
+                return success({"next_step": "contact_superadmin"}, message="Please contact your Superadmin to update your password.")
+        if payload.purpose == "login":
+            store = current_app.extensions["store"]
+            normalized_email = str(payload.email).strip().lower()
+            target = store.find_one("users", {"email": normalized_email, "active": {"$ne": False}})
+            if target and str(target.get("role_id") or "") != "superadmin":
+                # This guard intentionally runs before OtpService.request so
+                # no challenge, email, or pending-login session is created.
+                audit("auth.login_otp.blocked", "user", str(target.get("_id") or "unknown"), {"reason": "superadmin_required"})
+                session.pop("pending_login_user_id", None)
+                session.pop("pending_login_email", None)
+                session.pop("pending_superadmin_login_user_id", None)
+                session.pop("pending_superadmin_login_email", None)
+                return failure(SUPERADMIN_OTP_ONLY_MESSAGE, status=403, error="superadmin_otp_required")
+            # Email OTP is a separate, explicitly selected login method. Keep
+            # the account identity in the server session while the code is
+            # pending; never trust a browser-provided user id at verification.
+            session.clear()
+            if target:
+                session["pending_login_user_id"] = str(target["_id"])
+                session["pending_login_email"] = normalized_email
+                # Retain the legacy keys for one release so an in-flight
+                # browser can finish a challenge started by an older build.
+                session["pending_superadmin_login_user_id"] = str(target["_id"])
+                session["pending_superadmin_login_email"] = normalized_email
+                session.permanent = True
+            else:
+                # Do not reveal whether an address is registered. The UI can
+                # proceed to its verification screen and the verifier will
+                # reject an unknown address without creating a session.
+                audit("auth.login_otp.requested", "user", metadata={"known_account": False})
+                return success(message="If the account is eligible, a verification code has been sent")
         delivered = current_app.extensions["otp_service"].request(str(payload.email), payload.purpose)
         if not delivered:
+            if payload.purpose == "login":
+                session.clear()
             return failure("Verification email could not be sent. Please try again.", status=503, error="otp_delivery_failed")
         audit("otp.request", "user", metadata={"purpose": payload.purpose})
+        if payload.purpose == "reset":
+            return success({"next_step": "verify_code"}, message="If the account is eligible, a verification code has been sent")
         return success(message="If the account is eligible, a verification code has been sent")
     except ValidationError as exc:
         return failure("Validation failed", exc.errors(include_url=False), 422)
@@ -425,10 +534,48 @@ def signup_complete():
 def verify_otp():
     try:
         payload = OtpVerify.model_validate(request.get_json(silent=True) or {})
+        if payload.purpose == "login":
+            store = current_app.extensions["store"]
+            normalized_email = str(payload.email).strip().lower()
+            target = store.find_one("users", {"email": normalized_email, "active": {"$ne": False}})
+            if target and str(target.get("role_id") or "") != "superadmin":
+                # Re-check eligibility immediately before OTP verification as
+                # a defense against a forged/replayed pending-login session.
+                audit("auth.login_otp.blocked", "user", str(target.get("_id") or "unknown"), {"reason": "superadmin_required_at_verify"})
+                session.pop("pending_login_user_id", None)
+                session.pop("pending_login_email", None)
+                session.pop("pending_superadmin_login_user_id", None)
+                session.pop("pending_superadmin_login_email", None)
+                return failure(SUPERADMIN_OTP_ONLY_MESSAGE, status=403, error="superadmin_otp_required")
+            pending_id = str(session.get("pending_login_user_id") or session.get("pending_superadmin_login_user_id") or "")
+            pending_email = str(session.get("pending_login_email") or session.get("pending_superadmin_login_email") or "").strip().lower()
+            if (not target
+                    or pending_id != str(target.get("_id") or "")
+                    or pending_email != normalized_email):
+                audit("auth.login_otp.blocked", "user", str((target or {}).get("_id") or "unknown"), {"reason": "otp_request_required"})
+                return failure("Request a new email verification code.", status=403, error="login_otp_pending")
+        if payload.purpose == "reset":
+            reset_target = current_app.extensions["store"].find_one(
+                "users", {"email": str(payload.email).strip().lower(), "active": {"$ne": False}}
+            )
+            if reset_target and str(reset_target.get("role_id") or "") != "superadmin":
+                audit("auth.password_reset.blocked", "user", str(reset_target.get("_id") or "unknown"), {"reason": "superadmin_required_at_verify"})
+                session.pop("verified_reset_email", None)
+                return failure("Please contact your Superadmin to update your password.", status=403, error="superadmin_password_reset_required")
         user = current_app.extensions["otp_service"].verify(str(payload.email), payload.purpose, payload.code)
+        if payload.purpose == "reset" and (not user or str(user.get("role_id") or "") != "superadmin"):
+            audit("auth.password_reset.blocked", "user", str((user or {}).get("_id") or "unknown"), {"reason": "superadmin_required"})
+            return failure("Please contact your Superadmin to update your password.", status=403, error="superadmin_password_reset_required")
         if payload.purpose == "login":
             if not user or not user.get("active", False):
                 return failure("Account is unavailable", status=403)
+            if (str(session.get("pending_login_user_id") or session.get("pending_superadmin_login_user_id") or "") != str(user.get("_id") or "")
+                    or str(session.get("pending_login_email") or session.get("pending_superadmin_login_email") or "").strip().lower() != str(user.get("email") or "").strip().lower()):
+                return failure("Request a new email verification code.", status=403, error="login_otp_pending")
+            session.pop("pending_login_user_id", None)
+            session.pop("pending_login_email", None)
+            session.pop("pending_superadmin_login_user_id", None)
+            session.pop("pending_superadmin_login_email", None)
             device = _establish_session(user, method="email_otp")
             audit("auth.login", "user", str(user["_id"]), {"method": "email_otp"})
             return success(_session_result(device), "Signed in successfully" if device.get("application_access") else "Device approval pending")
@@ -455,7 +602,13 @@ def reset_password():
         return failure("Verify your email before resetting the password", status=403)
     if len(password) < 10:
         return failure("Password must contain at least 10 characters", status=422)
-    user = current_app.extensions["store"].update_one("users", {"email": email}, {"password_hash": generate_password_hash(password)})
+    store = current_app.extensions["store"]
+    existing = store.find_one("users", {"email": email, "active": {"$ne": False}})
+    if not existing or str(existing.get("role_id") or "") != "superadmin":
+        session.pop("verified_reset_email", None)
+        audit("auth.password_reset.blocked", "user", str((existing or {}).get("_id") or "unknown"), {"reason": "superadmin_required"})
+        return failure("Please contact your Superadmin to update your password.", status=403, error="superadmin_password_reset_required")
+    user = store.update_one("users", {"_id": existing["_id"]}, {"password_hash": generate_password_hash(password), "password_changed_at": utcnow()})
     if not user:
         return failure("Account is unavailable", status=404)
     session.clear()
@@ -467,6 +620,9 @@ def reset_password():
 @login_required
 def change_password():
     user = current_user() or {}
+    if str(user.get("role_id") or "") != "superadmin":
+        audit("auth.password_change.blocked", "user", str(user.get("_id") or "unknown"), {"reason": "superadmin_required"})
+        return failure("Please contact your Superadmin to update your password.", status=403, error="superadmin_password_change_required")
     payload = request.get_json(silent=True) or {}
     current_password = str(payload.get("current_password", ""))
     new_password = str(payload.get("new_password", ""))

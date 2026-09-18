@@ -4,7 +4,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { PAYMENT_TERMS } from "../config/customer-metadata";
-import { customerTypeLabel, customerTypeOptions } from "../config/businessConfig";
+import { accountTypeLabel, accountTypeOptions, PRICE_LIST_ACCOUNT_TYPES } from "../config/businessConfig";
 import type { CountryMeta } from "../config/customer-metadata";
 import type { Company, Customer } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
@@ -34,23 +34,62 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
   const payment = existing?.payment_terms ?? "";
   const customDays = existing?.custom_payment_days ?? "";
   const currency = existing?.preferred_currency ?? existing?.default_currency ?? initialCountry?.default_display_currency ?? "EUR";
+  const accountType = existing?.account_type ?? (existing?.client_type === "DEALER" ? "DEALER" : existing?.client_type === "WHOLESALER" || existing?.client_type === "CUSTOMER" ? "DISTRIBUTOR" : "");
+  const isSuperadmin = appStore.state.user?.role_id === "superadmin";
+  const incentiveEnabled = existing?.have_to_give_incentive === true;
+  const incentivePercentages = Array.from({ length: 40 }, (_, index) => (index + 1) / 2);
+  const incentiveVisibleToManagers = existing?.incentive_visible_to_managers === true;
+  const incentiveVisibleToSalespersons = existing?.incentive_visible_to_salespersons === true;
   const countryResultsId = `customer-country-results-${crypto.randomUUID()}`;
   const content = document.createElement("div");
-  content.innerHTML = `<form class="stack-form customer-form" id="customer-form" autocomplete="off">
-    <div class="form-grid">
-      <label>Customer company name *<input name="company_name" required placeholder="Registered company" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"><small class="field-error" data-error-for="company_name"></small></label>
-      <label>Primary contact *<input name="contact_name" required autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"><small class="field-error" data-error-for="contact_name"></small></label>
-      <label>Customer Type *<select name="client_type" required>${customerTypeOptions(existing?.client_type ?? "WHOLESALER")}</select><small>Controls the canonical pricing and incentive namespace.</small><small class="field-error" data-error-for="client_type"></small></label>
-      <label>Email *<input name="email" type="text" inputmode="email" required placeholder="procurement@company.com or -" value="${escapeHtml(existing?.email ?? "")}"><small>Use - if the email is not known.</small><small class="field-error" data-error-for="email"></small></label>
-      <label>Phone *<input name="phone" type="tel" required inputmode="tel" placeholder="International phone number or -" value="${escapeHtml(existing?.phone ?? "")}"><small>Use - if the phone number is not known.</small><small class="field-error" data-error-for="phone"></small></label>
-      <label>Region / Continent *<select name="continent" required><option value="">Select a region</option>${regions.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select><small>Select a region to filter countries, or search for a country and the region will be selected automatically.</small><small class="field-error" data-error-for="continent"></small></label>
-      <label>Country *<span class="customer-country-combobox"><input name="country_search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${countryResultsId}" autocomplete="off" required placeholder="Search or select country" value="${escapeHtml(initialCountry?.name ?? countryName)}"><input name="country_code" type="hidden" value="${escapeHtml(initialCountry?.code ?? countryCode)}"><div class="customer-country-results" id="${countryResultsId}" role="listbox" hidden></div></span><small class="field-error" data-error-for="country_code"></small></label>
-      <label>Display currency *<select name="preferred_currency" required><option value="">Select display currency</option><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select><small>Reference display only; quotations are always EUR.</small><small class="field-error" data-error-for="preferred_currency"></small></label>
-      <label>Payment terms *<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select><small class="field-error" data-error-for="payment_terms"></small></label>
-      <label class="customer-address">Address *<textarea name="address" required rows="2" placeholder="Customer address">${escapeHtml(existing?.address ?? "")}</textarea><small class="field-error" data-error-for="address"></small></label>
-      <label class="custom-payment-days" ${payment === "Custom" ? "" : "hidden"}>Custom days *<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"><small class="field-error" data-error-for="custom_payment_days"></small></label>
+  content.innerHTML = `<form class="stack-form customer-form customer-editor-form" id="customer-form" autocomplete="off">
+    <div class="customer-editor-grid">
+      <div class="customer-editor-column">
+        <section class="customer-form-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="user-round"></i></span><div><h3>Basic Information</h3><p>Essential customer details.</p></div></header>
+          <div class="customer-form-card-body customer-form-fields">
+            <label>Customer company name *<input name="company_name" required placeholder="Enter customer name" value="${escapeHtml(existing?.company_name ?? existing?.name ?? "")}"><small class="field-error" data-error-for="company_name"></small></label>
+            <label>Primary contact *<input name="contact_name" required autocomplete="off" placeholder="Contact person" value="${escapeHtml(existing?.contact_name ?? "")}"><small class="field-error" data-error-for="contact_name"></small></label>
+            <label class="customer-form-field-wide">Account Type *<select name="account_type" required>${accountTypeOptions(accountType)}</select><small>Determines the Distributor or Dealer price list.</small><small class="field-error" data-error-for="account_type"></small></label>
+            <label>Email *<input name="email" type="text" inputmode="email" required placeholder="customer@company.com or -" value="${escapeHtml(existing?.email ?? "")}"><small>Use - if the email is not known.</small><small class="field-error" data-error-for="email"></small></label>
+            <label>Phone *<input name="phone" type="tel" required inputmode="tel" placeholder="Phone number or -" value="${escapeHtml(existing?.phone ?? "")}"><small>Use - if the phone number is not known.</small><small class="field-error" data-error-for="phone"></small></label>
+          </div>
+        </section>
+        <section class="customer-form-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="globe-2"></i></span><div><h3>Location</h3><p>Region and country information.</p></div></header>
+          <div class="customer-form-card-body customer-form-fields">
+            <label class="customer-form-field-wide">Region / Continent *<select name="continent" required><option value="">Select a region</option>${regions.map((item) => `<option value="${escapeHtml(item)}" ${item === continent ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select><small>Select a region to filter countries, or search for a country and the region will be selected automatically.</small><small class="field-error" data-error-for="continent"></small></label>
+            <label class="customer-form-field-wide">Country *<span class="customer-country-combobox"><input name="country_search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${countryResultsId}" autocomplete="off" required placeholder="Search or select country" value="${escapeHtml(initialCountry?.name ?? countryName)}"><input name="country_code" type="hidden" value="${escapeHtml(initialCountry?.code ?? countryCode)}"><div class="customer-country-results" id="${countryResultsId}" role="listbox" hidden></div></span><small class="field-error" data-error-for="country_code"></small></label>
+          </div>
+        </section>
+        <section class="customer-form-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="map-pin"></i></span><div><h3>Address</h3><p>Customer location and delivery details.</p></div></header>
+          <div class="customer-form-card-body"><label>Address *<textarea name="address" required rows="4" placeholder="Enter customer address">${escapeHtml(existing?.address ?? "")}</textarea><small class="field-error" data-error-for="address"></small></label></div>
+        </section>
+      </div>
+      <div class="customer-editor-column">
+        <section class="customer-form-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="settings-2"></i></span><div><h3>Commercial Settings</h3><p>Pricing and payment configuration.</p></div></header>
+          <div class="customer-form-card-body customer-form-fields">
+            <label>Display currency *<select name="preferred_currency" required><option value="">Select display currency</option><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select><small>Reference display only; quotations are always EUR.</small><small class="field-error" data-error-for="preferred_currency"></small></label>
+            <label>Payment terms *<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select><small>Determines the Distributor or Dealer price list.</small><small class="field-error" data-error-for="payment_terms"></small></label>
+            <label class="custom-payment-days customer-form-field-wide" ${payment === "Custom" ? "" : "hidden"}>Custom days *<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"><small class="field-error" data-error-for="custom_payment_days"></small></label>
+          </div>
+        </section>
+        ${isSuperadmin ? `<section class="customer-form-card customer-incentive-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="gift"></i></span><div><h3>Customer Incentive <span class="customer-superadmin-badge">Superadmin only</span></h3><p>Configure incentive for this customer.</p></div></header>
+          <div class="customer-form-card-body customer-incentive-body">
+            <div class="customer-incentive-notice"><i data-lucide="info"></i><span>This incentive configuration is managed by Superadmins only.</span></div>
+            <label>Have to give incentive<select name="have_to_give_incentive"><option value="false" ${!incentiveEnabled ? "selected" : ""}>No</option><option value="true" ${incentiveEnabled ? "selected" : ""}>Yes</option></select></label>
+            <div class="customer-incentive-fields" ${incentiveEnabled ? "" : "hidden"}>
+              <div class="customer-form-fields"><label>Incentive Bearer Name *<input name="incentive_bearer_name" value="${escapeHtml(existing?.incentive_bearer_name ?? "")}" placeholder="Purchase Manager"><small class="field-error" data-error-for="incentive_bearer_name"></small></label><label>Designation *<input name="incentive_designation" value="${escapeHtml(existing?.incentive_designation ?? "")}" placeholder="Procurement Head"><small class="field-error" data-error-for="incentive_designation"></small></label><label class="customer-form-field-wide">Incentive Percentage *<select name="customer_incentive_percentage"><option value="">Select percentage</option>${incentivePercentages.map((value) => `<option value="${value}" ${Number(existing?.customer_incentive_percentage) === value ? "selected" : ""}>${value.toFixed(1)}%</option>`).join("")}</select><small>Available options: 0.5% to 20% (in 0.5% increments).</small><small class="field-error" data-error-for="customer_incentive_percentage"></small></label></div>
+              <fieldset class="customer-incentive-visibility"><legend><i data-lucide="eye"></i>Incentive Visibility</legend><p>Control who can view this customer's incentive information.</p><label class="customer-switch"><input type="checkbox" name="incentive_visible_to_managers" ${incentiveVisibleToManagers ? "checked" : ""}><span class="customer-switch-track"></span><span><strong>Show to Managers</strong><small>Allow managers to view this customer's incentive.</small></span></label><label class="customer-switch"><input type="checkbox" name="incentive_visible_to_salespersons" ${incentiveVisibleToSalespersons ? "checked" : ""}><span class="customer-switch-track"></span><span><strong>Show to Sales Persons</strong><small>Allow sales persons to view this customer's incentive.</small></span></label></fieldset>
+            </div>
+          </div>
+        </section>` : ""}
+      </div>
     </div>
-    <button class="button button-primary button-full" type="submit"><i data-lucide="save"></i>${existing ? "Save Customer" : "Create Customer"}</button>
+    <div class="modal-actions customer-form-footer"><button class="button button-secondary" type="button" data-customer-cancel>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="save"></i>${existing ? "Save Customer" : "Create Customer"}</button></div>
   </form>`;
   const form = content.querySelector<HTMLFormElement>("form")!;
   const countryField = form.elements.namedItem("country_search") as HTMLInputElement;
@@ -62,6 +101,8 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
   const countryCombobox = content.querySelector<HTMLElement>(".customer-country-combobox")!;
   const paymentSelect = form.elements.namedItem("payment_terms") as HTMLSelectElement;
   const customField = content.querySelector<HTMLElement>(".custom-payment-days")!;
+  const incentiveToggle = form.elements.namedItem("have_to_give_incentive") as HTMLSelectElement | null;
+  const incentiveFields = content.querySelector<HTMLElement>(".customer-incentive-fields");
   let visibleCountries: CountryMeta[] = [];
   let highlightedIndex = -1;
   const selectedCountry = () => countries.find((country) => country.code === countryCodeField.value) ?? null;
@@ -145,6 +186,14 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
   document.addEventListener("pointerdown", closeOnOutsideClick);
   content.addEventListener("moneda:dispose", () => document.removeEventListener("pointerdown", closeOnOutsideClick), { once: true });
   paymentSelect.addEventListener("change", () => { customField.hidden = paymentSelect.value !== "Custom"; if (paymentSelect.value !== "Custom") (form.elements.namedItem("custom_payment_days") as HTMLInputElement).value = ""; });
+  incentiveToggle?.addEventListener("change", () => {
+    const disablingExisting = existing?.have_to_give_incentive === true && incentiveToggle.value !== "true";
+    if (disablingExisting && !window.confirm("Disable customer incentives for future Order Confirmations? Historical incentive snapshots will remain unchanged.")) {
+      incentiveToggle.value = "true";
+      return;
+    }
+    if (incentiveFields) incentiveFields.hidden = incentiveToggle.value !== "true";
+  });
   return content;
 }
 
@@ -153,16 +202,26 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
   try { countries = await loadCountryCatalogue(); }
   catch (error) { toast(error instanceof Error ? error.message : "Country list could not be loaded", "error"); return; }
   const content = customerForm(countries, existing);
+  const isSuperadmin = appStore.state.user?.role_id === "superadmin";
   const dialog = openModal(existing ? "Edit Customer" : "Add Customer", content, "wide");
+  dialog.classList.add("customer-editor-dialog");
+  const modalHead = dialog.querySelector<HTMLElement>(".modal-head > div");
+  if (modalHead) modalHead.insertAdjacentHTML("beforeend", '<p class="customer-editor-subtitle">Create a new customer to manage their quotations and pricing.</p>');
+  content.querySelector<HTMLButtonElement>("[data-customer-cancel]")?.addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => content.dispatchEvent(new Event("moneda:dispose")), { once: true });
   content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const value = Object.fromEntries(new FormData(form).entries());
     delete value.country_search;
+    if (isSuperadmin) {
+      value.incentive_visible_to_managers = (form.elements.namedItem("incentive_visible_to_managers") as HTMLInputElement | null)?.checked ? "true" : "false";
+      value.incentive_visible_to_salespersons = (form.elements.namedItem("incentive_visible_to_salespersons") as HTMLInputElement | null)?.checked ? "true" : "false";
+    }
     if (value.payment_terms !== "Custom") { delete value.custom_payment_days; }
     const errors: Record<string, string> = {};
-    const required = [["company_name", "Company name is required"], ["contact_name", "Primary contact is required"], ["client_type", "Customer Type is required"], ["email", "Email is required; use - if unknown"], ["phone", "Phone is required; use - if unknown"], ["continent", "Region / Continent is required"], ["country_code", "Country is required"], ["preferred_currency", "Display currency is required"], ["payment_terms", "Payment terms are required"], ["address", "Address is required"]] as const;
+    const required = [["company_name", "Company name is required"], ["contact_name", "Primary contact is required"], ["account_type", "Account Type is required"], ["email", "Email is required; use - if unknown"], ["phone", "Phone is required; use - if unknown"], ["continent", "Region / Continent is required"], ["country_code", "Country is required"], ["preferred_currency", "Display currency is required"], ["payment_terms", "Payment terms are required"], ["address", "Address is required"]] as const;
+    if (value.account_type && !PRICE_LIST_ACCOUNT_TYPES.some((type) => type.code === String(value.account_type))) errors.account_type = "Select Distributor or Dealer";
     required.forEach(([field, message]) => { if (!String(value[field] ?? "").trim()) errors[field] = message; });
     if (value.email && value.email !== "-" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value.email))) errors.email = "Enter a valid email address or - if unknown";
     const phone = String(value.phone ?? "").trim();
@@ -173,6 +232,13 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
     if (selected && value.continent !== selected.region) errors.continent = "Select the region that contains this country";
     if (selected) value.country_name = selected.name;
     if (value.payment_terms === "Custom" && !/^[1-9]\d*$/.test(String(value.custom_payment_days ?? ""))) errors.custom_payment_days = "Enter a positive whole number of days";
+    if (isSuperadmin && String(value.have_to_give_incentive) === "true") {
+      if (!String(value.incentive_bearer_name ?? "").trim()) errors.incentive_bearer_name = "Incentive Bearer Name is required";
+      if (!String(value.incentive_designation ?? "").trim()) errors.incentive_designation = "Designation is required";
+      const percentage = Number(value.customer_incentive_percentage);
+      if (!Number.isFinite(percentage) || percentage < 0.5 || percentage > 20 || Math.round(percentage * 2) !== percentage * 2) errors.customer_incentive_percentage = "Select a percentage from 0.5% to 20.0% in 0.5% steps";
+    }
+    if (isSuperadmin && String(value.have_to_give_incentive) !== "true") { value.incentive_bearer_name = ""; value.incentive_designation = ""; value.customer_incentive_percentage = ""; value.incentive_visible_to_managers = "false"; value.incentive_visible_to_salespersons = "false"; }
     content.querySelectorAll<HTMLElement>("[data-error-for]").forEach((node) => { node.textContent = errors[node.dataset.errorFor ?? ""] ?? ""; });
     if (Object.keys(errors).length) return;
     try {
@@ -207,11 +273,11 @@ export async function customersPage(): Promise<HTMLElement> {
     if (customerTable) {
       const headerRow = customerTable.tHead?.rows[0];
       const typeHeader = document.createElement("th");
-      typeHeader.textContent = "Customer Type";
+      typeHeader.textContent = "Account Type";
       headerRow?.insertBefore(typeHeader, headerRow.cells[1] ?? null);
       customerTable.tBodies[0]?.querySelectorAll("tr").forEach((row, index) => {
         const typeCell = document.createElement("td");
-        typeCell.innerHTML = `<span class="customer-type-badge">${escapeHtml(customerTypeLabel(result.items[index]?.client_type))}</span>`;
+        typeCell.innerHTML = `<span class="customer-type-badge">${escapeHtml(accountTypeLabel(result.items[index]?.account_type))}</span>`;
         row.insertBefore(typeCell, row.cells[1] ?? null);
       });
     }
@@ -224,8 +290,8 @@ export async function customersPage(): Promise<HTMLElement> {
       const typeSelect = document.createElement("select");
       typeSelect.className = "client-type-filter";
       typeSelect.dataset.clientTypeFilter = "true";
-      typeSelect.setAttribute("aria-label", "Filter by customer type");
-      typeSelect.innerHTML = customerTypeOptions(clientTypeFilter, true);
+      typeSelect.setAttribute("aria-label", "Filter by account type");
+      typeSelect.innerHTML = `<option value="">All Account Types</option>${PRICE_LIST_ACCOUNT_TYPES.map((type) => `<option value="${type.code}" ${type.code === clientTypeFilter ? "selected" : ""}>${type.label}</option>`).join("")}`;
       typeSelect.value = clientTypeFilter;
       typeSelect.addEventListener("change", () => { clientTypeFilter = typeSelect.value; void load(); });
       toolbar.append(typeSelect);
@@ -278,8 +344,13 @@ export async function customerDetailPage(customerId: string): Promise<HTMLElemen
     const profileGrid = body.querySelector<HTMLElement>(".customer-profile-panel .detail-grid");
     if (profileGrid) {
       const typeField = document.createElement("div");
-      typeField.innerHTML = `<span>Customer Type</span><strong>${escapeHtml(customerTypeLabel(customer.client_type))}</strong>`;
+      typeField.innerHTML = `<span>Account Type</span><strong>${escapeHtml(accountTypeLabel(customer.account_type))}</strong>`;
       profileGrid.insertBefore(typeField, profileGrid.children[1] ?? null);
+      if (appStore.state.user?.role_id === "superadmin") {
+        const incentiveField = document.createElement("div");
+        incentiveField.innerHTML = `<span>Have to give incentive</span><strong>${customer.have_to_give_incentive ? `Yes · ${Number(customer.customer_incentive_percentage ?? 0).toFixed(1)}%` : "No"}</strong>`;
+        profileGrid.append(incentiveField);
+      }
     }
     const accessGrid = body.querySelector<HTMLElement>(".customer-access-panel .detail-grid");
     if (accessGrid) {

@@ -73,6 +73,107 @@ def test_manager_can_view_pricing_but_cannot_edit(app, authenticated):
     assert edit.status_code == 403
 
 
+def test_price_list_exposes_distributor_dealer_mpack_matrix_and_restricts_editing(app, authenticated):
+    accounts = authenticated.get("/api/v1/admin/price-lists")
+    assert accounts.status_code == 200
+    assert [row["code"] for row in accounts.json["data"]["account_types"]] == ["DISTRIBUTOR", "DEALER"]
+    assert all(row["code"] != "CUSTOMER" for row in accounts.json["data"]["account_types"])
+
+    machines = authenticated.get("/api/v1/admin/price-lists?account_type=DISTRIBUTOR&category=mpacks")
+    assert machines.status_code == 200
+    machine = machines.json["data"]["machines"][0]
+    matrix = authenticated.get(f"/api/v1/admin/price-lists?account_type=DISTRIBUTOR&category=mpacks&machine={machine['id']}")
+    assert matrix.status_code == 200
+    rows = matrix.json["data"]["matrix"]
+    assert rows
+    assert len(rows) == machine["sizes"]
+    assert matrix.json["data"]["thicknesses"]
+    assert set(rows[0]["prices_eur"]) == {"DISTRIBUTOR", "DEALER"}
+    assert matrix.json["data"]["source"]["source"] == "RGF EUROPE"
+    assert matrix.json["data"]["source"]["source_document"] == "Distributor.pdf"
+    assert rows[0]["source_prices_eur"]["DISTRIBUTOR"]["50"] == 0.037
+    assert rows[0]["source_box_prices_eur"]["DISTRIBUTOR"]["50"] == 7.34
+    assert rows[0]["sheets_per_box"]["50"] == 200
+
+    dealer_matrix = authenticated.get(f"/api/v1/admin/price-lists?account_type=DEALER&category=mpacks&machine={machine['id']}")
+    assert dealer_matrix.status_code == 200
+    assert dealer_matrix.json["data"]["source"]["source"] == "RGF USA"
+    assert dealer_matrix.json["data"]["source"]["source_document"] == "Dealer.pdf"
+    assert dealer_matrix.json["data"]["matrix"][0]["source_prices_eur"]["DEALER"]["50"] == 0.044
+    assert dealer_matrix.json["data"]["matrix"][0]["source_box_prices_eur"]["DEALER"]["50"] == 8.81
+
+    thickness = matrix.json["data"]["thicknesses"][0]
+    updated = authenticated.patch("/api/v1/admin/price-lists/mpack", json={
+        "account_type": "DEALER", "machine": machine, "width_mm": rows[0]["width_mm"],
+        "length_mm": rows[0]["length_mm"], "thickness_micron": thickness,
+        "price_per_sheet_eur": 0.123, "price_per_box_eur": 12.34,
+    })
+    assert updated.status_code == 200
+    assert updated.json["data"]["price_per_sheet_eur"] == 0.123
+    assert updated.json["data"]["price_per_box_eur"] == 12.34
+    refreshed = authenticated.get(f"/api/v1/admin/price-lists?account_type=DEALER&category=mpacks&machine={machine['id']}")
+    assert refreshed.json["data"]["matrix"][0]["prices_eur"]["DEALER"][str(thickness)] == 0.123
+    assert refreshed.json["data"]["matrix"][0]["box_prices_eur"]["DEALER"][str(thickness)] == 12.34
+    assert refreshed.json["data"]["matrix"][0]["source_prices_eur"]["DEALER"][str(thickness)] == 0.044
+
+    store = app.extensions["store"]
+    store.update_one("users", {"_id": "user-demo-admin"}, {"role_id": "manager_sales_admin"})
+    denied = authenticated.patch("/api/v1/admin/price-lists/mpack", json={
+        "account_type": "DEALER", "machine": machine, "width_mm": rows[0]["width_mm"],
+        "length_mm": rows[0]["length_mm"], "thickness_micron": matrix.json["data"]["thicknesses"][0],
+        "price_per_sheet_eur": 0.1, "price_per_box_eur": 1,
+    })
+    assert denied.status_code == 403
+
+
+def test_mpack_machine_catalog_uses_all_persisted_source_models(app, authenticated):
+    expected_models = {
+        "GTO 46", "QUICKMASTER 46", "GTO 52 - PRINTMASTER 52",
+        "SPEEDMASTER 52 / SX 52", "MO 65 / SORK", "SPEEDMASTER 72 / SORM",
+        "SPEEDMASTER 74 (OLD MODEL) - SX 74", "SPEEDMASTER 74 - CD",
+        "SPEEDMASTER 74 / 75 XL", "SPEEDMASTER 102 / SX 102",
+        "SPEEDMASTER 102 CD / 102 CX", "SPEEDMASTER 105 XL / 106 XL",
+        "SPEEDMASTER 145 XL", "SPEEDMASTER 162 XL",
+    }
+    lists = {}
+    for account_type in ("DISTRIBUTOR", "DEALER"):
+        response = authenticated.get(f"/api/v1/admin/price-lists?account_type={account_type}&category=mpacks")
+        assert response.status_code == 200
+        manufacturers = {row["name"]: row for row in response.json["data"]["manufacturers"]}
+        assert manufacturers["Heidelberg"]["size_rows"] == 15
+        heidelberg = {row["machine_model"]: row for row in response.json["data"]["machines"] if row["manufacturer"] == "Heidelberg"}
+        assert set(heidelberg) == expected_models
+        assert len(heidelberg) == len(expected_models)
+        lists[account_type] = heidelberg
+        filtered = authenticated.get(f"/api/v1/admin/price-lists?account_type={account_type}&category=mpacks&manufacturer=Heidelberg")
+        assert filtered.status_code == 200
+        assert filtered.json["data"]["manufacturer"] == "Heidelberg"
+        assert {row["manufacturer"] for row in filtered.json["data"]["machines"]} == {"Heidelberg"}
+        assert len(filtered.json["data"]["machines"]) == len(expected_models)
+        grouped_models = {row["model"] for row in filtered.json["data"]["models"]}
+        assert grouped_models == expected_models
+        assert all(row["machine_model"] in expected_models for row in filtered.json["data"]["models"])
+        assert all(row["rows"] for row in filtered.json["data"]["models"])
+    assert set(lists["DISTRIBUTOR"]) == set(lists["DEALER"])
+    assert lists["DISTRIBUTOR"]["SPEEDMASTER 102 CD / 102 CX"]["sizes"] == 2
+
+    machine_id = "Heidelberg::SPEEDMASTER 102 CD / 102 CX"
+    detail = authenticated.get(f"/api/v1/admin/price-lists?account_type=DISTRIBUTOR&category=mpacks&machine={machine_id}")
+    assert detail.status_code == 200
+    assert len(detail.json["data"]["matrix"]) == 2
+    assert len(detail.json["data"]["thicknesses"]) == 12
+    assert all("price_per_box" not in cell for row in detail.json["data"]["matrix"] for cell in row["prices_eur"].values())
+
+    distributor_gto = authenticated.get("/api/v1/admin/price-lists?account_type=DISTRIBUTOR&category=mpacks&machine=Heidelberg%3A%3AGTO%2046")
+    dealer_gto = authenticated.get("/api/v1/admin/price-lists?account_type=DEALER&category=mpacks&machine=Heidelberg%3A%3AGTO%2046")
+    assert distributor_gto.status_code == dealer_gto.status_code == 200
+    distributor_row = distributor_gto.json["data"]["matrix"][0]
+    dealer_row = dealer_gto.json["data"]["matrix"][0]
+    assert distributor_row["source_prices_eur"]["DISTRIBUTOR"]["50"] == 0.037
+    assert dealer_row["source_prices_eur"]["DEALER"]["50"] == 0.044
+    assert distributor_row["sheets_per_box"]["50"] == dealer_row["sheets_per_box"]["50"] == 200
+
+
 def test_exchange_cache_has_provider_dates_expiry_and_cached_fallback(app):
     service = app.extensions["exchange_rate_service"]
     live = service.get_rates(force=True)

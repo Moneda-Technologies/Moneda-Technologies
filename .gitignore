@@ -15,6 +15,7 @@ uploads/*
 *.log
 auth-cookies.txt
 tmp/
+backups/
 output/pdf/*
 !output/pdf/.gitkeep
 .DS_Store

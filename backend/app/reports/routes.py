@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import Blueprint, Response, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import can_view_all_customers, current_user, enforce_customer, permission_required, permitted_customer_query, selected_customer_id
+from app.middleware.access import can_view_all_customers, current_user, enforce_customer, permission_required, permitted_customer_query, permitted_quotation_query, selected_customer_id
 from app.exchange_rates.service import ExchangeRateUnavailable
 
 
@@ -60,6 +60,43 @@ def _number(value: object) -> float:
         return 0.0
 
 
+def _quotation_query(scope: dict, user: dict | None) -> dict:
+    """Intersect report customer scope with the central quotation scope."""
+    authorized = permitted_quotation_query(user)
+    return {"$and": [scope, authorized]} if authorized else scope
+
+
+def _live_order_for_quotation(store, quotation: dict) -> dict | None:
+    """Resolve a non-deleted OC through any supported quotation reference."""
+    quotation_id = str(quotation.get("_id") or "")
+    references = [
+        quotation.get("converted_order_id"), quotation.get("converted_oc_id"),
+        quotation.get("order_id"), quotation.get("oc_id"),
+    ]
+    for reference in references:
+        if reference:
+            order = store.find_one("orders", {"_id": str(reference)})
+            if order and _is_live_order(order):
+                return order
+    if quotation_id:
+        order = store.find_one("orders", {"quotation_id": quotation_id})
+        if order and _is_live_order(order):
+            return order
+        order = store.find_one("orders", {"source_quotation_id": quotation_id})
+        if order and _is_live_order(order):
+            return order
+    return None
+
+
+def _is_valid_conversion(store, quotation: dict) -> bool:
+    status = str(quotation.get("status") or "").strip().lower()
+    if status in {"accepted", "accepted quotation"}:
+        return True
+    if status in {"converted to order", "converted", "converted_to_order"}:
+        return _live_order_for_quotation(store, quotation) is not None
+    return False
+
+
 def _date(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return value
@@ -82,9 +119,15 @@ def _detail_scope_payload(customers: list[dict], requested_customer_id: str | No
     return {"customer_count": len(customers), "customer_filter": requested_customer_id or None}
 
 
+def _is_live_order(row: dict[str, Any]) -> bool:
+    """Exclude soft-deleted/cancelled OCs from operational metrics."""
+    return str(row.get("status") or "").strip().lower() not in {"deleted", "cancelled", "canceled"}
+
+
 @bp.get("/dashboard")
 @permission_required("dashboard.view")
 def dashboard():
+    user = current_user() or {}
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id") or selected_customer_id()
     store = current_app.extensions["store"]
     if customer_id:
@@ -93,7 +136,6 @@ def dashboard():
         scope = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
         customer_scope = {"_id": customer_id}
     else:
-        user = current_user() or {}
         if can_view_all_customers(user):
             customer_scope = {"active": {"$ne": False}, "status": {"$ne": "archived"}}
         else:
@@ -101,18 +143,20 @@ def dashboard():
         customer_rows, _ = store.list("customers", customer_scope, limit=5000)
         ids = [row["_id"] for row in customer_rows if row.get("_id") and not row.get("is_issuer")]
         scope = {"$or": [{"customer_id": {"$in": ids}}, {"customer_company_id": {"$in": ids}}, {"company_id": {"$in": ids}}]} if ids else {"_id": "__no_customer_access__"}
-    quotes, _ = store.list("quotations", scope, limit=10000)
+    quote_scope = _quotation_query(scope, user)
+    quotes, _ = store.list("quotations", quote_scope, limit=10000)
     orders, _ = store.list("orders", scope, limit=10000)
     leads, _ = store.list("leads", scope, limit=10000)
     reminders, _ = store.list("reminders", {"$and": [scope, {"status": {"$in": ["Pending", "Due", "Overdue", "open"]}}]}, limit=10000)
-    accepted = [row for row in quotes if row.get("status") in {"Accepted", "Converted to Order"}]
-    revenue = sum(float(row.get("totals", {}).get("grand_total", 0)) for row in orders if row.get("status") != "Cancelled")
+    live_orders = [row for row in orders if _is_live_order(row)]
+    accepted = [row for row in quotes if _is_valid_conversion(store, row)]
+    revenue = sum(float(row.get("totals", {}).get("grand_total", 0)) for row in live_orders)
     status_counts: dict[str, int] = {}
     for row in quotes:
         status_counts[row.get("status", "Unknown")] = status_counts.get(row.get("status", "Unknown"), 0) + 1
     return success({
         "metrics": {"quotations": len(quotes), "open_quotations": len([q for q in quotes if q.get("status") in {"Draft", "Sent", "Viewed"}]),
-                    "accepted_quotations": len(accepted), "orders": len(orders), "revenue": revenue,
+                    "accepted_quotations": len(accepted), "orders": len(live_orders), "revenue": revenue,
                     "conversion_rate": round(len(accepted) / len(quotes) * 100, 1) if quotes else 0,
                     "leads": len(leads), "follow_ups_due": len(reminders)},
         "quotation_status": status_counts,
@@ -125,7 +169,8 @@ def dashboard():
 def report_summary():
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     store = current_app.extensions["store"]
-    customers, scope = _report_scope(store, current_user(), customer_id)
+    user = current_user() or {}
+    customers, scope = _report_scope(store, user, customer_id)
     if customer_id and not customers:
         return failure("Customer access denied", status=403)
     if customer_id and scope is None:
@@ -133,9 +178,9 @@ def report_summary():
     scope = scope or {"_id": "__no_customer_access__"}
     return success({
         "customers": len(customers),
-        "customer_options": [{"_id": str(row["_id"]), "name": row.get("company_name") or row.get("name") or "Customer"} for row in _accessible_customers(store, current_user())],
-        "quotations": store.count("quotations", scope),
-        "orders": store.count("orders", scope),
+        "customer_options": [{"_id": str(row["_id"]), "name": row.get("company_name") or row.get("name") or "Customer"} for row in _accessible_customers(store, user)],
+        "quotations": store.count("quotations", _quotation_query(scope, user)),
+        "orders": sum(1 for row in store.list("orders", scope, limit=100_000)[0] if _is_live_order(row)),
         "leads": store.count("leads", scope),
     })
 
@@ -148,7 +193,7 @@ def quotations_csv():
     customers, scope = _report_scope(store, current_user(), customer_id)
     if customer_id and (not customers or scope is None):
         return failure("Customer access denied", status=403)
-    rows, _ = store.list("quotations", scope or {"_id": "__no_customer_access__"}, limit=10000)
+    rows, _ = store.list("quotations", _quotation_query(scope or {"_id": "__no_customer_access__"}, current_user()), limit=10000)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(["Quotation", "Customer Company", "Status", "Currency", "Subtotal", "Total", "Created"])
@@ -166,7 +211,8 @@ def report_detail(report_name: str):
         return failure("Report not found", status=404)
     requested_customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     store = current_app.extensions["store"]
-    customers, scope = _report_scope(store, current_user(), requested_customer_id)
+    user = current_user() or {}
+    customers, scope = _report_scope(store, user, requested_customer_id)
     if requested_customer_id and (not customers or scope is None):
         return failure("Customer access denied", status=403)
     scope = scope or {"_id": "__no_customer_access__"}
@@ -177,11 +223,11 @@ def report_detail(report_name: str):
 
     if report_name == "sales-performance":
         orders, _ = store.list("orders", scope, limit=100_000, sort="created_at", direction=-1)
-        quotes, _ = store.list("quotations", scope, limit=100_000)
-        valid_orders = [row for row in orders if str(row.get("status", "")).lower() not in {"cancelled", "canceled"}]
+        quotes, _ = store.list("quotations", _quotation_query(scope, user), limit=100_000)
+        valid_orders = [row for row in orders if _is_live_order(row)]
         revenue = sum(_number((row.get("totals") or {}).get("grand_total")) for row in valid_orders)
         currencies = {str(row.get("currency") or row.get("quotation_currency") or "EUR").upper() for row in valid_orders}
-        converted = sum(1 for row in quotes if str(row.get("status", "")).lower() in {"converted to order", "accepted"})
+        converted = sum(1 for row in quotes if _is_valid_conversion(store, row))
         metrics = [{"label": "Revenue", "value": revenue if len(currencies) <= 1 else "Multiple currencies", "format": "money" if len(currencies) <= 1 else None}, {"label": "Orders", "value": len(valid_orders)}, {"label": "Quotation conversion", "value": round(converted / len(quotes) * 100, 1) if quotes else 0, "format": "percent"}]
         by_salesperson: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: {"orders": 0, "revenue": 0})
         for order in valid_orders:
@@ -193,7 +239,7 @@ def report_detail(report_name: str):
         empty_message = "No completed order data is available yet."
 
     elif report_name == "quotation-analysis":
-        quotations, _ = store.list("quotations", scope, limit=100_000, sort="created_at", direction=-1)
+        quotations, _ = store.list("quotations", _quotation_query(scope, user), limit=100_000, sort="created_at", direction=-1)
         status_totals: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: {"count": 0, "value": 0})
         for quote in quotations:
             status = str(quote.get("status") or "Unknown")
@@ -227,7 +273,7 @@ def report_detail(report_name: str):
         empty_message = "No customer creation dates are available for this scope."
 
     elif report_name == "product-demand":
-        quotations, _ = store.list("quotations", scope, limit=100_000)
+        quotations, _ = store.list("quotations", _quotation_query(scope, user), limit=100_000)
         products, _ = store.list("products", {}, limit=100_000)
         product_by_id = {str(row.get("_id")): row for row in products}
         aggregate: dict[str, dict[str, object]] = {}
@@ -243,7 +289,7 @@ def report_detail(report_name: str):
         empty_message = "No quotation line items are available for this scope."
 
     elif report_name == "tax-summary":
-        quotations, _ = store.list("quotations", scope, limit=100_000)
+        quotations, _ = store.list("quotations", _quotation_query(scope, user), limit=100_000)
         grouped: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: {"taxable": 0, "tax": 0, "documents": 0})
         for quote in quotations:
             totals = quote.get("totals") or {}
@@ -266,7 +312,7 @@ def report_detail(report_name: str):
         empty_message = "No tax amounts are recorded in the matching quotations."
 
     elif report_name == "currency-exposure":
-        quotations, _ = store.list("quotations", scope, limit=100_000)
+        quotations, _ = store.list("quotations", _quotation_query(scope, user), limit=100_000)
         grouped: dict[str, float] = defaultdict(float)
         for quote in quotations:
             grouped[str(quote.get("currency") or quote.get("quotation_currency") or "EUR").upper()] += _number((quote.get("totals") or {}).get("grand_total"))

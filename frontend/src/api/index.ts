@@ -6,9 +6,9 @@ export const authApi = {
   me: () => api<SessionPayload>("/me"),
   bootstrapSession: () => api<SessionPayload>("/me", {}, { on401: "anonymous" }),
   deviceAccess: () => api<NonNullable<SessionPayload["device_access"]>>("/me/device-access"),
-  login: (identifier: string, password: string) => api<{ next_step: string; device_status?: string; application_access?: boolean }>("/auth/login", jsonBody({ identifier, password })),
+  login: (identifier: string, password: string) => api<{ next_step: string; otp_required?: boolean; otp_email?: string; device_status?: string; application_access?: boolean }>("/auth/login", jsonBody({ identifier, password })),
   demo: () => api<{ next_step: string }>("/auth/demo", jsonBody({})),
-  requestOtp: (email: string, purpose: "login" | "signup" | "reset" = "login") => api<null>("/auth/request-otp", jsonBody({ email, purpose })),
+  requestOtp: (email: string, purpose: "login" | "signup" | "reset" = "login") => api<{ next_step?: string } | null>("/auth/request-otp", jsonBody({ email, purpose })),
   verifyOtp: (email: string, code: string, purpose: "login" | "signup" | "reset" = "login") => api<{ next_step: string; device_status?: string; application_access?: boolean }>("/auth/verify-otp", jsonBody({ email, code, purpose })),
   signupStart: (value: { name: string; username: string; email: string; previous_pending_signup_id?: string }) => api<{ pending_signup_id: string; masked_email: string; otp_sent: boolean }>("/auth/signup/start", jsonBody(value)),
   signupVerifyEmail: (pending_signup_id: string, otp: string) => api<{ pending_signup_id: string; email_verified: boolean }>("/auth/signup/verify-email", jsonBody({ pending_signup_id, otp })),
@@ -59,7 +59,7 @@ export const companyApi = customerCompanyApi;
 
 export const customerApi = {
   countries: () => api<{ countries: CountryMeta[]; total: number }>("/countries"),
-  list: (customerId?: string, status?: string, clientType?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${status ? `status=${encodeURIComponent(status)}&` : ""}${clientType ? `client_type=${encodeURIComponent(clientType)}&` : ""}limit=100`),
+  list: (customerId?: string, status?: string, clientType?: string) => api<PageResult<Customer>>(`/customers?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${status ? `status=${encodeURIComponent(status)}&` : ""}${clientType ? `account_type=${encodeURIComponent(clientType)}&` : ""}limit=100`),
   get: (id: string) => api<Customer & { related?: Record<string, unknown[]> }>(`/customers/${encodeURIComponent(id)}`),
   create: (value: unknown) => api<Customer>("/customers", jsonBody(value)),
   update: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}`, patchBody(value)),
@@ -78,9 +78,9 @@ export const quotationApi = {
   communications: (id: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/quotations/${encodeURIComponent(id)}/communications`),
   create: (value: unknown) => api<Quotation>("/quotations", jsonBody(value)),
   preview: (value: unknown) => api<Quotation>("/quotations/preview", jsonBody(value)),
-  send: (id: string, value: { subject?: string; message?: string } = {}) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/send`, jsonBody(value)),
+  send: (id: string, value: { to?: string; subject?: string; message?: string } = {}) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/send`, jsonBody(value)),
   whatsapp: (id: string) => api<{ delivery: { status: string }; log_id: string }>(`/quotations/${encodeURIComponent(id)}/whatsapp`, jsonBody({})),
-  convert: (id: string) => api<unknown>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, jsonBody({})),
+  convert: (id: string, idempotencyKey = crypto.randomUUID()) => api<unknown>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, { ...jsonBody({}), headers: { "Idempotency-Key": idempotencyKey } }),
   remove: (id: string, reason: string, permanent = true) => api<null>(`/quotations/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason, permanent }), headers: { "Content-Type": "application/json" } }),
   restore: (id: string) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/restore`, jsonBody({})),
 };
@@ -111,6 +111,7 @@ export const orderApi = {
   ),
   sendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-confirmation`, jsonBody({})),
   resendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/resend-confirmation`, jsonBody({})),
+  remove: (id: string, reason = "Deleted from Order Confirmations") => api<null>(`/orders/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   pdfUrl: (id: string, inline = false) => apiEndpoint(`/orders/${encodeURIComponent(id)}/pdf${inline ? "?preview=true" : ""}`),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };
@@ -125,8 +126,19 @@ export const financeApi = {
   submitPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/submit`, jsonBody({})),
   confirmPayment: (id: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/confirm`, jsonBody({})),
   rejectPayment: (id: string, reason: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/reject`, jsonBody({ reason })),
+  voidPayment: (id: string, reason: string) => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/void`, jsonBody({ reason })),
+  deletePayment: (id: string, reason = "Deleted after payment was voided") => api<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   incentives: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/incentives${query ? `?${query}` : ""}`),
-  incentive: (id: string) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}`),
+  customerIncentives: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/customer-incentives${query ? `?${query}` : ""}`),
+  customerIncentiveVisibility: () => api<{ visible: boolean; can_manage: boolean }>("/customer-incentive-visibility"),
+  customerIncentive: (id: string) => api<Record<string, unknown>>(`/customer-incentives/${encodeURIComponent(id)}`),
+  incentive: (id: string, recipientUserId?: string, allocationType?: string) => {
+    const params = new URLSearchParams();
+    if (recipientUserId) params.set("recipient_user_id", recipientUserId);
+    if (allocationType) params.set("allocation_type", allocationType);
+    return api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`);
+  },
+  deleteIncentive: (id: string, reason: string) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   payIncentive: (id: string, paidAmount?: number) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}/pay`, jsonBody(paidAmount === undefined ? {} : { paid_amount: paidAmount })),
   confirmIncentivePayment: (id: string, reference?: string) => api<Record<string, unknown>>(`/incentives/${encodeURIComponent(id)}/confirm-payment`, jsonBody(reference ? { payment_reference: reference } : {})),
   creditNotes: () => api<{ items: Record<string, unknown>[]; total: number }>("/credit-notes"),
@@ -143,6 +155,7 @@ export const adminApi = {
   revokeDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/revoke`, jsonBody({ reason })),
   deleteDevice: (userId: string, deviceId: string, reason: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
+  setUserPassword: (id: string, password: string, confirm_password: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}/password`, jsonBody({ password, confirm_password })),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
   incentiveRules: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/incentive-rules"),
   incentiveConfigurator: () => api<{
@@ -160,6 +173,8 @@ export const adminApi = {
   updateIncentiveRule: (id: string, value: number | { rate?: number; active?: boolean }) => api<Record<string, unknown>>(`/admin/incentive-rules/${encodeURIComponent(id)}`, patchBody(typeof value === "number" ? { rate: value } : value)),
   clientPricing: () => api<Record<string, unknown>>("/admin/pricing/client-types"),
   settings: () => api<Record<string, unknown>>("/settings"),
+  customerIncentiveVisibility: () => api<{ show_customer_incentives_to_manager: boolean; show_customer_incentives_to_salesperson: boolean; can_manage: boolean }>("/admin/customer-incentive-visibility"),
+  updateCustomerIncentiveVisibility: (value: unknown) => api<Record<string, unknown>>("/admin/customer-incentive-visibility", patchBody(value)),
   auditLogs: () => api<{ items: Record<string, unknown>[]; total: number; page: number }>("/admin/audit-logs"),
   updateSettings: (value: unknown) => api<Record<string, unknown>>("/settings", patchBody(value)),
   routing: () => api<{ cc: Array<Record<string, unknown>>; bcc: Array<Record<string, unknown>> }>("/integrations/zoho/routing"),
@@ -180,6 +195,34 @@ export const adminApi = {
   zohoTest: (to: string) => api<{ sent: boolean; diagnostic_id?: string; stage?: string; checks: Array<{ stage: string; result: string; source?: string }> }>("/integrations/zoho/test", jsonBody({ to })),
   zohoDisconnect: () => api<{ connected: boolean; revoked: boolean; diagnostic_id: string }>("/integrations/zoho/disconnect", jsonBody({})),
   pricingProducts: (query = "") => api<{ items: PricingResource[]; total: number }>(`/admin/pricing/products${query ? `?${query}` : ""}`),
+  priceLists: (accountType = "", category = "", machine = "", manufacturer = "") => {
+    const query = new URLSearchParams();
+    if (accountType) query.set("account_type", accountType);
+    if (category) query.set("category", category);
+    if (manufacturer) query.set("manufacturer", manufacturer);
+    if (machine) query.set("machine", machine);
+    return api<{
+    account_types?: Array<{ code: "DISTRIBUTOR" | "DEALER"; label: string; description: string }>;
+    categories?: Array<{ id: string; name: string; description: string }>;
+    account_type?: "DISTRIBUTOR" | "DEALER";
+    category?: string;
+    items: PricingResource[];
+    total?: number;
+    currency: "EUR";
+    valid_from?: string;
+    valid_until?: string;
+    machines?: Array<{ id: string; manufacturer: string; machine_model: string; label: string; sizes: number }>;
+    manufacturers?: Array<{ id: string; name: string; size_rows: number }>;
+    manufacturer?: string | null;
+    product?: string;
+    machine?: { manufacturer: string; machine_model: string };
+    thicknesses?: number[];
+    source?: { source?: string; source_document?: string; version?: string; valid_from?: string; valid_until?: string };
+    matrix?: Array<{ size: string; width_mm: number; length_mm: number; sheets_per_box: Record<string, number | null>; prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>>; box_prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>>; source_prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>>; source_box_prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>> }>;
+    models?: Array<{ model: string; machine_model: string; rows: Array<{ size: string; width_mm: number; length_mm: number; sheets_per_box: Record<string, number | null>; prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>>; source_prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>> }>; matrix?: Array<{ size: string; width_mm: number; length_mm: number; sheets_per_box: Record<string, number | null>; prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>>; source_prices_eur: Record<"DISTRIBUTOR" | "DEALER", Record<string, number | null>> }>; thicknesses: number[]; source?: { source?: string; source_document?: string; version?: string; valid_from?: string; valid_until?: string } }>;
+  }>(`/admin/price-lists${query.size ? `?${query.toString()}` : ""}`);
+  },
+  updateMpackPrice: (value: unknown) => api<unknown>("/admin/price-lists/mpack", patchBody(value)),
   pricingProduct: (id: string) => api<PricingResource & { history: PriceHistoryEntry[]; history_total: number }>(`/admin/pricing/products/${encodeURIComponent(id)}`),
   updatePrice: (id: string, value: unknown) => api<PricingResource>(`/admin/pricing/products/${encodeURIComponent(id)}`, patchBody(value)),
   priceHistory: (id: string) => api<{ items: PriceHistoryEntry[]; total: number }>(`/admin/pricing/history/${encodeURIComponent(id)}`),

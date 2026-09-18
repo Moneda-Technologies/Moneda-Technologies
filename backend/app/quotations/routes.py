@@ -11,7 +11,7 @@ from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.middleware.access import (
     can_view_all_quotations, current_user, customer_id_from, customer_record, enforce_active_customer,
-    enforce_customer, enforce_active_customer_company, permitted_quotation_query, selected_customer_id,
+    enforce_customer, enforce_active_customer_company, permitted_quotation_query, quotation_is_authorized, selected_customer_id,
     permission_required, permission_required_any,
 )
 from app.pricing.engine import PricingUnavailable
@@ -24,22 +24,25 @@ bp = Blueprint("quotations", __name__, url_prefix="/api/quotations")
 
 
 def _accessible(quotation: dict) -> bool:
-    user = current_user() or {}
-    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
-    # Ownership never bypasses the server-side customer scope.  This keeps
-    # quotation visibility consistent with conversion authorization.
-    if not enforce_customer(customer_id):
-        return False
-    if can_view_all_quotations(user):
-        return True
-    owner_ids = {quotation.get("created_by_user_id"), quotation.get("user_id"), quotation.get("prepared_by_user_id"), quotation.get("salesperson_id")}
-    if user.get("_id") in owner_ids:
-        return True
-    # Legacy quotations may not have an owner snapshot; retain the existing
-    # customer authorization bridge for those records.
-    if not any(owner_ids):
-        return True
-    return False
+    return quotation_is_authorized(quotation, current_user() or {})
+
+
+def _valid_email(value: object) -> str | None:
+    """Return a normalized email, treating legacy placeholders as missing."""
+    candidate = str(value or "").strip()
+    if not candidate or candidate.lower() in {"-", "—", "none", "null"}:
+        return None
+    try:
+        return validate_email(candidate, check_deliverability=False).normalized
+    except EmailNotValidError:
+        return None
+
+
+def _stored_quotation_recipient(row: dict) -> str | None:
+    values = row.get("to")
+    if isinstance(values, (list, tuple)):
+        values = values[0] if values else None
+    return _valid_email(values or row.get("recipient"))
 
 
 def _scope_id(payload: dict) -> str | None:
@@ -134,7 +137,9 @@ def list_quotations():
     except ValueError:
         return failure("Page and limit must be valid numbers", status=422)
     rows, total = current_app.extensions["store"].list("quotations", query, page=page, limit=limit, sort="created_at", direction=-1)
-    return success({"items": rows, "pagination": {"page": page, "limit": limit, "total": total}, "scope": "all" if can_view_all_quotations(user) else "own"})
+    role_id = str(user.get("role_id") or "")
+    scope_label = "all" if can_view_all_quotations(user) else "team" if role_id in {"manager", "manager_sales_admin"} else "own"
+    return success({"items": rows, "pagination": {"page": page, "limit": limit, "total": total}, "scope": scope_label})
 
 
 @bp.post("")
@@ -279,12 +284,15 @@ def send_quotation(quotation_id: str):
         return failure("Customer company access denied", status=403)
     previous_email = store.find_one("email_logs", {"quotation_id": quotation_id, "purpose": "quotation"})
     send_event = "resend" if previous_email or row.get("status") in {"Sent", "send_failed"} else "initial_send"
-    recipient = str(row.get("customer_snapshot", {}).get("email") or "").strip()
-    try:
-        recipient = validate_email(recipient, check_deliverability=False).normalized
-    except EmailNotValidError:
-        return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     payload = request.get_json(silent=True) or {}
+    customer_recipient = _valid_email((row.get("customer_snapshot") or {}).get("email"))
+    requested_recipient = _valid_email(payload.get("to"))
+    # A saved customer email is authoritative. A one-off recipient is accepted
+    # only when the customer has no email, allowing quotation delivery without
+    # changing the customer record or weakening customer access checks.
+    recipient = customer_recipient or requested_recipient or _stored_quotation_recipient(row)
+    if not recipient:
+        return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     subject = str(payload.get("subject") or f"Quotation {row['quotation_number']} - Moneda Technologies")[:200]
     message = str(payload.get("message") or f"<p>Please find quotation <strong>{row['quotation_number']}</strong> attached.</p><p>Total: {row['currency']} {row['totals']['grand_total']:,.2f}</p>")
     user = current_user() or {}
@@ -395,20 +403,33 @@ def delete_or_archive_quotation(quotation_id: str):
         return failure("Quotation access denied", status=403)
     payload = request.get_json(silent=True) or {}
     reason = str(payload.get("reason") or request.args.get("reason") or "").strip()[:500]
-    status = str(row.get("status") or "Draft")
+    status = str(row.get("status") or "Draft").strip().lower()
+    actor = current_user() or {}
+
+    # Active quotations always take the reversible archive path. The client
+    # may send `permanent=true`, but it must never bypass this first step.
+    if status != "archived":
+        if "quotations.archive" not in set(actor.get("permissions") or []):
+            return failure("You do not have permission to archive quotations", status=403, error="QUOTATION_ARCHIVE_FORBIDDEN")
+        previous = str(row.get("status") or "Draft")
+        store.update_one("quotations", {"_id": quotation_id}, {"status": "archived", "archived_at": utcnow(), "archived_by": actor.get("_id")})
+        audit("QUOTATION_ARCHIVED", "quotation", quotation_id, {"reason": reason, "previous_state": previous, "new_state": "archived"})
+        return success(message="Quotation archived")
+
+    # Permanent deletion is intentionally narrower than archival: only the
+    # canonical Superadmin role may remove an already archived quotation.
+    if str(actor.get("role_id") or "") != "superadmin" or "quotations.delete" not in set(actor.get("permissions") or []):
+        return failure("Only a Superadmin can permanently delete an archived quotation", status=403, error="QUOTATION_DELETE_SUPERADMIN_ONLY")
     related, _ = store.list("orders", {"$or": [{"quotation_id": quotation_id}, {"source_quotation_id": quotation_id}]}, limit=1)
     if related:
-        return failure("This quotation has an associated order and cannot be deleted. Archive it instead.", status=409, error="QUOTATION_HAS_ORDER")
-    if status == "Draft" and str(payload.get("permanent", request.args.get("permanent", "true"))).lower() in {"1", "true", "yes"}:
+        return failure("This quotation has an associated order and cannot be deleted", status=409, error="QUOTATION_HAS_ORDER")
+    if str(payload.get("permanent", request.args.get("permanent", "true"))).lower() in {"1", "true", "yes"}:
         if not reason:
             return failure("A reason is required to permanently delete a quotation", status=422, error="REASON_REQUIRED")
-        audit("QUOTATION_DELETED", "quotation", quotation_id, {"reason": reason, "previous_state": status})
+        audit("QUOTATION_DELETED", "quotation", quotation_id, {"reason": reason, "previous_state": row.get("status") or "archived"})
         store.delete_one("quotations", {"_id": quotation_id})
         return success(message="Quotation deleted")
-    previous = status
-    store.update_one("quotations", {"_id": quotation_id}, {"status": "archived", "archived_at": utcnow(), "archived_by": (current_user() or {}).get("_id")})
-    audit("QUOTATION_ARCHIVED", "quotation", quotation_id, {"reason": reason, "previous_state": previous, "new_state": "archived"})
-    return success(message="Quotation archived")
+    return failure("An archived quotation can only be permanently deleted", status=409, error="QUOTATION_ARCHIVED_DELETE_REQUIRED")
 
 
 @bp.post("/<quotation_id>/restore")
@@ -420,7 +441,7 @@ def restore_quotation(quotation_id: str):
         return failure("Quotation not found", status=404)
     if not _accessible(row):
         return failure("Quotation access denied", status=403)
-    if row.get("status") != "archived":
+    if str(row.get("status") or "").strip().lower() != "archived":
         return success(row, "Quotation is not archived")
     restored = store.update_one("quotations", {"_id": quotation_id}, {"status": "Draft", "archived_at": None, "archived_by": None}) or row
     audit("QUOTATION_RESTORED", "quotation", quotation_id, {"previous_state": "archived", "new_state": "Draft"})

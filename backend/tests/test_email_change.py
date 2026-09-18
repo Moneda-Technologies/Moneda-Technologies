@@ -3,6 +3,7 @@ from __future__ import annotations
 from werkzeug.security import generate_password_hash
 from app.repositories.store import utcnow
 from datetime import timedelta
+from auth_helpers import complete_password_otp_login
 
 
 def signed_in(app, client, user_id="email-change-user"):
@@ -16,7 +17,7 @@ def signed_in(app, client, user_id="email-change-user"):
         "role_id": "user", "active": True, "email_verified": True,
         "customer_ids": [], "customer_company_ids": [], "company_ids": [],
     })
-    response = client.post("/api/v1/auth/login", json={"identifier": user_id, "password": "Secure123"})
+    _login, response = complete_password_otp_login(app, client, user_id, "Secure123")
     assert response.status_code == 200
 
 

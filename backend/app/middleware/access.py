@@ -7,7 +7,7 @@ from flask import current_app, g, request, session
 
 from app.api.responses import failure
 from app.devices.service import enforce_device_access
-from app.services.business_logic import customer_ids_for_user
+from app.services.business_logic import accessible_user_ids, customer_ids_for_user
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -121,6 +121,22 @@ def permission_required_any(*permissions: str) -> Callable[[F], F]:
     return decorator
 
 
+def superadmin_required(fn: F) -> F:
+    """Require the canonical Superadmin role for security-sensitive controls."""
+    @wraps(fn)
+    def wrapped(*args: Any, **kwargs: Any):
+        user = current_user()
+        if not user:
+            return failure("Authentication required", status=401)
+        blocked = enforce_device_access(user)
+        if blocked is not None:
+            return blocked
+        if str(user.get("role_id") or "") != "superadmin":
+            return failure("Only a Superadmin can perform this action", status=403, error="superadmin_required")
+        return fn(*args, **kwargs)
+    return wrapped  # type: ignore[return-value]
+
+
 def customer_record(customer_id: str | None) -> dict[str, Any] | None:
     if not customer_id:
         return None
@@ -137,7 +153,12 @@ def customer_record(customer_id: str | None) -> dict[str, Any] | None:
 
 def can_view_all_customers(user: dict[str, Any] | None = None) -> bool:
     user = user or current_user() or {}
-    return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "customers.view_all" in user.get("permissions", [])
+    role_id = str(user.get("role_id") or "")
+    # Manager / sales users are always team-scoped, even if an older role
+    # document still carries the legacy customers.view_all permission.
+    if role_id in {"manager", "manager_sales_admin", "user"}:
+        return False
+    return role_id in {"admin", "superadmin"} or "customers.view_all" in user.get("permissions", [])
 
 
 def customer_access_ids_for_user(user_id: str | None, *, include_created: bool = True) -> list[str]:
@@ -214,7 +235,47 @@ def repair_customer_assignments(store) -> int:
 def can_view_all_quotations(user: dict[str, Any] | None = None) -> bool:
     """Return whether the central permission model grants global history access."""
     user = user or current_user() or {}
-    return bool({"admin", "superadmin"}.intersection({str(user.get("role_id") or "")})) or "quotations.view_all" in user.get("permissions", [])
+    role_id = str(user.get("role_id") or "")
+    # Manager/Sales Admin and User visibility is always scoped by team/customer
+    # ownership.  A stale legacy permission must not widen those roles into a
+    # company-wide quotation history view.
+    if role_id in {"manager", "manager_sales_admin", "user"}:
+        return False
+    return role_id in {"admin", "superadmin"} or "quotations.view_all" in user.get("permissions", [])
+
+
+def quotation_scope_user_ids(user: dict[str, Any] | None = None) -> list[str]:
+    """Return the creator IDs visible in quotation history for this actor."""
+    user = user or current_user() or {}
+    if can_view_all_quotations(user):
+        return []
+    return [str(value) for value in accessible_user_ids(current_app.extensions["store"], user) if value]
+
+
+def quotation_scope_customer_ids(user: dict[str, Any] | None = None) -> list[str]:
+    """Return the customer IDs allowed for quotation history."""
+    user = user or current_user() or {}
+    if can_view_all_quotations(user):
+        return []
+    return [str(value) for value in customer_ids_for_user(current_app.extensions["store"], user) if value]
+
+
+def quotation_is_authorized(quotation: dict[str, Any], user: dict[str, Any] | None = None) -> bool:
+    """Apply the same creator/team and customer scope to list and detail routes."""
+    user = user or current_user() or {}
+    if can_view_all_quotations(user):
+        return True
+    customer_id = str(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id") or "")
+    if not customer_id or customer_id not in set(quotation_scope_customer_ids(user)):
+        return False
+    owner_ids = {
+        str(quotation.get(field) or "")
+        for field in ("created_by_user_id", "user_id", "prepared_by_user_id", "salesperson_id")
+        if quotation.get(field)
+    }
+    # Legacy quotations without a creator snapshot remain visible only when
+    # their customer is in the actor's server-side scope.
+    return not owner_ids or bool(owner_ids.intersection(quotation_scope_user_ids(user)))
 
 
 def permitted_quotation_query(user: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -222,13 +283,27 @@ def permitted_quotation_query(user: dict[str, Any] | None = None) -> dict[str, A
     user = user or current_user() or {}
     if can_view_all_quotations(user):
         return {}
-    user_id = user.get("_id")
-    return {"$or": [
-        {"created_by_user_id": user_id},
-        {"user_id": user_id},
-        {"prepared_by_user_id": user_id},
-        {"salesperson_id": user_id},
-    ]}
+    user_ids = quotation_scope_user_ids(user)
+    customer_ids = quotation_scope_customer_ids(user)
+    creator_clauses = [
+        {field: {"$in": user_ids}}
+        for field in ("created_by_user_id", "user_id", "prepared_by_user_id", "salesperson_id")
+    ]
+    # Keep the existing compatibility behavior for legacy rows with no owner
+    # snapshot, while still requiring an authorized customer relationship.
+    creator_clauses.append({"$and": [
+        {"created_by_user_id": {"$exists": False}},
+        {"user_id": {"$exists": False}},
+        {"prepared_by_user_id": {"$exists": False}},
+        {"salesperson_id": {"$exists": False}},
+    ]})
+    customer_clauses = [
+        {field: {"$in": customer_ids}}
+        for field in ("customer_id", "customer_company_id", "company_id")
+    ]
+    if not customer_ids:
+        return {"_id": "__no_quotation_access__"}
+    return {"$and": [{"$or": creator_clauses}, {"$or": customer_clauses}]}
 
 
 def permitted_customer_query(user: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -5,6 +5,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
+import { customerTypeLabel } from "../config/businessConfig";
 import { emptyState, escapeHtml, formatDate, formatDateInput, formatMoney, skeleton } from "../utils/dom";
 
 function snapshotValue(value: unknown, key: string): string {
@@ -87,14 +88,84 @@ async function confirmPayment(order: Record<string, unknown>, paymentId: string,
 }
 
 function showIncentiveDetails(incentive: Record<string, unknown>): void {
-  const lines = Array.isArray(incentive.incentive_lines) ? incentive.incentive_lines as Record<string, unknown>[] : [];
+  const internalLines = Array.isArray(incentive.incentive_lines) ? incentive.incentive_lines as Record<string, unknown>[] : [];
+  const customerLines = Array.isArray(incentive.customer_incentive_lines) ? incentive.customer_incentive_lines as Record<string, unknown>[] : [];
+  const allLines = [...internalLines, ...customerLines];
+  const customer = (incentive.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+  const creator = (incentive.creator_snapshot as Record<string, unknown> | undefined) ?? {};
+  const manager = (incentive.manager_snapshot as Record<string, unknown> | undefined) ?? {};
+  const displayName = (source: Record<string, unknown>): string => {
+    const snapshot = (source.recipient_snapshot as Record<string, unknown> | undefined) ?? {};
+    return String(source.recipient_name ?? snapshot.name ?? snapshot.email ?? source.customer_name_snapshot ?? source.bearer_name_snapshot ?? source.recipient_user_id ?? source.customer_id ?? "—");
+  };
+  const isCustomer = (line: Record<string, unknown>): boolean => String(line.recipient_type ?? "").toUpperCase() === "CUSTOMER" || String(line.category_id ?? "") === "customer_incentive";
+  const isManager = (line: Record<string, unknown>): boolean => {
+    const role = String(line.recipient_role ?? line.recipient_type ?? "").toLowerCase();
+    return role.includes("manager") || String(line.allocation_type ?? "").toLowerCase().includes("manager");
+  };
+  const roleLabel = (line: Record<string, unknown>): string => {
+    if (isCustomer(line)) return "Customer";
+    if (isManager(line)) return "Manager";
+    const role = String(line.recipient_role ?? line.recipient_type ?? line.allocation_type ?? "").toLowerCase();
+    if (role.includes("user") || role.includes("creator") || role.includes("sales")) return "Sales Person";
+    return String(line.recipient_role ?? line.recipient_type ?? "Recipient");
+  };
+  const lineAmount = (line: Record<string, unknown>): number => Number.isFinite(Number(line.incentive_amount ?? line.amount)) ? Number(line.incentive_amount ?? line.amount ?? 0) : 0;
+  const lineRate = (line: Record<string, unknown>): string => {
+    const rate = Number(line.incentive_rate_snapshot ?? line.rate);
+    return Number.isFinite(rate) ? `${rate.toFixed(1).replace(/\.0$/, "")}%` : "—";
+  };
+  type AllocationGroup = { key: string; label: string; lines: Record<string, unknown>[] };
+  const groupsFromSnapshot: AllocationGroup[] = (Array.isArray(incentive.allocations) ? incentive.allocations : [])
+    .map((allocation, index): AllocationGroup | null => {
+      if (!allocation || typeof allocation !== "object") return null;
+      const source = allocation as Record<string, unknown>;
+      const lines = Array.isArray(source.lines) ? source.lines.filter((line): line is Record<string, unknown> => Boolean(line && typeof line === "object")) : [];
+      if (!lines.length) return null;
+      const merged = { ...lines[0], ...source };
+      return { key: `recipient-${index}`, label: `${roleLabel(merged)} — ${displayName(merged)}`, lines };
+    })
+    .filter((group): group is AllocationGroup => Boolean(group));
+  const fallbackGroups = new Map<string, AllocationGroup>();
+  if (!groupsFromSnapshot.length) {
+    allLines.forEach((line) => {
+      const key = `${String(line.recipient_user_id ?? line.customer_id ?? displayName(line))}:${String(line.allocation_type ?? (isCustomer(line) ? "customer" : "creator"))}`;
+      const existing = fallbackGroups.get(key);
+      if (existing) existing.lines.push(line);
+      else fallbackGroups.set(key, { key: `recipient-${fallbackGroups.size}`, label: `${roleLabel(line)} — ${displayName(line)}`, lines: [line] });
+    });
+  }
+  const groups = groupsFromSnapshot.length ? groupsFromSnapshot : [...fallbackGroups.values()];
+  const tabs = [{ key: "total", label: "Total", lines: allLines }, ...groups];
+  const totalAmount = allLines.reduce((sum, line) => sum + lineAmount(line), 0);
+  const orderNumber = String(incentive.oc_number ?? incentive.order_number ?? incentive.order_id ?? "—");
+  const orderDate = formatDate(String(incentive.order_date ?? incentive.oc_date ?? incentive.created_at ?? ""));
+  const paymentStatus = String(incentive.payment_status ?? "Pending Payment");
+  const renderLines = (lines: Record<string, unknown>[], total = false): string => {
+    if (!lines.length) return `<div class="empty-state compact"><strong>No allocation</strong><span>No incentive allocation was captured for this Order Confirmation.</span></div>`;
+    if (total) return `<div class="incentive-total-breakdown"><div class="incentive-total-breakdown-title">Product Breakdown</div><div class="incentive-total-breakdown-table" role="table" aria-label="Incentive allocation by product"><div class="incentive-total-breakdown-row is-head" role="row"><span>Product</span><span>Category</span><span>Amount</span><span>Rate</span><span>Incentive</span></div>${lines.map((line) => `<div class="incentive-total-breakdown-row" role="row"><strong>${snapshotValue(line, "product_name")}</strong><span>${snapshotValue(line, "category_name")}</span><span>${formatMoney(Number(line.product_amount ?? line.incentive_base_amount_eur ?? line.amount ?? 0), "EUR")}</span><span>${escapeHtml(lineRate(line))}</span><span>${formatMoney(lineAmount(line), "EUR")}</span></div>`).join("")}</div></div>`;
+    return `<div class="incentive-detail-lines">${lines.map((line) => `<div class="incentive-detail-line"><div><strong>${snapshotValue(line, "product_name")}</strong><small>${snapshotValue(line, "category_name")}</small></div><div class="incentive-detail-line-values"><span>Rate ${escapeHtml(lineRate(line))}</span><strong>${formatMoney(lineAmount(line), "EUR")}</strong></div></div>`).join("")}</div>`;
+  };
+  const renderPanel = (tab: { key: string; label: string; lines: Record<string, unknown>[] }): string => {
+    const lines = tab.lines;
+    const panelTotal = lines.reduce((sum, line) => sum + lineAmount(line), 0);
+    const rates = [...new Set(lines.map(lineRate))];
+    if (tab.key === "total") return `<section class="incentive-detail-panel" data-detail-panel="total"><section class="incentive-order-information"><div class="incentive-detail-panel-head"><div><span class="eyebrow">Order Information</span><h3>${escapeHtml(orderNumber)}</h3></div><strong class="incentive-detail-panel-total">${formatMoney(totalAmount, "EUR")}</strong></div><div class="detail-grid"><div><span>OC Number</span><strong>${escapeHtml(orderNumber)}</strong></div><div><span>Sales Person</span><strong>${escapeHtml(String((incentive.salesperson_snapshot as Record<string, unknown> | undefined)?.name ?? creator.name ?? incentive.salesperson_id ?? "—"))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? incentive.customer_id ?? "—"))}</strong></div><div><span>Manager</span><strong>${escapeHtml(String(manager.name ?? incentive.manager_user_id ?? "—"))}</strong></div><div><span>Customer Type</span><strong>${escapeHtml(customerTypeLabel(String(incentive.client_type_snapshot ?? incentive.customer_type_snapshot ?? customer.client_type ?? "")))}</strong></div><div><span>Gross Incentive</span><strong>${formatMoney(Number(incentive.gross_incentive_amount ?? totalAmount), "EUR")}</strong></div><div><span>Status</span><strong>${statusBadge(paymentStatus)}</strong></div><div><span>Already Paid</span><strong>${formatMoney(Number(incentive.paid_amount ?? 0), "EUR")}</strong></div><div><span>Order Date</span><strong>${escapeHtml(orderDate)}</strong></div><div><span>Quote Number</span><strong>${escapeHtml(String(incentive.quotation_number ?? incentive.quote_number ?? "—"))}</strong></div><div><span>Remaining Payable</span><strong>${formatMoney(Number(incentive.remaining_amount ?? incentive.net_payable_incentive ?? totalAmount), "EUR")}</strong></div></div></section><section class="incentive-allocation-summary"><div class="incentive-detail-panel-head"><div><span class="eyebrow">Allocation Summary</span><p>Incentive allocations for this Order Confirmation.</p></div><strong class="incentive-detail-panel-total">${formatMoney(totalAmount, "EUR")}</strong></div>${groups.map((group) => `<div class="incentive-allocation-summary-row"><div><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml([...new Set(group.lines.map(lineRate))].join(" · ") || "Rate unavailable")}</small></div><strong>${formatMoney(group.lines.reduce((sum, line) => sum + lineAmount(line), 0), "EUR")}</strong></div>`).join("") || `<p class="muted">No visible recipient allocations.</p>`}</section>${renderLines(lines, true)}</section>`;
+    return `<section class="incentive-detail-panel" data-detail-panel="${escapeHtml(tab.key)}" hidden><div class="incentive-detail-panel-head"><div><span class="eyebrow">${escapeHtml(tab.label)}</span><h3>${escapeHtml(displayName(lines[0] ?? {}))}</h3></div><strong class="incentive-detail-panel-total">${formatMoney(panelTotal, "EUR")}</strong></div><div class="incentive-detail-summary"><div><span>Recipient</span><strong>${escapeHtml(displayName(lines[0] ?? {}))}</strong></div><div><span>Role</span><strong>${escapeHtml(roleLabel(lines[0] ?? {}))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? incentive.customer_id ?? "—"))}</strong></div><div><span>Order Confirmation</span><strong>${escapeHtml(orderNumber)}</strong></div><div><span>Order amount</span><strong>${formatMoney(Number(incentive.order_amount ?? 0), "EUR")}</strong></div><div><span>Incentive rate</span><strong>${escapeHtml(rates.join(" · ") || "—")}</strong></div><div><span>Payment status</span><strong>${escapeHtml(paymentStatus)}</strong></div><div><span>Incentive status</span><strong>${escapeHtml(String(incentive.status ?? "PENDING PAYMENT"))}</strong></div></div>${renderLines(lines)}</section>`;
+  };
   const content = document.createElement("div");
-  content.innerHTML = `<div class="stack-form"><section class="panel"><div class="detail-grid"><div><span>OC</span><strong>${snapshotValue(incentive, "oc_number")}</strong></div><div><span>Sales Person</span><strong>${snapshotValue(incentive.salesperson_snapshot, "name")}</strong></div><div><span>Status</span><strong>${statusBadge(String(incentive.status ?? "PENDING PAYMENT"))}</strong></div><div><span>Payment confirmed</span><strong>${formatDate(String(incentive.payment_confirmation_date ?? ""))}</strong></div><div><span>Due date</span><strong>${formatDate(String(incentive.incentive_due_date ?? ""))}</strong></div><div><span>Gross incentive</span><strong>${formatMoney(Number(incentive.gross_incentive_amount ?? 0), "EUR")}</strong></div><div><span>Credit Note deductions</span><strong>${formatMoney(Number(incentive.credit_note_deduction ?? 0), "EUR")}</strong></div><div><span>Already paid</span><strong>${formatMoney(Number(incentive.paid_amount ?? 0), "EUR")}</strong></div><div><span>Remaining payable</span><strong>${formatMoney(Number(incentive.remaining_amount ?? incentive.net_payable_incentive ?? 0), "EUR")}</strong></div></div></section>${lines.length ? `<div class="data-table panel"><table><thead><tr><th>Product</th><th>Category</th><th>Amount</th><th>Rate</th><th>Incentive</th></tr></thead><tbody>${lines.map((line) => `<tr><td>${snapshotValue(line, "product_name")}</td><td>${snapshotValue(line, "category_name")}</td><td>${formatMoney(Number(line.amount ?? 0), "EUR")}</td><td>${Number(line.incentive_rate_snapshot ?? 0).toFixed(0)}%</td><td>${formatMoney(Number(line.incentive_amount ?? 0), "EUR")}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`;
-  const state = document.createElement("section");
-  state.className = "panel incentive-status-card";
-  state.innerHTML = `<span class="eyebrow">Incentive status</span><div class="detail-grid"><div><span>Activation date</span><strong>${formatDate(String(incentive.incentive_activation_date ?? ""))}</strong></div><div><span>Due date</span><strong>${formatDate(String(incentive.incentive_due_date ?? ""))}</strong></div><div><span>Credit Note deductions</span><strong>${formatMoney(Number(incentive.credit_note_deduction ?? 0), "EUR")}</strong></div><div><span>Remaining payable</span><strong>${formatMoney(Number(incentive.remaining_amount ?? incentive.net_payable_incentive ?? 0), "EUR")}</strong></div></div>`;
-  content.append(state);
-  openModal("Incentive Details", content, "wide");
+  content.innerHTML = `<div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Historical incentive snapshot</strong><p>Recipients, percentages and amounts are read-only values captured when this Order Confirmation was created.</p></div></div><div class="incentive-detail-tabs" role="tablist" aria-label="Incentive recipients">${tabs.map((tab, index) => `<button class="incentive-detail-tab${index === 0 ? " is-active" : ""}" type="button" role="tab" aria-selected="${index === 0 ? "true" : "false"}" data-detail-tab="${escapeHtml(tab.key)}">${escapeHtml(tab.label)}</button>`).join("")}</div><div class="incentive-detail-panels">${tabs.map(renderPanel).join("")}</div>`;
+  content.insertAdjacentHTML("afterbegin", `<p class="modal-subtitle">View incentive allocations and payment information for this Order Confirmation.</p>`);
+  const modalSubtitle = content.querySelector<HTMLElement>(".modal-subtitle");
+  const tabBar = content.querySelector<HTMLElement>(".incentive-detail-tabs");
+  if (modalSubtitle && tabBar) modalSubtitle.after(tabBar);
+  const dialog = openModal("Incentive Details", content, "wide");
+  dialog.classList.add("incentive-details-modal");
+  content.querySelectorAll<HTMLButtonElement>("[data-detail-tab]").forEach((button) => button.addEventListener("click", () => {
+    const key = button.dataset.detailTab ?? "total";
+    content.querySelectorAll<HTMLButtonElement>("[data-detail-tab]").forEach((tab) => { const active = tab.dataset.detailTab === key; tab.classList.toggle("is-active", active); tab.setAttribute("aria-selected", String(active)); });
+    content.querySelectorAll<HTMLElement>("[data-detail-panel]").forEach((panel) => { panel.hidden = panel.dataset.detailPanel !== key; });
+  }));
   refreshIcons(content);
 }
 
@@ -124,7 +195,22 @@ export async function ordersPage(): Promise<HTMLElement> {
     const data = await orderApi.list(customerCompany?._id);
     const scopeLabel = customerCompany ? "For this customer" : "Across all authorized customers";
     const canConfirm = appStore.state.user?.role_id === "superadmin";
+    const canDelete = appStore.state.user?.role_id === "superadmin" || appStore.state.user?.permissions?.includes("orders.delete");
     body.innerHTML = `<div class="metric-grid compact-metrics"><article class="metric-card"><div class="metric-top"><span>All Order Confirmations</span><i data-lucide="shopping-bag"></i></div><strong>${data.total}</strong><p>${scopeLabel}</p></article><article class="metric-card"><div class="metric-top"><span>Pending payment</span><i data-lucide="clock-3"></i></div><strong>${data.items.filter((item) => !["CONFIRMED", "PAYMENT CONFIRMED"].includes(paymentStatus(item).toUpperCase())).length}</strong><p>Awaiting bank confirmation</p></article><article class="metric-card"><div class="metric-top"><span>Confirmed</span><i data-lucide="circle-check"></i></div><strong>${data.items.filter((item) => paymentStatus(item).toUpperCase() === "CONFIRMED").length}</strong><p>Payment received</p></article></div>${data.items.length ? `<div class="data-table panel"><table><thead><tr><th>OC Number</th><th>Customer</th><th>Quote</th><th>OC Date</th><th>Amount</th><th>OC Status</th><th>Payment</th><th>Incentive</th><th>Actions</th></tr></thead><tbody>${data.items.map((item) => { const payment = paymentStatus(item); const confirmed = payment.toUpperCase() === "CONFIRMED"; const paymentId = String((item.payment_snapshot as Record<string, unknown> | undefined)?._id ?? ""); const orderId = String(item._id ?? ""); const confirmDisabled = !canConfirm || confirmed || !paymentId; return `<tr><td><strong>${escapeHtml(String(item.order_number ?? item._id))}</strong></td><td>${escapeHtml(String((item.customer_snapshot as Record<string, unknown> | undefined)?.company_name ?? (item.customer_snapshot as Record<string, unknown> | undefined)?.name ?? item.customer_id ?? "—"))}</td><td>${escapeHtml(String(item.quotation_number ?? item.quotation_id ?? "—"))}</td><td>${formatDate(String(item.oc_date ?? item.created_at ?? ""))}</td><td class="money">${formatMoney(Number(item.order_amount ?? (item.totals as Record<string, unknown> | undefined)?.grand_total ?? 0), "EUR")}</td><td>${statusBadge(String(item.status ?? "Pending"))}</td><td><a href="/payments?order_id=${encodeURIComponent(orderId)}" data-route="/payments?order_id=${encodeURIComponent(orderId)}">${statusBadge(payment)}</a></td><td>${statusBadge(String(item.incentive_status ?? "PENDING PAYMENT"))}</td><td><div class="table-actions"><button class="icon-button" type="button" data-order-action="bank" data-id="${escapeHtml(String(item._id))}" title="Update Banking Details" aria-label="Update Banking Details"><i data-lucide="landmark"></i></button><button class="icon-button" type="button" data-order-action="confirm" data-id="${escapeHtml(String(item._id))}" data-payment-id="${escapeHtml(paymentId)}" title="${confirmDisabled ? "Payment confirmation unavailable" : "Confirm Payment Received"}" aria-label="Confirm Payment Received" ${confirmDisabled ? "disabled" : ""}><i data-lucide="circle-check"></i></button><button class="icon-button" type="button" data-order-action="incentive" data-id="${escapeHtml(String(item._id))}" title="View Incentive Details" aria-label="View Incentive Details"><i data-lucide="percent"></i></button><button class="icon-button" type="button" data-order-action="view" data-id="${escapeHtml(String(item._id))}" title="View Order Confirmation" aria-label="View Order Confirmation"><i data-lucide="eye"></i></button></div></td></tr>`; }).join("")}</tbody></table></div>` : emptyState("shopping-bag", "No Order Confirmations yet", "Accepted quotations can be converted into Order Confirmations.")}`;
+    if (canDelete) body.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row, index) => {
+      const order = data.items[index];
+      const actions = row.querySelector<HTMLElement>(".table-actions");
+      if (!order || !actions || actions.querySelector('[data-order-action="delete"]')) return;
+      const button = document.createElement("button");
+      button.className = "icon-button icon-danger";
+      button.type = "button";
+      button.dataset.orderAction = "delete";
+      button.dataset.id = String(order._id ?? "");
+      button.title = "Delete Order Confirmation";
+      button.setAttribute("aria-label", "Delete Order Confirmation");
+      button.innerHTML = '<i data-lucide="trash-2"></i>';
+      actions.append(button);
+    });
     if (!canConfirm) body.querySelectorAll<HTMLButtonElement>('[data-order-action="confirm"]').forEach((button) => button.remove());
     body.querySelectorAll<HTMLButtonElement>('[data-order-action="bank"]').forEach((button) => { button.title = "Record / View Payment Details"; button.setAttribute("aria-label", "Record / View Payment Details"); });
     body.querySelectorAll<HTMLButtonElement>('[data-order-action="incentive"]').forEach((button) => {
@@ -139,6 +225,7 @@ export async function ordersPage(): Promise<HTMLElement> {
         else if (action === "incentive") { if (!order.incentive_id) { toast("No incentive snapshot is linked to this Order Confirmation", "info"); return; } const incentive = await financeApi.incentive(String(order.incentive_id)); showIncentiveDetails(incentive); }
         else if (action === "view") await showOrderDetails(order);
         else if (action === "confirm") { const paymentId = button.dataset.paymentId; if (!paymentId) return; await confirmPayment(order, paymentId, order.payment_snapshot as Record<string, unknown> | undefined); }
+        else if (action === "delete") { if (!window.confirm("Delete this Order Confirmation? Its payment and incentive history will be retained for audit.")) return; const reason = window.prompt("Deletion reason (optional):", "Deleted from Order Confirmations")?.trim() || "Deleted from Order Confirmations"; button.disabled = true; await orderApi.remove(String(order._id), reason); toast("Order Confirmation deleted"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/orders" })); }
       } catch (error) { toast(error instanceof Error ? error.message : "Order action failed", "error"); }
     }));
   }

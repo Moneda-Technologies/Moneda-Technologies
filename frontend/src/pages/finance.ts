@@ -4,6 +4,7 @@ import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
+import { customerTypeLabel } from "../config/businessConfig";
 import { renderIncentiveConfigurator } from "./incentive-configurator";
 import { emptyState, escapeHtml, formatDate, formatDateInput, formatMoney, skeleton } from "../utils/dom";
 
@@ -94,6 +95,8 @@ export async function legacyPaymentsPage(): Promise<HTMLElement> {
     const result = await financeApi.payments(query.toString());
     const canConfirm = appStore.state.user?.role_id === "superadmin";
     body.innerHTML = `<form class="panel stack-form" id="payment-entry"><span class="eyebrow">Record payment</span><div class="form-grid"><label>Order Confirmation ID<input name="order_id" required></label><label>Amount (EUR)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Payment date<input name="payment_date" type="date" required></label><label>Bank name<input name="bank_name"></label><label>Bank account<input name="bank_account"></label><label>UTR / transaction reference<input name="utr"></label><label>Payment mode<input name="payment_mode" placeholder="Bank transfer, cheque..."></label><label>Payment reference<input name="reference_number"></label><label class="span-2">Notes<textarea name="notes" rows="2"></textarea></label><label class="span-2">Payment proof<input name="attachment" type="file"></label></div><button class="button button-primary" type="submit">Record &amp; submit for confirmation</button></form>${result.items.length ? `<div class="data-table panel"><table><thead><tr><th>Order Confirmation</th><th>Customer</th><th>Amount</th><th>Payment date</th><th>Status</th>${canConfirm ? "<th>Actions</th>" : ""}</tr></thead><tbody>${result.items.map((item) => { const status = String(item.status ?? ""); const action = canConfirm && status !== "CONFIRMED" ? `<button class="button button-quiet confirm-payment" data-id="${escapeHtml(String(item._id))}">Confirm receipt</button>` : "—"; return `<tr><td>${escapeHtml(String(item.order_id ?? item.oc_id ?? "—"))}</td><td>${escapeHtml(String((item.customer_snapshot as Record<string, unknown> | undefined)?.name ?? item.customer_id ?? "—"))}</td><td class="money">${formatMoney(Number(item.amount ?? 0), "EUR")}</td><td>${formatDate(String(item.payment_date ?? item.created_at ?? ""))}</td><td>${statusBadge(status)}</td>${canConfirm ? `<td>${action}</td>` : ""}</tr>`; }).join("")}</tbody></table></div>` : emptyState("landmark", "No payments recorded", "Payments entered by the team will appear here.")}`;
+    const legacyPaymentFields: Record<string, string> = { order_id: "legacy-entry-order-id", amount: "legacy-entry-amount", payment_date: "legacy-entry-payment-date", bank_name: "legacy-entry-bank-name", bank_account: "legacy-entry-bank-account", utr: "legacy-entry-utr", payment_mode: "legacy-entry-payment-mode", reference_number: "legacy-entry-reference", notes: "legacy-entry-notes", attachment: "legacy-entry-attachment" };
+    Object.entries(legacyPaymentFields).forEach(([name, id]) => body.querySelector<HTMLElement>(`[name="${name}"]`)?.setAttribute("id", id));
     body.querySelector<HTMLFormElement>("#payment-entry")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); try { const file = data.get("attachment"); const attachment = file instanceof File ? await readPaymentProof(file) : undefined; const payment = await financeApi.createPayment({ order_id: data.get("order_id"), amount: Number(data.get("amount")), payment_date: data.get("payment_date"), bank_name: data.get("bank_name"), bank_account: data.get("bank_account"), utr: data.get("utr"), payment_mode: data.get("payment_mode"), reference_number: data.get("reference_number"), notes: data.get("notes"), attachment }); await financeApi.submitPayment(String(payment._id)); toast("Payment submitted for Superadmin confirmation", "info"); } catch (error) { toast(error instanceof Error ? error.message : "Payment could not be recorded", "error"); } });
     body.querySelectorAll<HTMLButtonElement>(".confirm-payment").forEach((button) => button.addEventListener("click", async () => {
       const payment = result.items.find((item) => String(item._id) === String(button.dataset.id));
@@ -164,17 +167,17 @@ async function openBankingPayment(customers: BankingRecord[], orders: BankingRec
   const existingOverview = existing ? "<section class=\"payment-workflow-section payment-overview-section\"><div class=\"detail-grid\"><div><span>Payment ID</span><strong>" + escapeHtml(bankingPaymentId(existing)) + "</strong></div><div><span>Status</span><strong>" + statusBadge(bankingStatus(existing)) + "</strong></div></div></section>" : "";
   content.innerHTML = "<form class=\"payment-workflow stack-form\" data-banking-form novalidate>" +
     existingOverview + "<section class=\"payment-workflow-section\"><div class=\"section-title\"><span class=\"step-number\">01</span><div><span class=\"eyebrow\">Customer &amp; Invoice</span><h2>Select the transaction being paid</h2></div></div><div class=\"form-grid\">" +
-    "<label>Customer *<input name=\"customer_display\" list=\"banking-customers\" placeholder=\"Select customer\" autocomplete=\"off\"><datalist id=\"banking-customers\">" + customerOptions + "</datalist><input name=\"customer_id\" type=\"hidden\"><small class=\"field-error\" data-error=\"customer_id\"></small></label>" +
-    "<label>Invoice / Order Confirmation *<input name=\"order_display\" list=\"banking-orders\" placeholder=\"Select customer first\" autocomplete=\"off\" disabled><datalist id=\"banking-orders\"></datalist><input name=\"order_id\" type=\"hidden\"><small class=\"field-error\" data-error=\"order_id\"></small></label></div></section>" +
+    "<label>Customer *<input id=\"new-payment-customer\" name=\"customer_display\" list=\"banking-customers\" placeholder=\"Select customer\" autocomplete=\"off\"><datalist id=\"banking-customers\">" + customerOptions + "</datalist><input id=\"payment-customer-id\" name=\"customer_id\" type=\"hidden\"><small class=\"field-error\" data-error=\"customer_id\"></small></label>" +
+    "<label>Invoice / Order Confirmation *<input id=\"payment-order\" name=\"order_display\" list=\"banking-orders\" placeholder=\"Select customer first\" autocomplete=\"off\" disabled><datalist id=\"banking-orders\"></datalist><input id=\"payment-order-id\" name=\"order_id\" type=\"hidden\"><small class=\"field-error\" data-error=\"order_id\"></small></label></div></section>" +
     "<section class=\"payment-workflow-section\" data-details hidden><div class=\"section-title\"><span class=\"step-number\">02</span><div><span class=\"eyebrow\">Invoice Details</span><h2>Read-only transaction information</h2></div></div><div class=\"detail-grid readonly-payment-details\">" +
     ["customer", "invoice", "oc", "invoice_date", "due_date", "payment_terms", "salesperson", "currency", "invoice_amount", "paid", "outstanding"].map((key) => "<div><span>" + key.replaceAll("_", " ") + "</span><strong data-detail=\"" + key + "\">—</strong></div>").join("") +
     "</div></section>" +
     "<section class=\"payment-workflow-section\"><div class=\"section-title\"><span class=\"step-number\">03</span><div><span class=\"eyebrow\">Payment Details</span><h2>Enter payment information</h2></div></div><div class=\"form-grid\">" +
-    "<label>Payment amount *<input name=\"amount\" type=\"number\" min=\"0.01\" step=\"0.01\" required><small class=\"field-error\" data-error=\"amount\"></small></label>" +
-    "<label>Payment date *<input name=\"payment_date\" type=\"date\" required><small class=\"field-error\" data-error=\"payment_date\"></small></label>" +
-    "<label>Payment mode *<select name=\"payment_mode\" required><option value=\"\">Select payment mode</option>" + ["Bank Transfer", "NEFT", "RTGS", "IMPS", "SWIFT", "Cheque", "Other"].map((mode) => "<option>" + mode + "</option>").join("") + "</select><small class=\"field-error\" data-error=\"payment_mode\"></small></label>" +
-    "<label>Bank name *<input name=\"bank_name\" required><small class=\"field-error\" data-error=\"bank_name\"></small></label><label>Bank account *<input name=\"bank_account\" required><small class=\"field-error\" data-error=\"bank_account\"></small></label><label>UTR / transaction reference *<input name=\"utr\" required><small class=\"field-error\" data-error=\"utr\"></small></label><label>Payment reference *<input name=\"reference_number\" required><small class=\"field-error\" data-error=\"reference_number\"></small></label></div></section>" +
-    "<section class=\"payment-workflow-section\"><div class=\"section-title\"><span class=\"step-number\">04</span><div><span class=\"eyebrow\">Supporting Documents</span><h2>Proof and notes</h2></div></div><div class=\"form-grid\"><label>Payment proof *<span class=\"payment-proof-dropzone\" data-proof-zone tabindex=\"0\"><i data-lucide=\"upload-cloud\"></i><strong>Upload payment proof</strong><small>PDF, JPG, PNG or WEBP up to 5 MB</small><button class=\"button button-quiet\" type=\"button\" data-choose-proof>Choose file</button><input name=\"attachment\" type=\"file\" accept=\"application/pdf,image/jpeg,image/png,image/webp\" hidden></span><small data-file class=\"form-hint\">Required</small><button class=\"button button-quiet\" type=\"button\" data-remove-file hidden>Remove proof</button><small class=\"field-error\" data-error=\"attachment\"></small></label><label class=\"span-2\">Notes<textarea name=\"notes\" rows=\"3\" placeholder=\"Optional notes\"></textarea></label></div></section>" +
+    "<label>Payment amount *<input id=\"payment-amount\" name=\"amount\" type=\"number\" min=\"0.01\" step=\"0.01\" required><small class=\"field-error\" data-error=\"amount\"></small></label>" +
+    "<label>Payment date *<input id=\"payment-date\" name=\"payment_date\" type=\"date\" required><small class=\"field-error\" data-error=\"payment_date\"></small></label>" +
+    "<label>Payment mode *<select id=\"payment-mode\" name=\"payment_mode\" required><option value=\"\">Select payment mode</option>" + ["Bank Transfer", "NEFT", "RTGS", "IMPS", "SWIFT", "Cheque", "Other"].map((mode) => "<option>" + mode + "</option>").join("") + "</select><small class=\"field-error\" data-error=\"payment_mode\"></small></label>" +
+    "<label>Bank name *<input id=\"payment-bank-name\" name=\"bank_name\" required><small class=\"field-error\" data-error=\"bank_name\"></small></label><label>Bank account *<input id=\"payment-bank-account\" name=\"bank_account\" required><small class=\"field-error\" data-error=\"bank_account\"></small></label><label>UTR / transaction reference *<input id=\"payment-utr\" name=\"utr\" required><small class=\"field-error\" data-error=\"utr\"></small></label><label>Payment reference *<input id=\"payment-reference\" name=\"reference_number\" required><small class=\"field-error\" data-error=\"reference_number\"></small></label></div></section>" +
+    "<section class=\"payment-workflow-section\"><div class=\"section-title\"><span class=\"step-number\">04</span><div><span class=\"eyebrow\">Supporting Documents</span><h2>Proof and notes</h2></div></div><div class=\"form-grid\"><label>Payment proof *<span class=\"payment-proof-dropzone\" data-proof-zone tabindex=\"0\"><i data-lucide=\"upload-cloud\"></i><strong>Upload payment proof</strong><small>PDF, JPG, PNG or WEBP up to 5 MB</small><button class=\"button button-quiet\" type=\"button\" data-choose-proof>Choose file</button><input id=\"payment-attachment\" name=\"attachment\" type=\"file\" accept=\"application/pdf,image/jpeg,image/png,image/webp\" hidden></span><small data-file class=\"form-hint\">Required</small><button class=\"button button-quiet\" type=\"button\" data-remove-file hidden>Remove proof</button><small class=\"field-error\" data-error=\"attachment\"></small></label><label class=\"span-2\">Notes<textarea id=\"payment-notes\" name=\"notes\" rows=\"3\" placeholder=\"Optional notes\"></textarea></label></div></section>" +
     "<section class=\"payment-workflow-section payment-summary-section\"><div class=\"section-title\"><span class=\"step-number\">05</span><div><span class=\"eyebrow\">Payment Summary</span><h2>Balance after this payment</h2></div></div><div class=\"detail-grid\"><div><span>Invoice amount</span><strong data-summary=\"invoice\">€0.00</strong></div><div><span>Previously paid</span><strong data-summary=\"previous\">€0.00</strong></div><div><span>This payment</span><strong data-summary=\"current\">€0.00</strong></div><div><span>Remaining balance</span><strong data-summary=\"balance\">€0.00</strong></div><div><span>Status</span><strong data-summary=\"status\">Select an invoice</strong></div><div><span>Customer credit</span><strong data-summary=\"credit\">€0.00</strong></div></div></section>" +
     "<small class=\"field-error\" data-form-error></small><div class=\"modal-actions\"><button class=\"button button-quiet\" type=\"button\" data-cancel>Cancel</button><button class=\"button button-primary\" type=\"submit\" data-submit>" + (existing ? "Update Payment" : "Record Payment") + "</button></div></form>";
   const dialog = openModal(existing ? (readOnly ? "View Payment" : "Edit Payment") : "New Payment", content, "wide");
@@ -352,7 +355,7 @@ export async function legacyOperationalPaymentsPage(): Promise<HTMLElement> {
     const customerFilters = Array.from(new Map<string, { id: string; name: string }>(items.map((item): [string, { id: string; name: string }] => { const snapshot = item.customer_snapshot as BankingRecord | undefined; const id = String(item.customer_id || ""); return [id, { id, name: bankingName(snapshot) || id }]; }).filter(([id]) => Boolean(id))).values());
     const statusFilters = [...new Set(items.map((item) => String(item.workflow_status || item.status || "").trim()).filter(Boolean))];
     const modeFilters = [...new Set(items.map((item) => String(item.payment_mode || "").trim()).filter(Boolean))];
-    body.innerHTML = "<div class=\"metric-grid compact-metrics banking-summary\">" + cards.map((card) => "<article class=\"metric-card\"><div class=\"metric-top\"><span>" + card[0] + "</span><i data-lucide=\"" + card[2] + "\"></i></div><strong>" + card[1] + "</strong><p>" + card[3] + "</p></article>").join("") + "</div><section class=\"panel banking-filters\"><div class=\"form-grid\"><label class=\"span-2\">Search payments<input data-payment-filter=\"search\" placeholder=\"Payment ID, customer, invoice, UTR or reference\"></label><label>Customer<select data-payment-filter=\"customer\"><option value=\"\">All customers</option>" + customerFilters.map((customer) => "<option value=\"" + escapeHtml(customer.id) + "\">" + escapeHtml(customer.name) + "</option>").join("") + "</select></label><label>Status<select data-payment-filter=\"status\"><option value=\"\">All statuses</option>" + statusFilters.map((status) => "<option value=\"" + escapeHtml(status) + "\">" + escapeHtml(status) + "</option>").join("") + "</select></label><label>From date<input type=\"date\" data-payment-filter=\"from\"></label><label>To date<input type=\"date\" data-payment-filter=\"to\"></label><label>Payment mode<select data-payment-filter=\"mode\"><option value=\"\">All modes</option>" + modeFilters.map((mode) => "<option value=\"" + escapeHtml(mode) + "\">" + escapeHtml(mode) + "</option>").join("") + "</select></label></div></section><div data-payment-table></div>";
+    body.innerHTML = "<div class=\"metric-grid compact-metrics banking-summary\">" + cards.map((card) => "<article class=\"metric-card\"><div class=\"metric-top\"><span>" + card[0] + "</span><i data-lucide=\"" + card[2] + "\"></i></div><strong>" + card[1] + "</strong><p>" + card[3] + "</p></article>").join("") + "</div><section class=\"panel banking-filters\"><div class=\"form-grid\"><label class=\"span-2\">Search payments<input id=\"legacy-payment-search\" name=\"payment_search\" data-payment-filter=\"search\" placeholder=\"Payment ID, customer, invoice, UTR or reference\"></label><label>Customer<select id=\"legacy-payment-customer\" name=\"customer_id\" data-payment-filter=\"customer\"><option value=\"\">All customers</option>" + customerFilters.map((customer) => "<option value=\"" + escapeHtml(customer.id) + "\">" + escapeHtml(customer.name) + "</option>").join("") + "</select></label><label>Status<select id=\"legacy-payment-status\" name=\"status\" data-payment-filter=\"status\"><option value=\"\">All statuses</option>" + statusFilters.map((status) => "<option value=\"" + escapeHtml(status) + "\">" + escapeHtml(status) + "</option>").join("") + "</select></label><label>From date<input id=\"legacy-payment-from-date\" name=\"from_date\" type=\"date\" data-payment-filter=\"from\"></label><label>To date<input id=\"legacy-payment-to-date\" name=\"to_date\" type=\"date\" data-payment-filter=\"to\"></label><label>Payment mode<select id=\"legacy-payment-mode\" name=\"payment_mode\" data-payment-filter=\"mode\"><option value=\"\">All modes</option>" + modeFilters.map((mode) => "<option value=\"" + escapeHtml(mode) + "\">" + escapeHtml(mode) + "</option>").join("") + "</select></label></div></section><div data-payment-table></div>";
     const tableHost = body.querySelector<HTMLElement>("[data-payment-table]")!;
     const contextPromise = bankingContexts();
     const bindRowActions = () => { tableHost.querySelectorAll<HTMLButtonElement>("[data-payment-view], [data-payment-edit]").forEach((button) => button.addEventListener("click", async () => { const id = button.dataset.paymentView || button.dataset.paymentEdit; const record = items.find((item) => String(item._id) === String(id)); if (!record) return; try { const context = await contextPromise; await openBankingPayment(context.customers, context.orders, record, Boolean(button.dataset.paymentView)); } catch (error) { toast(error instanceof Error ? error.message : "Payment could not be opened", "error"); } })); };
@@ -372,7 +375,7 @@ function isAwaitingBankReview(payment: BankingRecord): boolean {
 
 async function rejectBankingPayment(payment: BankingRecord): Promise<void> {
   const content = document.createElement("div");
-  content.innerHTML = `<form class="stack-form" data-reject-payment><p>Reject ${escapeHtml(bankingPaymentId(payment))}. Rejected payments do not change the confirmed balance or customer credit.</p><label>Reason *<textarea name="reason" rows="4" required></textarea></label><small class="field-error" data-reject-error></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-danger" type="submit">Reject Payment</button></div></form>`;
+  content.innerHTML = `<form class="stack-form" data-reject-payment><p>Reject ${escapeHtml(bankingPaymentId(payment))}. Rejected payments do not change the confirmed balance or customer credit.</p><label>Reason *<textarea id="payment-reject-reason" name="reason" rows="4" required></textarea></label><small class="field-error" data-reject-error></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-danger" type="submit">Reject Payment</button></div></form>`;
   const dialog = openModal("Reject Payment", content, "wide");
   content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
   content.querySelector<HTMLFormElement>("[data-reject-payment]")?.addEventListener("submit", async (event) => {
@@ -392,6 +395,29 @@ async function rejectBankingPayment(payment: BankingRecord): Promise<void> {
       button.disabled = false;
     }
   });
+}
+
+async function voidBankingPayment(payment: BankingRecord): Promise<void> {
+  const reason = window.prompt(`Why are you voiding ${bankingPaymentId(payment)}?`);
+  if (!reason?.trim()) return;
+  try {
+    await financeApi.voidPayment(String(payment._id), reason.trim());
+    toast("Payment voided; the audit record was retained", "info");
+    window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/payments" }));
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "Payment could not be voided", "error");
+  }
+}
+
+async function deleteVoidedBankingPayment(payment: BankingRecord): Promise<void> {
+  if (!window.confirm(`Delete ${bankingPaymentId(payment)} after it has been voided? Its audit history will be retained.`)) return;
+  try {
+    await financeApi.deletePayment(String(payment._id));
+    toast("Voided payment deleted from the operational list", "info");
+    window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/payments" }));
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "Payment could not be deleted", "error");
+  }
 }
 
 export async function paymentsPage(): Promise<HTMLElement> {
@@ -438,7 +464,7 @@ export async function paymentsPage(): Promise<HTMLElement> {
     const invoiceStatuses = [...new Set(items.map(bankingInvoiceStatus).filter(Boolean))];
     const modeFilters = [...new Set(items.map((item) => String(item.payment_mode || "").trim()).filter(Boolean))];
     body.innerHTML = `<div class="metric-grid compact-metrics banking-summary">${cards.map((card) => `<article class="metric-card"><div class="metric-top"><span>${card[0]}</span><i data-lucide="${card[2]}"></i></div><strong>${card[1]}</strong><p>${card[3]}</p></article>`).join("")}</div>
-      <section class="panel banking-filters"><div class="form-grid"><label class="span-2">Search payments<input data-payment-filter="search" placeholder="Payment ID, customer, invoice, UTR or reference"></label><label>Customer<select data-payment-filter="customer"><option value="">All customers</option>${customerFilters.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`).join("")}</select></label><label>Status<select data-payment-filter="status"><option value="">All statuses</option>${[...workflowStatuses, ...invoiceStatuses.filter((value) => !workflowStatuses.includes(value))].map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status.replaceAll("_", " "))}</option>`).join("")}</select></label><label>From date<input type="date" data-payment-filter="from"></label><label>To date<input type="date" data-payment-filter="to"></label><label>Payment mode<select data-payment-filter="mode"><option value="">All modes</option>${modeFilters.map((mode) => `<option value="${escapeHtml(mode)}">${escapeHtml(mode)}</option>`).join("")}</select></label></div></section><div data-payment-table></div>`;
+      <section class="panel banking-filters" aria-label="Payment filters"><div class="banking-filter-row banking-filter-row-primary"><label>Search payments<input id="payment-search" name="payment_search" data-payment-filter="search" placeholder="Payment ID, customer, invoice, UTR or reference"></label><label>Customer<select id="payment-customer" name="customer_id" data-payment-filter="customer"><option value="">All customers</option>${customerFilters.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`).join("")}</select></label></div><div class="banking-filter-row banking-filter-row-secondary"><label>Status<select id="payment-status" name="status" data-payment-filter="status"><option value="">All statuses</option>${[...workflowStatuses, ...invoiceStatuses.filter((value) => !workflowStatuses.includes(value))].map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status.replaceAll("_", " "))}</option>`).join("")}</select></label><label>From date<input id="payment-from-date" name="from_date" type="date" data-payment-filter="from"></label><label>To date<input id="payment-to-date" name="to_date" type="date" data-payment-filter="to"></label><label>Payment mode<select id="payment-mode-filter" name="payment_mode" data-payment-filter="mode"><option value="">All modes</option>${modeFilters.map((mode) => `<option value="${escapeHtml(mode)}">${escapeHtml(mode)}</option>`).join("")}</select></label></div><div class="banking-filter-actions"><button class="button button-secondary" type="button" data-payment-reset>Reset</button><button class="button button-primary" type="button" data-payment-apply>Apply Filters</button></div></section><div data-payment-table></div>`;
     const tableHost = body.querySelector<HTMLElement>("[data-payment-table]")!;
     const render = () => {
       const value = (name: string) => body.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-payment-filter="${name}"]`)?.value.trim() || "";
@@ -465,15 +491,22 @@ export async function paymentsPage(): Promise<HTMLElement> {
         const workflowStatus = bankingStatus(item);
         const invoiceStatus = bankingInvoiceStatus(item);
         const editable = canCreatePayment && !["CONFIRMED"].includes(workflowStatus.toUpperCase());
+        const normalizedStatus = workflowStatus.toUpperCase();
+        const voidAction = canCreatePayment && !["VOIDED", "DELETED"].includes(normalizedStatus)
+          ? `<button class="button button-secondary" type="button" data-payment-void="${escapeHtml(String(item._id))}">Void</button>`
+          : "";
+        const deleteAction = canCreatePayment && normalizedStatus === "VOIDED"
+          ? `<button class="button button-danger" type="button" data-payment-delete="${escapeHtml(String(item._id))}">Delete</button>`
+          : "";
         const reviewActions = canReviewPayment && isAwaitingBankReview(item)
           ? `<button class="button button-secondary" type="button" data-payment-confirm="${escapeHtml(String(item._id))}">Confirm</button><button class="button button-danger" type="button" data-payment-reject="${escapeHtml(String(item._id))}">Reject</button>`
           : "";
         const status = `${statusBadge(workflowStatus)}${invoiceStatus !== workflowStatus ? `<small class="payment-invoice-status">Invoice: ${escapeHtml(invoiceStatus.replaceAll("_", " "))}</small>` : ""}`;
-        return `<tr><td><strong>${escapeHtml(bankingPaymentId(item, index))}</strong></td><td>${escapeHtml(bankingName(item.customer_snapshot as BankingRecord | undefined))}</td><td>${escapeHtml(bankingOrderName(order) || String(item.order_number || item.order_id || "\u2014"))}</td><td>${formatDate(item.payment_date || item.created_at)}</td><td class="money">${formatMoney(Number(item.invoice_amount || bankingAmount(order)), "EUR")}</td><td class="money">${formatMoney(Number(item.amount || 0), "EUR")}</td><td class="money">${formatMoney(Number(item.remaining_balance ?? item.balance ?? bankingAmount(order)), "EUR")}</td><td><div class="payment-status-stack">${status}</div></td><td>${escapeHtml(String(item.payment_mode || "\u2014"))}</td><td>${escapeHtml(String(item.utr || item.reference_number || "\u2014"))}</td><td><div class="table-actions"><button class="button button-quiet" type="button" data-payment-view="${escapeHtml(String(item._id))}">View</button>${editable ? `<button class="button button-secondary" type="button" data-payment-edit="${escapeHtml(String(item._id))}">Edit</button>` : ""}${reviewActions}</div></td></tr>`;
+        return `<tr><td><strong>${escapeHtml(bankingPaymentId(item, index))}</strong></td><td>${escapeHtml(bankingName(item.customer_snapshot as BankingRecord | undefined))}</td><td>${escapeHtml(bankingOrderName(order) || String(item.order_number || item.order_id || "\u2014"))}</td><td>${formatDate(item.payment_date || item.created_at)}</td><td class="money">${formatMoney(Number(item.invoice_amount || bankingAmount(order)), "EUR")}</td><td class="money">${formatMoney(Number(item.amount || 0), "EUR")}</td><td class="money">${formatMoney(Number(item.remaining_balance ?? item.balance ?? bankingAmount(order)), "EUR")}</td><td><div class="payment-status-stack">${status}</div></td><td>${escapeHtml(String(item.payment_mode || "\u2014"))}</td><td>${escapeHtml(String(item.utr || item.reference_number || "\u2014"))}</td><td><div class="table-actions"><button class="button button-quiet" type="button" data-payment-view="${escapeHtml(String(item._id))}">View</button>${editable ? `<button class="button button-secondary" type="button" data-payment-edit="${escapeHtml(String(item._id))}">Edit</button>` : ""}${reviewActions}${voidAction}${deleteAction}</div></td></tr>`;
       }).join("");
       tableHost.innerHTML = visible.length
         ? `<div class="data-table panel banking-table"><table><thead><tr><th>Payment ID</th><th>Customer</th><th>Invoice / OC</th><th>Payment date</th><th>Invoice amount</th><th>Payment amount</th><th>Balance</th><th>Status</th><th>Payment mode</th><th>UTR / reference</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-        : emptyState("landmark", "No matching payments", "Adjust the filters or record a new payment.");
+        : emptyState("landmark", items.length ? "No matching payments" : "No payments found", items.length ? "Adjust the filters or record a new payment." : "Payment records will appear here after a payment is recorded.");
       tableHost.querySelectorAll<HTMLButtonElement>("[data-payment-view], [data-payment-edit]").forEach((button) => button.addEventListener("click", () => {
         const id = button.dataset.paymentView || button.dataset.paymentEdit;
         const record = items.find((item) => String(item._id) === String(id));
@@ -494,10 +527,24 @@ export async function paymentsPage(): Promise<HTMLElement> {
         const record = items.find((item) => String(item._id) === String(button.dataset.paymentReject));
         if (record) void rejectBankingPayment(record);
       }));
+      tableHost.querySelectorAll<HTMLButtonElement>("[data-payment-void]").forEach((button) => button.addEventListener("click", () => {
+        const record = items.find((item) => String(item._id) === String(button.dataset.paymentVoid));
+        if (record) void voidBankingPayment(record);
+      }));
+      tableHost.querySelectorAll<HTMLButtonElement>("[data-payment-delete]").forEach((button) => button.addEventListener("click", () => {
+        const record = items.find((item) => String(item._id) === String(button.dataset.paymentDelete));
+        if (record) void deleteVoidedBankingPayment(record);
+      }));
       refreshIcons(tableHost);
     };
-    body.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-payment-filter]").forEach((control) => control.addEventListener("input", render));
-    body.querySelectorAll<HTMLSelectElement>("[data-payment-filter]").forEach((control) => control.addEventListener("change", render));
+    body.querySelector<HTMLButtonElement>("[data-payment-apply]")?.addEventListener("click", render);
+    body.querySelector<HTMLButtonElement>("[data-payment-reset]")?.addEventListener("click", () => {
+      body.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-payment-filter]").forEach((control) => { control.value = ""; });
+      render();
+    });
+    body.querySelector<HTMLInputElement>('[data-payment-filter="search"]')?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); render(); }
+    });
     render();
     page.querySelector<HTMLButtonElement>("[data-new-payment]")?.addEventListener("click", () => void openBankingPayment(contexts.customers, contexts.orders));
     const requestedOrderId = String(routeQuery.get("order_id") || "");
@@ -513,8 +560,14 @@ export async function paymentsPage(): Promise<HTMLElement> {
 
 export async function incentivesPage(): Promise<HTMLElement> {
   const routePath = window.location.pathname.replace(/\/$/, "");
-  const routeView = new URLSearchParams(window.location.search).get("view") || (routePath.endsWith("/rules") ? "rules" : routePath.endsWith("/payouts") ? "payouts" : "overview");
-  const page = pageScaffold("Incentives", routeView === "rules" ? "Incentive Rules" : routeView === "payouts" ? "Incentive Payouts" : "Incentive Overview", routeView === "rules" ? "Configure incentive rates for users and managers based on customer type and product type." : "Track sales incentives generated from orders and activated after payment receipt.");
+  const routeView = new URLSearchParams(window.location.search).get("view") || (routePath.endsWith("/rules") ? "rules" : routePath.endsWith("/payouts") ? "payouts" : routePath.endsWith("/user") ? "user" : "overview");
+  const pageTitle = routeView === "rules" ? "Incentive Rules" : routeView === "payouts" ? "Incentive Payouts" : routeView === "user" ? "User Incentive" : "Incentive Overview";
+  const pageDescription = routeView === "rules"
+    ? "Configure incentive rates for users and managers based on customer type and product type."
+    : routeView === "user"
+      ? "View immutable user and manager incentive allocations captured from Order Confirmations."
+      : "Track sales incentives generated from orders and activated after payment receipt.";
+  const page = pageScaffold("Incentives", pageTitle, pageDescription);
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(4);
   const requestedView = routeView;
   if (requestedView === "rules" && appStore.can("incentives.manage")) {
@@ -528,6 +581,7 @@ export async function incentivesPage(): Promise<HTMLElement> {
   }
   const canViewUsers = appStore.state.user?.permissions.includes("users.view") || appStore.state.user?.role_id === "superadmin";
   const canConfirmPayments = appStore.can("payments.confirm") || appStore.state.user?.role_id === "superadmin";
+  const canDeleteIncentives = appStore.can("incentives.delete") || appStore.state.user?.role_id === "superadmin";
   let customers: Record<string, unknown>[] = [];
   let users: Record<string, unknown>[] = [];
   const renderSummary = (items: Record<string, unknown>[]) => {
@@ -542,14 +596,256 @@ export async function incentivesPage(): Promise<HTMLElement> {
     return `<div class="metric-grid compact-metrics"><article class="metric-card"><div class="metric-top"><span>Total incentives</span><i data-lucide="badge-euro"></i></div><strong>${items.length}</strong><p>Order Confirmation snapshots</p></article><article class="metric-card"><div class="metric-top"><span>Pending payment</span><i data-lucide="clock-3"></i></div><strong>${pending}</strong><p>Awaiting receipt confirmation</p></article><article class="metric-card"><div class="metric-top"><span>Active</span><i data-lucide="circle-check"></i></div><strong>${active}</strong><p>Payment confirmed</p></article><article class="metric-card"><div class="metric-top"><span>Due / overdue</span><i data-lucide="calendar-clock"></i></div><strong>${due} / ${overdue}</strong><p>${paid} paid</p></article><article class="metric-card"><div class="metric-top"><span>Credit Note deductions</span><i data-lucide="file-minus"></i></div><strong>${formatMoney(deductions, "EUR")}</strong><p>Gross ${formatMoney(gross, "EUR")}</p></article><article class="metric-card"><div class="metric-top"><span>Net payable</span><i data-lucide="coins"></i></div><strong>${formatMoney(total, "EUR")}</strong><p>After deductions and payments</p></article></div>`;
   };
   const renderRows = (items: Record<string, unknown>[]) => items.length ? `<div class="data-table panel"><table><thead><tr><th>OC Number</th><th>Customer</th><th>Sales Person</th><th>Products / Categories</th><th>Order amount</th><th>Incentive %</th><th>Incentive amount</th><th>Payment status</th><th>Incentive status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${items.map((item) => { const salesperson = item.salesperson_snapshot as Record<string, unknown> | undefined; const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {}; const status = String(item.status ?? "PENDING PAYMENT"); const paymentStatus = String(item.payment_status ?? (item.payment_confirmation_date ? "Paid" : "Pending Payment")); const lines = Array.isArray(item.incentive_lines) ? item.incentive_lines as Record<string, unknown>[] : []; const productSummary = lines.length ? lines.map((line) => `${escapeHtml(String(line.product_name ?? line.product_id ?? "Product"))} · ${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))} · ${Number(line.incentive_rate_snapshot ?? 0).toFixed(0)}% · ${formatMoney(Number(line.incentive_amount ?? 0), "EUR")}`).join("<br>") : "—"; const rateSummary = item.incentive_percentage_snapshot == null ? "By category" : `${Number(item.incentive_percentage_snapshot).toFixed(0)}%`; const action = paymentStatus.toLowerCase() === "paid" || !canConfirmPayments ? "—" : `<a class="button button-quiet" href="/payments" data-route="/payments">Confirm in Payments</a>`; return `<tr><td><a href="/orders/${encodeURIComponent(String(item.order_id ?? ""))}" data-route="/orders/${encodeURIComponent(String(item.order_id ?? ""))}"><strong>${escapeHtml(String(item.oc_number ?? item.order_number ?? item.order_id ?? "—"))}</strong></a></td><td>${escapeHtml(String(customer.company_name ?? customer.name ?? item.customer_id ?? "—"))}</td><td>${escapeHtml(String(salesperson?.name ?? item.salesperson_id ?? "—"))}</td><td>${productSummary}</td><td class="money">${formatMoney(Number(item.order_amount ?? 0), "EUR")}</td><td>${rateSummary}</td><td class="money">${formatMoney(Number(item.gross_incentive_amount ?? 0), "EUR")}</td><td>${statusBadge(paymentStatus)}</td><td>${statusBadge(status)}</td><td>${formatDate(String(item.created_at ?? ""))}</td><td>${action}</td></tr>`; }).join("")}</tbody></table></div>` : emptyState("badge-euro", "No incentives yet", "An incentive snapshot is created when an Order Confirmation is created.");
+  const roleLabel = (value: unknown): string => String(value || "—")
+    .replaceAll("manager_sales_admin", "Manager")
+    .replaceAll("superadmin", "Superadmin")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const snapshotName = (value: unknown, fallback = "—"): string => {
+    const snapshot = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+    return String(snapshot.name ?? snapshot.email ?? fallback);
+  };
+  const renderUserRows = (items: Record<string, unknown>[]) => {
+    if (!items.length) return emptyState("badge-euro", "No user incentives yet", "Internal incentive allocations are captured when an eligible user or manager creates an Order Confirmation.");
+    return `<div class="data-table panel user-incentive-table"><table><thead><tr><th>OC Number</th><th>Customer</th><th>Created By</th><th>Creator Role</th><th>Manager</th><th>Recipient</th><th>Recipient Role</th><th>Product / Category</th><th>Order Amount</th><th>Incentive %</th><th>Incentive Amount</th><th>Payment Status</th><th>Incentive Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${items.map((item) => {
+      const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+      const creator = (item.creator_snapshot as Record<string, unknown> | undefined) ?? {};
+      const manager = (item.manager_snapshot as Record<string, unknown> | undefined) ?? {};
+      const recipient = (item.recipient_snapshot as Record<string, unknown> | undefined) ?? {};
+      const creatorRole = String(item.creator_role_snapshot ?? creator.role_id ?? "—");
+      const managerName = snapshotName(manager, ["manager", "manager_sales_admin"].includes(creatorRole) ? snapshotName(creator) : "—");
+      const status = String(item.status ?? "PENDING PAYMENT");
+      const paymentStatus = String(item.payment_status ?? (item.payment_confirmation_date ? "Paid" : "Pending Payment"));
+      const lines = Array.isArray(item.incentive_lines) ? item.incentive_lines as Record<string, unknown>[] : [];
+      const productSummary = lines.map((line) => `<span class="user-incentive-product"><strong>${escapeHtml(String(line.product_name ?? line.product_id ?? "Product"))}</strong><small>${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))}</small></span>`).join("");
+      const rateSummary = item.incentive_percentage_snapshot == null ? "By category" : `${Number(item.incentive_percentage_snapshot).toFixed(1).replace(/\.0$/, "")}%`;
+      const viewKey = escapeHtml(String(item.allocation_key ?? item._id ?? ""));
+      return `<tr><td><strong>${escapeHtml(String(item.oc_number ?? item.order_number ?? item.order_id ?? "—"))}</strong></td><td>${escapeHtml(String(customer.company_name ?? customer.name ?? item.customer_id ?? "—"))}</td><td>${escapeHtml(snapshotName(creator, String(item.salesperson_id ?? "—")))}</td><td>${escapeHtml(roleLabel(creatorRole))}</td><td>${escapeHtml(managerName)}</td><td><strong>${escapeHtml(snapshotName(recipient, String(item.recipient_user_id ?? "—")))}</strong></td><td>${escapeHtml(roleLabel(item.recipient_type ?? item.recipient_role))}</td><td>${productSummary || "—"}</td><td class="money">${formatMoney(Number(item.order_amount ?? 0), "EUR")}</td><td>${escapeHtml(rateSummary)}</td><td class="money"><strong>${formatMoney(Number(item.gross_incentive_amount ?? 0), "EUR")}</strong></td><td>${statusBadge(paymentStatus)}</td><td>${statusBadge(status)}</td><td>${formatDate(String(item.created_at ?? ""))}</td><td><button class="icon-button" type="button" data-incentive-detail="${viewKey}" title="View incentive snapshot" aria-label="View incentive snapshot"><i data-lucide="eye"></i></button></td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  };
+  const openAllocationDetail = async (item: Record<string, unknown>) => {
+    // Load the complete authorized snapshot once.  Recipient tabs below are
+    // derived from the returned allocations, never from a guessed role.
+    const detail = await financeApi.incentive(String(item._id ?? ""));
+    const customer = (detail.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+    const creator = (detail.creator_snapshot as Record<string, unknown> | undefined) ?? {};
+    const manager = (detail.manager_snapshot as Record<string, unknown> | undefined) ?? {};
+    const recipient = (detail.recipient_snapshot as Record<string, unknown> | undefined) ?? {};
+    const creatorRole = String(detail.creator_role_snapshot ?? creator.role_id ?? "—");
+    const lines = Array.isArray(detail.incentive_lines) ? detail.incentive_lines as Record<string, unknown>[] : [];
+    const rates = [...new Set(lines.map((line) => Number(line.incentive_rate_snapshot ?? 0)))];
+    const total = lines.reduce((sum, line) => sum + Number(line.incentive_amount ?? 0), 0);
+    const productRows = lines.map((line) => `<li><strong>${escapeHtml(String(line.product_name ?? line.product_id ?? "Product"))}</strong><span>${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))} · ${Number(line.incentive_rate_snapshot ?? 0).toFixed(1).replace(/\.0$/, "")}% · ${formatMoney(Number(line.incentive_amount ?? 0), "EUR")}</span></li>`).join("");
+    const content = document.createElement("div");
+    content.innerHTML = `<div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Historical incentive snapshot</strong><p>The recipient, manager, percentage and amount are read-only values captured when this Order Confirmation was created.</p></div></div><div class="detail-grid user-incentive-detail"><div><span>OC Number</span><strong>${escapeHtml(String(detail.oc_number ?? detail.order_number ?? detail.order_id ?? "—"))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? detail.customer_id ?? "—"))}</strong></div><div><span>Client Type</span><strong>${escapeHtml(String(detail.client_type_snapshot ?? "—"))}</strong></div><div><span>OC Creator</span><strong>${escapeHtml(snapshotName(creator))}</strong></div><div><span>Creator Role</span><strong>${escapeHtml(roleLabel(creatorRole))}</strong></div><div><span>Manager at OC Creation</span><strong>${escapeHtml(snapshotName(manager, ["manager", "manager_sales_admin"].includes(creatorRole) ? snapshotName(creator) : "—"))}</strong></div><div><span>Recipient</span><strong>${escapeHtml(snapshotName(recipient, String(detail.recipient_user_id ?? "—")))}</strong></div><div><span>Recipient Role</span><strong>${escapeHtml(roleLabel(detail.recipient_type ?? detail.recipient_role))}</strong></div><div><span>Order Amount</span><strong>${formatMoney(Number(detail.order_amount ?? 0), "EUR")}</strong></div><div><span>Incentive %</span><strong>${rates.length === 1 ? `${rates[0].toFixed(1).replace(/\.0$/, "")}%` : "By category"}</strong></div><div><span>Incentive Amount</span><strong>${formatMoney(total, "EUR")}</strong></div><div><span>Payment Status</span><strong>${escapeHtml(String(detail.payment_status ?? "Pending Payment"))}</strong></div><div><span>Incentive Status</span><strong>${escapeHtml(String(detail.status ?? "PENDING PAYMENT"))}</strong></div><div><span>Created At</span><strong>${formatDate(String(detail.created_at ?? ""))}</strong></div></div><ul class="user-incentive-detail-lines">${productRows}</ul>`;
+    openModal("User Incentive Snapshot", content, "wide");
+    refreshIcons(content);
+  };
+  // Keep the legacy renderer available for older integrations while routing
+  // the UI through the tabbed renderer below.
+  void openAllocationDetail;
+  const openAllocationDetailV2 = async (item: Record<string, unknown>) => {
+    const detail = await financeApi.incentive(String(item._id ?? ""));
+    const customer = (detail.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+    const creator = (detail.creator_snapshot as Record<string, unknown> | undefined) ?? {};
+    const manager = (detail.manager_snapshot as Record<string, unknown> | undefined) ?? {};
+    const internalLines = Array.isArray(detail.incentive_lines) ? detail.incentive_lines as Record<string, unknown>[] : [];
+    const customerLines = Array.isArray(detail.customer_incentive_lines) ? detail.customer_incentive_lines as Record<string, unknown>[] : [];
+    const allLines = [...internalLines, ...customerLines];
+    const lineAmount = (line: Record<string, unknown>): number => {
+      const value = Number(line.incentive_amount ?? line.amount ?? 0);
+      return Number.isFinite(value) ? value : 0;
+    };
+    const lineBase = (line: Record<string, unknown>): string => {
+      const value = Number(line.product_amount ?? line.incentive_base_amount_eur ?? line.base_amount_eur ?? line.order_amount);
+      return Number.isFinite(value) ? formatMoney(value, "EUR") : "—";
+    };
+    const lineRate = (line: Record<string, unknown>): string => {
+      const value = Number(line.incentive_rate_snapshot ?? line.rate ?? NaN);
+      return Number.isFinite(value) ? `${value.toFixed(1).replace(/\.0$/, "")}%` : "—";
+    };
+    const isCustomerLine = (line: Record<string, unknown>): boolean =>
+      String(line.recipient_type ?? "").toUpperCase() === "CUSTOMER" || String(line.category_id ?? "") === "customer_incentive";
+    const isManagerLine = (line: Record<string, unknown>): boolean => {
+      const role = String(line.recipient_role ?? line.recipient_type ?? "").toLowerCase();
+      const allocation = String(line.allocation_type ?? "").toLowerCase();
+      return role.includes("manager") || allocation.includes("manager");
+    };
+    const recipientName = (source: Record<string, unknown>): string => {
+      const snapshot = (source.recipient_snapshot as Record<string, unknown> | undefined) ?? {};
+      return String(source.recipient_name ?? snapshot.name ?? snapshot.email ?? source.customer_name_snapshot ?? source.bearer_name_snapshot ?? source.recipient_user_id ?? source.customer_id ?? "—");
+    };
+    const recipientRoleLabel = (source: Record<string, unknown>): string => {
+      if (isCustomerLine(source) || String(source.recipient_type ?? "").toUpperCase() === "CUSTOMER") return "Customer";
+      if (isManagerLine(source)) return "Manager";
+      const role = String(source.recipient_role ?? source.recipient_type ?? source.allocation_type ?? "").toLowerCase();
+      if (role.includes("user") || role.includes("creator") || role.includes("sales")) return "Sales Person";
+      return roleLabel(source.recipient_role ?? source.recipient_type ?? source.allocation_type ?? "—");
+    };
+    const renderTotalBreakdown = () => {
+      if (!allLines.length) return `<div class="empty-state compact"><strong>No allocation</strong><span>No incentive allocation was captured for this Order Confirmation.</span></div>`;
+      return `<div class="incentive-total-breakdown"><div class="incentive-total-breakdown-title">Product / category breakdown</div><div class="incentive-total-breakdown-table" role="table" aria-label="Incentive allocation by product"><div class="incentive-total-breakdown-row is-head" role="row"><span>Product</span><span>Category</span><span>Amount</span><span>Rate</span><span>Incentive</span></div>${allLines.map((line) => `<div class="incentive-total-breakdown-row" role="row"><strong>${escapeHtml(String(line.product_name ?? line.product_id ?? "Product"))}</strong><span>${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))}</span><span>${escapeHtml(lineBase(line))}</span><span>${escapeHtml(lineRate(line))}</span><span>${formatMoney(lineAmount(line), "EUR")}</span></div>`).join("")}</div></div>`;
+    };
+    const renderProductRows = (lines: Record<string, unknown>[]) => lines === allLines ? renderTotalBreakdown() : lines.length
+      ? `<div class="incentive-detail-lines">${lines.map((line) => `<div class="incentive-detail-line"><div><strong>${escapeHtml(String(line.product_name ?? line.product_id ?? "Product"))}</strong><small>${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))}</small></div><div class="incentive-detail-line-values"><span>Base ${lineBase(line)}</span><span>Rate ${lineRate(line)}</span><strong>${formatMoney(lineAmount(line), "EUR")}</strong></div></div>`).join("")}</div>`
+      : `<div class="empty-state compact"><strong>No allocation</strong><span>No incentive allocation was captured for this recipient.</span></div>`;
+    const renderPanel = (key: string, title: string, lines: Record<string, unknown>[]) => {
+      const panelTotal = lines.reduce((sum, line) => sum + lineAmount(line), 0);
+      const rates = [...new Set(lines.map(lineRate).filter((rate) => rate !== "—"))];
+      return `<section class="incentive-detail-panel" data-detail-panel="${key}" ${key === "total" ? "" : "hidden"}><div class="incentive-detail-panel-head"><div><span class="eyebrow">${escapeHtml(title)}</span><h3>${escapeHtml(key === "total" ? "Incentive summary" : recipientName(lines[0] ?? {}))}</h3></div><strong class="incentive-detail-panel-total">${formatMoney(panelTotal, "EUR")}</strong></div>${key !== "total" && lines[0] ? `<div class="incentive-detail-recipient"><span>Role</span><strong>${escapeHtml(recipientRoleLabel(lines[0]))}</strong><span>Rates</span><strong>${escapeHtml(rates.join(" · ") || "By category")}</strong></div>` : `<div class="incentive-detail-summary"><div><span>Order amount</span><strong>${formatMoney(Number(detail.order_amount ?? 0), "EUR")}</strong></div><div><span>Payment status</span><strong>${escapeHtml(String(detail.payment_status ?? "Pending Payment"))}</strong></div><div><span>Incentive status</span><strong>${escapeHtml(String(detail.status ?? "PENDING PAYMENT"))}</strong></div><div><span>Visible allocations</span><strong>${lines.length}</strong></div></div>`}${renderProductRows(lines)}</section>`;
+    };
+    type AllocationGroup = { key: string; label: string; role: string; name: string; lines: Record<string, unknown>[] };
+    const persistedAllocations = Array.isArray(detail.allocations)
+      ? (detail.allocations as Record<string, unknown>[])
+        .map((allocation, index): AllocationGroup | null => {
+          const lines = Array.isArray(allocation.lines) ? allocation.lines.filter((line): line is Record<string, unknown> => Boolean(line && typeof line === "object")) : [];
+          if (!lines.length) return null;
+          const source = { ...lines[0], ...allocation };
+          const role = recipientRoleLabel(source);
+          const name = recipientName(source);
+          return { key: `recipient-${index}`, label: `${role} — ${name}`, role, name, lines };
+        })
+        .filter((allocation): allocation is AllocationGroup => Boolean(allocation))
+      : [];
+    const fallbackGroups = new Map<string, AllocationGroup>();
+    if (!persistedAllocations.length) {
+      allLines.forEach((line) => {
+        const recipientId = String(line.recipient_user_id ?? line.customer_id ?? recipientName(line));
+        const allocationType = String(line.allocation_type ?? (isCustomerLine(line) ? "customer" : "creator"));
+        const recipientType = String(line.recipient_type ?? (isCustomerLine(line) ? "CUSTOMER" : "USER"));
+        const key = `${recipientId}:${allocationType}:${recipientType}`;
+        const existing = fallbackGroups.get(key);
+        if (existing) existing.lines.push(line);
+        else {
+          const role = recipientRoleLabel(line);
+          const name = recipientName(line);
+          fallbackGroups.set(key, { key: `recipient-${fallbackGroups.size}`, label: `${role} — ${name}`, role, name, lines: [line] });
+        }
+      });
+    }
+    const recipientGroups = persistedAllocations.length ? persistedAllocations : [...fallbackGroups.values()];
+    const tabs = [{ key: "total", label: "Total", lines: allLines }, ...recipientGroups];
+    const content = document.createElement("div");
+    const creatorRole = String(detail.creator_role_snapshot ?? creator.role_id ?? "—");
+    content.innerHTML = `<div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Historical incentive snapshot</strong><p>Recipients, percentages and amounts are read-only values captured when this Order Confirmation was created.</p></div></div><div class="detail-grid user-incentive-detail"><div><span>OC Number</span><strong>${escapeHtml(String(detail.oc_number ?? detail.order_number ?? detail.order_id ?? "—"))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? detail.customer_id ?? "—"))}</strong></div><div><span>Customer Type</span><strong>${escapeHtml(customerTypeLabel(String(detail.client_type_snapshot ?? "")))}</strong></div><div><span>OC Creator</span><strong>${escapeHtml(snapshotName(creator))}</strong></div><div><span>Creator Role</span><strong>${escapeHtml(roleLabel(creatorRole))}</strong></div><div><span>Manager at OC Creation</span><strong>${escapeHtml(snapshotName(manager, ["manager", "manager_sales_admin"].includes(creatorRole) ? snapshotName(creator) : "—"))}</strong></div><div><span>Order Amount</span><strong>${formatMoney(Number(detail.order_amount ?? 0), "EUR")}</strong></div><div><span>Created At</span><strong>${formatDate(String(detail.created_at ?? ""))}</strong></div></div><div class="incentive-detail-tabs" role="tablist" aria-label="Incentive recipients">${tabs.map((tab, index) => `<button class="incentive-detail-tab${index === 0 ? " is-active" : ""}" type="button" role="tab" aria-selected="${index === 0 ? "true" : "false"}" data-detail-tab="${tab.key}">${escapeHtml(tab.label)}</button>`).join("")}</div><div class="incentive-detail-panels">${tabs.map((tab) => renderPanel(tab.key, tab.label, tab.lines)).join("")}</div>`;
+    content.insertAdjacentHTML("afterbegin", `<p class="modal-subtitle">View incentive allocation details for this Order Confirmation.</p>`);
+    const modalSubtitle = content.querySelector<HTMLElement>(".modal-subtitle");
+    const historicalNotice = content.querySelector<HTMLElement>(".notice");
+    const tabBar = content.querySelector<HTMLElement>(".incentive-detail-tabs");
+    if (modalSubtitle && tabBar) {
+      modalSubtitle.after(tabBar);
+      if (historicalNotice) tabBar.after(historicalNotice);
+    }
+    const customerTypeValue = content.querySelectorAll<HTMLElement>(".detail-grid > div")[2]?.querySelector("strong");
+    if (customerTypeValue) customerTypeValue.textContent = customerTypeLabel(String(detail.client_type_snapshot ?? detail.customer_type_snapshot ?? customer.client_type ?? ""));
+    const totalSummary = content.querySelector<HTMLElement>('[data-detail-panel="total"] .incentive-detail-summary');
+    if (totalSummary) {
+      const totalRates = [...new Set(allLines.map(lineRate).filter((rate) => rate !== "â€”"))];
+      totalSummary.insertAdjacentHTML("beforeend", `<div><span>Total incentive rate</span><strong>${escapeHtml(totalRates.length === 1 ? totalRates[0] : totalRates.length > 1 ? "Multiple rates" : "â€”")}</strong></div>`);
+    }
+    content.querySelectorAll<HTMLElement>("[data-detail-panel]").forEach((panel) => {
+      const key = panel.dataset.detailPanel ?? "";
+      if (!key || key === "total") return;
+      const tab = tabs.find((candidate) => candidate.key === key);
+      const first = tab?.lines[0];
+      if (!first) return;
+      const designation = first.bearer_designation_snapshot ?? first.designation_snapshot;
+      const details = `<div class="incentive-detail-summary"><div><span>Recipient</span><strong>${escapeHtml(recipientName(first))}</strong></div><div><span>Role</span><strong>${escapeHtml(recipientRoleLabel(first))}</strong></div><div><span>Order Confirmation</span><strong>${escapeHtml(String(detail.oc_number ?? detail.order_number ?? detail.order_id ?? "â€”"))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? detail.customer_id ?? "â€”"))}</strong></div><div><span>Order amount</span><strong>${formatMoney(Number(detail.order_amount ?? 0), "EUR")}</strong></div><div><span>Incentive rate</span><strong>${escapeHtml([...new Set((tab?.lines ?? []).map(lineRate))].join(" Â· ") || "â€”")}</strong></div><div><span>Payment status</span><strong>${escapeHtml(String(detail.payment_status ?? "Pending Payment"))}</strong></div><div><span>Incentive status</span><strong>${escapeHtml(String(detail.status ?? "PENDING PAYMENT"))}</strong></div>${designation ? `<div><span>Designation</span><strong>${escapeHtml(String(designation))}</strong></div>` : ""}</div>`;
+      const breakdown = panel.querySelector<HTMLElement>(".incentive-detail-lines, .empty-state");
+      if (breakdown) breakdown.insertAdjacentHTML("beforebegin", details);
+      else panel.insertAdjacentHTML("beforeend", details);
+    });
+    const dialog = openModal("Incentive Details", content, "wide");
+    dialog.classList.add("incentive-details-modal");
+    const totalPanel = content.querySelector<HTMLElement>('[data-detail-panel="total"]');
+    if (totalPanel) {
+      const recipientTabs = tabs.filter((tab) => tab.key !== "total");
+      if (recipientTabs.length) {
+        const summary = document.createElement("div");
+        summary.className = "incentive-allocation-summary";
+        summary.innerHTML = `<span class="eyebrow">Allocation summary</span>${recipientTabs.map((tab) => {
+          const rates = [...new Set(tab.lines.map(lineRate))];
+          const amount = tab.lines.reduce((sum, line) => sum + lineAmount(line), 0);
+          const rate = rates.length === 1 ? rates[0] : rates.length > 1 ? "Multiple rates" : "Rate unavailable";
+          return `<div class="incentive-allocation-summary-row"><div><strong>${escapeHtml(tab.label)}</strong><small>${escapeHtml(rate)}</small></div><strong>${formatMoney(amount, "EUR")}</strong></div>`;
+        }).join("")}<div class="incentive-allocation-summary-total"><strong>Total incentive</strong><strong>${formatMoney(allLines.reduce((sum, line) => sum + lineAmount(line), 0), "EUR")}</strong></div>`;
+        const lines = totalPanel.querySelector<HTMLElement>(".incentive-total-breakdown, .incentive-detail-lines");
+        if (lines) totalPanel.insertBefore(summary, lines);
+        else totalPanel.append(summary);
+      }
+    }
+    const numericRateLabel = (source: Record<string, unknown>[]) => {
+      const values = [...new Set(source.map((line) => Number(line.incentive_rate_snapshot ?? line.rate ?? NaN)).filter(Number.isFinite))];
+      return values.length === 1 ? `${values[0].toFixed(1).replace(".0", "")}%` : values.length > 1 ? "Multiple rates" : "Not available";
+    };
+    const summaryValue = (panel: HTMLElement | null, label: string, value: string) => {
+      const row = [...(panel?.querySelectorAll<HTMLElement>(".incentive-detail-summary > div") ?? [])].find((candidate) => candidate.querySelector("span")?.textContent?.trim() === label);
+      const target = row?.querySelector("strong");
+      if (target) target.textContent = value;
+    };
+    summaryValue(content.querySelector<HTMLElement>('[data-detail-panel="total"]'), "Total incentive rate", numericRateLabel(allLines));
+    tabs.filter((tab) => tab.key !== "total").forEach((tab) => summaryValue(content.querySelector<HTMLElement>(`[data-detail-panel="${tab.key}"]`), "Incentive rate", numericRateLabel(tab.lines)));
+    content.querySelectorAll<HTMLButtonElement>("[data-detail-tab]").forEach((button) => button.addEventListener("click", () => {
+      const key = button.dataset.detailTab ?? "total";
+      content.querySelectorAll<HTMLButtonElement>("[data-detail-tab]").forEach((tab) => { const active = tab.dataset.detailTab === key; tab.classList.toggle("is-active", active); tab.setAttribute("aria-selected", String(active)); });
+      content.querySelectorAll<HTMLElement>("[data-detail-panel]").forEach((panel) => { panel.hidden = panel.dataset.detailPanel !== key; });
+    }));
+    refreshIcons(content);
+  };
+  const openCancellation = (item: Record<string, unknown>) => {
+    const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+    const salesperson = (item.salesperson_snapshot as Record<string, unknown> | undefined) ?? {};
+    const content = document.createElement("div");
+    content.innerHTML = `<div class="notice warning compact"><i data-lucide="triangle-alert"></i><div><strong>Cancel this unpaid incentive?</strong><p>It will leave active totals while its financial snapshot and audit trail are retained.</p></div></div><div class="detail-grid"><div><span>Order Confirmation</span><strong>${escapeHtml(String(item.oc_number ?? item.order_number ?? item.order_id ?? "—"))}</strong></div><div><span>Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? item.customer_id ?? "—"))}</strong></div><div><span>Recipient</span><strong>${escapeHtml(String(salesperson.name ?? item.salesperson_id ?? "—"))}</strong></div><div><span>Amount</span><strong>${formatMoney(Number(item.net_payable_incentive ?? item.gross_incentive_amount ?? 0), "EUR")}</strong></div><div><span>Status</span><strong>${escapeHtml(String(item.status ?? "PENDING PAYMENT"))}</strong></div></div><form class="stack-form"><label>Reason<textarea name="reason" rows="3" maxlength="500" required>Cancelled from Incentive Overview</textarea></label><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Keep Incentive</button><button class="button button-danger" type="submit"><i data-lucide="trash-2"></i>Cancel Incentive</button></div></form>`;
+    const dialog = openModal("Cancel Incentive", content, "normal");
+    content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
+    content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+       const form = event.currentTarget as HTMLFormElement;
+      const submit = form.querySelector<HTMLButtonElement>("[type=submit]")!;
+      submit.disabled = true;
+      try {
+        await financeApi.deleteIncentive(String(item._id), String(new FormData(form).get("reason") ?? "").trim());
+        dialog.close();
+        toast("Incentive cancelled");
+        await load();
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "Incentive could not be cancelled", "error");
+        submit.disabled = false;
+      }
+    });
+    refreshIcons(content);
+  };
   const load = async () => {
     const params = new URLSearchParams();
-    ["search", "salesperson_id", "customer_id", "category_id", "payment_status", "status", "from_date", "to_date", "order_id"].forEach((name) => { const value = body.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value.trim(); if (value) params.set(name, value); });
+    ["search", "salesperson_id", "customer_id", "category_id", "product_id", "recipient_role", "payment_status", "status", "from_date", "to_date", "order_id"].forEach((name) => { const value = body.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value.trim(); if (value) params.set(name, value); });
     const result = await financeApi.incentives(params.toString());
     const table = body.querySelector<HTMLElement>("[data-incentive-results]"); if (table) table.innerHTML = renderRows(result.items);
+    if (requestedView === "user" && table) table.innerHTML = renderUserRows(result.items);
+    if (requestedView !== "user" && canDeleteIncentives && table) {
+      table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row, index) => {
+        const item = result.items[index];
+        const status = String(item?.status ?? "").toUpperCase();
+        const isPaid = status === "PAID" || Number(item?.paid_amount ?? 0) > 0;
+        if (!item || isPaid) return;
+        const actions = row.lastElementChild as HTMLTableCellElement | null;
+        if (!actions) return;
+        if (actions.textContent?.trim() === "—") actions.textContent = "";
+        actions.classList.add("table-actions");
+        actions.insertAdjacentHTML("beforeend", `<button class="icon-button incentive-delete-button" type="button" data-incentive-delete="${escapeHtml(String(item._id ?? ""))}" title="Cancel incentive" aria-label="Cancel incentive"><i data-lucide="trash-2"></i></button>`);
+      });
+    }
     const summary = body.querySelector<HTMLElement>("[data-incentive-summary]"); if (summary) summary.innerHTML = renderSummary(result.items);
     const count = body.querySelector<HTMLElement>("[data-incentive-count]"); if (count) count.textContent = `${result.total} record${result.total === 1 ? "" : "s"}`;
     body.querySelectorAll<HTMLAnchorElement>("a[data-route]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: link.getAttribute("href") })); }));
+    body.querySelectorAll<HTMLButtonElement>("[data-incentive-detail]").forEach((button) => button.addEventListener("click", () => {
+      const item = result.items.find((entry) => String(entry.allocation_key ?? entry._id) === String(button.dataset.incentiveDetail));
+      if (item) void openAllocationDetailV2(item).catch((error) => toast(error instanceof Error ? error.message : "Incentive details unavailable", "error"));
+    }));
+    body.querySelectorAll<HTMLButtonElement>("[data-incentive-delete]").forEach((button) => button.addEventListener("click", () => {
+      const item = result.items.find((entry) => String(entry._id) === String(button.dataset.incentiveDelete));
+      if (item) openCancellation(item);
+    }));
     refreshIcons(body);
   };
   try {
@@ -564,11 +860,121 @@ export async function incentivesPage(): Promise<HTMLElement> {
     body.innerHTML = `<section class="panel quotation-filters incentive-filters"><div class="quotation-filter-head"><div><span class="eyebrow">Payment-linked earnings</span><h2>Incentive history</h2><p>Incentives remain pending until a payment receipt is confirmed.</p></div><span data-incentive-count>Loading…</span></div><div class="quotation-filter-grid"><label class="filter-search"><span>Search</span><div class="field-search"><i data-lucide="search"></i><input name="search" placeholder="Sales person, customer or order" aria-label="Search incentives"></div></label>${users.length ? `<label><span>Sales Person</span><select name="salesperson_id"><option value="">All salespeople</option>${users.map((user) => `<option value="${escapeHtml(String(user._id))}">${escapeHtml(String(user.name ?? user.email ?? user._id))}</option>`).join("")}</select></label>` : ""}<label><span>Customer</span><select name="customer_id"><option value="">All customers</option>${customers.map((customer) => `<option value="${escapeHtml(String(customer._id))}">${escapeHtml(String(customer.company_name ?? customer.name ?? customer._id))}</option>`).join("")}</select></label><label><span>Payment status</span><select name="payment_status"><option value="">All payment statuses</option><option value="pending">Pending Payment</option><option value="paid">Paid</option></select></label><label><span>Incentive status</span><select name="status"><option value="">All incentive statuses</option><option>PENDING PAYMENT</option><option>ACTIVE</option><option>DUE</option><option>OVERDUE</option><option>PAID</option></select></label><label><span>From date</span><input name="from_date" type="date"></label><label><span>To date</span><input name="to_date" type="date"></label><input name="order_id" type="hidden" value="${escapeHtml(initialOrder)}"></div></section><div data-incentive-summary></div><div data-incentive-results></div>`;
     const filterGrid = body.querySelector<HTMLElement>(".incentive-filters .quotation-filter-grid");
     if (filterGrid) filterGrid.insertAdjacentHTML("beforeend", `<label><span>Product Type</span><select name="category_id"><option value="">All Product Types</option>${productTypes.map((productType) => `<option value="${escapeHtml(productType.id)}">${escapeHtml(productType.name)}</option>`).join("")}</select></label><label><span>Product ID</span><input name="product_id" placeholder="Product ID"></label>`);
-    ["payment_status", "status", "salesperson_id", "customer_id", "category_id", "product_id", "from_date", "to_date"].forEach((name) => body.querySelector(`[name="${name}"]`)?.addEventListener("change", () => { void load().catch((error) => { const results = body.querySelector<HTMLElement>("[data-incentive-results]"); if (results) results.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Incentives unavailable")}</div>`; }); }));
+    ["payment_status", "status", "salesperson_id", "customer_id", "category_id", "product_id", "recipient_role", "from_date", "to_date"].forEach((name) => body.querySelector(`[name="${name}"]`)?.addEventListener("change", () => { void load().catch((error) => { const results = body.querySelector<HTMLElement>("[data-incentive-results]"); if (results) results.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Incentives unavailable")}</div>`; }); }));
     let searchTimer: number | undefined; body.querySelector<HTMLInputElement>('[name="search"]')?.addEventListener("input", () => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { void load().catch((error) => { const results = body.querySelector<HTMLElement>("[data-incentive-results]"); if (results) results.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Incentives unavailable")}</div>`; }); }, 250); });
     await load();
   } catch (error) { body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Incentives unavailable")}</div>`; }
   refreshIcons(page); return page;
+}
+
+export async function customerIncentivesPage(): Promise<HTMLElement> {
+  const page = pageScaffold("Finance", "Customer Incentive", "Track customer incentives captured with each Order Confirmation.");
+  const body = page.querySelector<HTMLElement>(".page-body")!;
+  body.innerHTML = skeleton(4);
+  const isSuperadmin = appStore.state.user?.role_id === "superadmin";
+  let customerOptionsReady = false;
+  const renderRows = (items: Record<string, unknown>[]) => {
+    if (!items.length) return emptyState("building-2", "No customer incentives yet", "Customer incentives appear here when an enabled customer is used on a new Order Confirmation.");
+    return `<div class="data-table panel"><table><thead><tr><th>Customer</th><th>Incentive bearer</th><th>Designation</th><th>Customer type</th><th>OC number</th><th>Sales person</th><th>Manager</th><th>Order amount</th><th>Incentive %</th><th>Incentive amount</th><th>Payment status</th><th>Incentive status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${items.map((item) => {
+      const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+      const salesperson = (item.salesperson_snapshot as Record<string, unknown> | undefined) ?? {};
+      const manager = (item.manager_snapshot as Record<string, unknown> | undefined) ?? {};
+      const line = (Array.isArray(item.incentive_lines) ? item.incentive_lines : []).find((entry) => String((entry as Record<string, unknown>)?.recipient_type ?? "").toUpperCase() === "CUSTOMER") as Record<string, unknown> | undefined;
+      const percentage = item.customer_incentive_percentage_snapshot ?? line?.incentive_rate_snapshot;
+      const amount = item.customer_incentive_amount_snapshot ?? line?.incentive_amount ?? 0;
+      const bearer = item.customer_incentive_bearer_name_snapshot ?? line?.bearer_name_snapshot;
+      const designation = item.customer_incentive_designation_snapshot ?? item.customer_incentive_bearer_designation_snapshot ?? line?.bearer_designation_snapshot ?? line?.designation_snapshot;
+      return `<tr><td><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? item.customer_id ?? "—"))}</strong></td><td>${escapeHtml(String(bearer ?? "—"))}</td><td>${escapeHtml(String(designation ?? "—"))}</td><td>${escapeHtml(customerTypeLabel(String(line?.customer_type_snapshot ?? item.customer_type_snapshot ?? item.client_type_snapshot ?? "")))}</td><td><a href="/orders/${encodeURIComponent(String(item.order_id ?? ""))}" data-route="/orders/${encodeURIComponent(String(item.order_id ?? ""))}"><strong>${escapeHtml(String(item.oc_number ?? item.order_number ?? "—"))}</strong></a></td><td>${escapeHtml(String(salesperson.name ?? item.salesperson_id ?? "—"))}</td><td>${escapeHtml(String(manager.name ?? item.manager_user_id ?? "—"))}</td><td class="money">${formatMoney(Number(item.order_amount ?? 0), "EUR")}</td><td>${percentage == null ? "—" : `${Number(percentage).toFixed(1)}%`}</td><td class="money">${formatMoney(Number(amount), "EUR")}</td><td>${statusBadge(String(item.payment_status ?? (item.payment_confirmation_date ? "Paid" : "Pending Payment")))}</td><td>${statusBadge(String(item.status ?? "PENDING PAYMENT"))}</td><td>${formatDate(String(item.created_at ?? ""))}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  };
+  const load = async () => {
+    const search = body.querySelector<HTMLInputElement>('[name="search"]')?.value.trim() ?? "";
+    const result = await financeApi.customerIncentives(search ? `search=${encodeURIComponent(search)}` : "");
+    if (!customerOptionsReady) {
+      const select = body.querySelector<HTMLSelectElement>('[name="customer_id"]');
+      const seen = new Set<string>();
+      for (const item of result.items) {
+        const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+        const id = String(item.customer_id ?? customer._id ?? "");
+        if (select && id && !seen.has(id)) { seen.add(id); select.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(id)}">${escapeHtml(String(customer.company_name ?? customer.name ?? id))}</option>`); }
+      }
+      customerOptionsReady = true;
+    }
+    const customerFilter = body.querySelector<HTMLSelectElement>('[name="customer_id"]')?.value ?? "";
+    const typeFilter = body.querySelector<HTMLSelectElement>('[name="customer_type"]')?.value ?? "";
+    const paymentFilter = body.querySelector<HTMLSelectElement>('[name="payment_status"]')?.value ?? "";
+    const statusFilter = body.querySelector<HTMLSelectElement>('[name="incentive_status"]')?.value ?? "";
+    const fromDate = body.querySelector<HTMLInputElement>('[name="from_date"]')?.value ?? "";
+    const toDate = body.querySelector<HTMLInputElement>('[name="to_date"]')?.value ?? "";
+    const items = result.items.filter((item) => {
+      const customer = (item.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+      const line = (Array.isArray(item.incentive_lines) ? item.incentive_lines : []).find((entry) => String((entry as Record<string, unknown>)?.recipient_type ?? "").toUpperCase() === "CUSTOMER") as Record<string, unknown> | undefined;
+      const customerId = String(item.customer_id ?? customer._id ?? "");
+      const customerType = String(line?.customer_type_snapshot ?? item.customer_type_snapshot ?? item.client_type_snapshot ?? "");
+      const paymentStatus = String(item.payment_status ?? (item.payment_confirmation_date ? "Paid" : "Pending Payment"));
+      const incentiveStatus = String(item.status ?? "PENDING PAYMENT");
+      const created = String(item.created_at ?? "").slice(0, 10);
+      return (!customerFilter || customerId === customerFilter) && (!typeFilter || customerType === typeFilter) && (!paymentFilter || paymentStatus.toUpperCase() === paymentFilter.toUpperCase()) && (!statusFilter || incentiveStatus.toUpperCase() === statusFilter.toUpperCase()) && (!fromDate || created >= fromDate) && (!toDate || created <= toDate);
+    });
+    const target = body.querySelector<HTMLElement>("[data-customer-incentive-results]");
+    if (target) target.innerHTML = renderRows(items);
+    target?.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row, index) => {
+      const item = items[index];
+      if (item) row.insertAdjacentHTML("beforeend", `<td><button class="icon-button" type="button" data-customer-incentive-view="${escapeHtml(String(item._id ?? ""))}" title="View customer incentive" aria-label="View customer incentive"><i data-lucide="eye"></i></button></td>`);
+    });
+    target?.querySelectorAll<HTMLAnchorElement>("a[data-route]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: link.getAttribute("href") })); }));
+    target?.querySelectorAll<HTMLButtonElement>("[data-customer-incentive-view]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        const detail = await financeApi.customerIncentive(String(button.dataset.customerIncentiveView));
+        const customer = (detail.customer_snapshot as Record<string, unknown> | undefined) ?? {};
+        const line = (Array.isArray(detail.incentive_lines) ? detail.incentive_lines : []).find((entry) => String((entry as Record<string, unknown>)?.recipient_type ?? "").toUpperCase() === "CUSTOMER") as Record<string, unknown> | undefined;
+        const detailBody = document.createElement("div");
+        detailBody.className = "stack-form";
+        detailBody.innerHTML = `<div class="detail-grid"><div><span class="eyebrow">Customer</span><strong>${escapeHtml(String(customer.company_name ?? customer.name ?? detail.customer_name_snapshot ?? detail.customer_id ?? "—"))}</strong></div><div><span class="eyebrow">Customer type</span><strong>${escapeHtml(String(line?.customer_type_snapshot ?? detail.customer_type_snapshot ?? detail.client_type_snapshot ?? "—"))}</strong></div><div><span class="eyebrow">Order Confirmation</span><strong>${escapeHtml(String(detail.oc_number ?? detail.order_number ?? "—"))}</strong></div><div><span class="eyebrow">Order amount</span><strong>${formatMoney(Number(detail.order_amount ?? 0), "EUR")}</strong></div><div><span class="eyebrow">Incentive percentage</span><strong>${detail.customer_incentive_percentage_snapshot == null ? "—" : `${Number(detail.customer_incentive_percentage_snapshot).toFixed(1)}%`}</strong></div><div><span class="eyebrow">Incentive amount</span><strong>${formatMoney(Number(detail.customer_incentive_amount_snapshot ?? line?.incentive_amount ?? 0), "EUR")}</strong></div><div><span class="eyebrow">Bearer</span><strong>${escapeHtml(String(detail.customer_incentive_bearer_name_snapshot ?? detail.bearer_name_snapshot ?? line?.bearer_name_snapshot ?? "—"))}</strong></div><div><span class="eyebrow">Designation</span><strong>${escapeHtml(String(detail.customer_incentive_designation_snapshot ?? detail.customer_incentive_bearer_designation_snapshot ?? detail.bearer_designation_snapshot ?? line?.bearer_designation_snapshot ?? line?.designation_snapshot ?? "—"))}</strong></div><div><span class="eyebrow">Payment status</span><strong>${escapeHtml(String(detail.payment_status ?? "Pending Payment"))}</strong></div><div><span class="eyebrow">Incentive status</span><strong>${escapeHtml(String(detail.status ?? "PENDING PAYMENT"))}</strong></div><div><span class="eyebrow">Created</span><strong>${formatDate(String(detail.created_at ?? ""))}</strong></div></div><hr><p class="form-hint">Configuration snapshot: the bearer, designation, percentage and EUR base above were captured when the OC was created.</p>`;
+        openModal("Customer Incentive", detailBody, "wide");
+      } catch (error) { toast(error instanceof Error ? error.message : "Customer incentive details unavailable", "error"); }
+    }));
+    const count = body.querySelector<HTMLElement>("[data-customer-incentive-count]");
+    if (count) count.textContent = `${items.length} record${items.length === 1 ? "" : "s"}`;
+    refreshIcons(body);
+  };
+  try {
+    let visibility = { show_customer_incentives_to_manager: false, show_customer_incentives_to_salesperson: false, can_manage: false };
+    if (isSuperadmin) visibility = await adminApi.customerIncentiveVisibility();
+    body.innerHTML = `<section class="panel quotation-filters incentive-filters"><div class="quotation-filter-head"><div><span class="eyebrow">Customer-linked earnings</span><h2>Customer Incentive</h2><p>Customer incentive snapshots are captured at Order Confirmation creation and follow the existing payment lifecycle.</p></div><span data-customer-incentive-count>Loading…</span></div><label class="filter-search"><span>Search</span><div class="field-search"><i data-lucide="search"></i><input name="search" placeholder="Customer, OC or salesperson" aria-label="Search customer incentives"></div></label></section>${isSuperadmin ? `<section class="panel customer-incentive-visibility"><div class="quotation-filter-head"><div><span class="eyebrow">Superadmin visibility</span><h2>Customer incentive privacy</h2><p>Customer incentive details are hidden by default from managers and sales people.</p></div></div><div class="form-grid"><label><span>Show customer incentives to Manager</span><select name="show_customer_incentives_to_manager"><option value="false" ${!visibility.show_customer_incentives_to_manager ? "selected" : ""}>No</option><option value="true" ${visibility.show_customer_incentives_to_manager ? "selected" : ""}>Yes</option></select></label><label><span>Show customer incentives to Sales Person</span><select name="show_customer_incentives_to_salesperson"><option value="false" ${!visibility.show_customer_incentives_to_salesperson ? "selected" : ""}>No</option><option value="true" ${visibility.show_customer_incentives_to_salesperson ? "selected" : ""}>Yes</option></select></label></div><button class="button button-primary" type="button" data-save-customer-incentive-visibility>Save visibility</button></section>` : ""}<div data-customer-incentive-results></div>`;
+    body.querySelector<HTMLElement>(".filter-search")?.insertAdjacentHTML("afterend", `<div class="quotation-filter-grid"><label><span>Customer</span><select name="customer_id"><option value="">All customers</option></select></label><label><span>Customer type</span><select name="customer_type"><option value="">All types</option><option value="WHOLESALER">Distributor</option><option value="DEALER">Dealer</option><option value="CUSTOMER">Customer</option></select></label><label><span>Payment status</span><select name="payment_status"><option value="">All payment statuses</option><option value="Pending Payment">Pending Payment</option><option value="Paid">Paid</option></select></label><label><span>Incentive status</span><select name="incentive_status"><option value="">All incentive statuses</option><option value="PENDING PAYMENT">Pending Payment</option><option value="ACTIVE">Active</option><option value="PAID">Paid</option><option value="CANCELLED">Cancelled</option></select></label><label><span>From date</span><input name="from_date" type="date"></label><label><span>To date</span><input name="to_date" type="date"></label></div>`);
+    body.querySelector<HTMLInputElement>('[name="search"]')?.addEventListener("input", () => { window.clearTimeout((body as HTMLElement & { _customerIncentiveTimer?: number })._customerIncentiveTimer); (body as HTMLElement & { _customerIncentiveTimer?: number })._customerIncentiveTimer = window.setTimeout(() => { void load().catch((error) => toast(error instanceof Error ? error.message : "Customer incentives unavailable", "error")); }, 250); });
+    ["customer_id", "customer_type", "payment_status", "incentive_status", "from_date", "to_date"].forEach((name) => body.querySelector(`[name="${name}"]`)?.addEventListener("change", () => { void load().catch((error) => toast(error instanceof Error ? error.message : "Customer incentives unavailable", "error")); }));
+    const visibilityManager = body.querySelector<HTMLSelectElement>('[name="show_customer_incentives_to_manager"]');
+    const visibilitySalesperson = body.querySelector<HTMLSelectElement>('[name="show_customer_incentives_to_salesperson"]');
+    const visibilitySave = body.querySelector<HTMLButtonElement>("[data-save-customer-incentive-visibility]");
+    const initialVisibility = {
+      manager: Boolean(visibility.show_customer_incentives_to_manager),
+      salesperson: Boolean(visibility.show_customer_incentives_to_salesperson),
+    };
+    const syncVisibilitySaveState = () => {
+      if (!visibilitySave) return;
+      const manager = visibilityManager?.value === "true";
+      const salesperson = visibilitySalesperson?.value === "true";
+      visibilitySave.disabled = manager === initialVisibility.manager && salesperson === initialVisibility.salesperson;
+    };
+    visibilityManager?.addEventListener("change", syncVisibilitySaveState);
+    visibilitySalesperson?.addEventListener("change", syncVisibilitySaveState);
+    syncVisibilitySaveState();
+    visibilitySave?.addEventListener("click", async () => {
+      const manager = body.querySelector<HTMLSelectElement>('[name="show_customer_incentives_to_manager"]')?.value === "true";
+      const salesperson = body.querySelector<HTMLSelectElement>('[name="show_customer_incentives_to_salesperson"]')?.value === "true";
+      visibilitySave.disabled = true;
+      try { await adminApi.updateCustomerIncentiveVisibility({ show_customer_incentives_to_manager: manager, show_customer_incentives_to_salesperson: salesperson }); toast("Customer incentive visibility saved"); }
+      catch (error) { toast(error instanceof Error ? error.message : "Visibility settings could not be saved", "error"); }
+      finally { syncVisibilitySaveState(); }
+    });
+    await load();
+  } catch (error) {
+    body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Customer incentives unavailable")}</div>`;
+  }
+  refreshIcons(page);
+  return page;
 }
 
 export async function legacyCreditNotesPage(): Promise<HTMLElement> {

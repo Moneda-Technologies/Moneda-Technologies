@@ -30,7 +30,7 @@ class OtpService:
         trace_id = request_id or "otp-untracked"
         email = email.lower().strip()
         user = self.store.find_one("users", {"email": email})
-        if purpose in {"login", "reset"} and not user:
+        if purpose in {"login", "reset"} and (not user or str(user.get("role_id") or "") != "superadmin"):
             return False
         if purpose == "signup" and user:
             return False

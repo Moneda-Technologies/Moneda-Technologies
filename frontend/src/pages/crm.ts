@@ -25,7 +25,8 @@ function leadCard(lead: Record<string, unknown>): string {
 }
 
 function customerOptions(selected: string): string {
-  return `<option value="">All Customers</option>${appStore.state.customers.map((customer) => `<option value="${escapeHtml(customerId(customer as unknown as Record<string, unknown>))}" ${customerId(customer as unknown as Record<string, unknown>) === selected ? "selected" : ""}>${escapeHtml(customerLabel(customer as unknown as Record<string, unknown>))}</option>`).join("")}`;
+  const scopeLabel = appStore.state.user?.customer_access_global === true ? "All Customers" : "All Assigned Customers";
+  return `<option value="">${scopeLabel}</option>${appStore.state.customers.map((customer) => `<option value="${escapeHtml(customerId(customer as unknown as Record<string, unknown>))}" ${customerId(customer as unknown as Record<string, unknown>) === selected ? "selected" : ""}>${escapeHtml(customerLabel(customer as unknown as Record<string, unknown>))}</option>`).join("")}`;
 }
 
 function openLeadEditor(preselectedCustomerId: string, reload: () => Promise<void>): void {
@@ -66,7 +67,7 @@ export async function crmPage(): Promise<HTMLElement> {
     if (!filters && initialCustomer) query.set("customer_id", initialCustomer);
     const data = await crmApi.leads(query.toString());
     const selectedId = selectedFilter;
-    const selectedName = selectedId ? customerLabel((appStore.state.customers.find((item) => customerId(item as unknown as Record<string, unknown>) === selectedId) ?? {}) as unknown as Record<string, unknown>) : "All Customers";
+    const selectedName = selectedId ? customerLabel((appStore.state.customers.find((item) => customerId(item as unknown as Record<string, unknown>) === selectedId) ?? {}) as unknown as Record<string, unknown>) : (appStore.state.user?.customer_access_global === true ? "All Customers" : "All Assigned Customers");
     const owners = [...new Map(data.items.map((row) => [String(row.owner_user_id ?? ""), String(row.owner_name ?? "Unassigned")])).entries()].filter(([id]) => id);
     const countries = [...new Set(appStore.state.customers.map((item) => item.country_name ?? item.country).filter(Boolean))] as string[];
     const regions = [...new Set(appStore.state.customers.map((item) => item.continent ?? item.region?.continent).filter(Boolean))] as string[];

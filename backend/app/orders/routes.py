@@ -12,7 +12,7 @@ from flask import Blueprint, Response, current_app, request
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.codes import available_customer_code
-from app.finance.service import IncentiveConfigurationError, create_incentive_for_order, payment_rollup, validate_incentive_configuration
+from app.finance.service import IncentiveConfigurationError, cancel_unpaid_incentives_for_order, create_incentive_for_order, has_payout_link, is_voided_or_deleted_payment, linked_records_for_order, money, payment_rollup, validate_incentive_configuration
 from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
@@ -363,16 +363,19 @@ def list_orders():
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     store = current_app.extensions["store"]
     user = current_user() or {}
+    # Deleted OCs remain in storage for audit/history, but are not part of the
+    # normal operational list.
+    not_deleted = {"status": {"$ne": "Deleted"}}
     if customer_id:
         if str(user.get("role_id") or "") != "superadmin" and not _customer_access(user, str(customer_id)):
             return failure("Customer access denied", status=403)
-        query: dict = {"$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+        query: dict = {**not_deleted, "$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
     else:
         if str(user.get("role_id") or "") == "superadmin":
-            query = {}
+            query = not_deleted
         else:
             customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
-            query = ({"$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
+            query = ({**not_deleted, "$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
     if request.args.get("status"):
         query["status"] = request.args["status"]
     rows, total = store.list("orders", query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
@@ -411,7 +414,7 @@ def list_orders():
 def get_order(order_id: str):
     store = current_app.extensions["store"]
     order = store.find_one("orders", {"_id": order_id})
-    if not order:
+    if not order or order.get("status") == "Deleted":
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
@@ -429,6 +432,79 @@ def get_order(order_id: str):
         "pending_payment_count": rollup["pending_payment_count"],
     })
     return success(order)
+
+
+@bp.delete("/orders/<order_id>")
+@permission_required("orders.delete")
+def delete_order(order_id: str):
+    """Hide an OC from operations without destroying financial history."""
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    if not order or order.get("status") == "Deleted":
+        return failure("Order not found", status=404)
+    if not _can_access_order_record(order):
+        return failure("Customer access denied", status=403)
+    linked_payments, _ = store.list("payments", {"$or": [{"order_id": order_id}, {"oc_id": order_id}]}, limit=100_000)
+    active_payments = [payment for payment in linked_payments if not is_voided_or_deleted_payment(payment)]
+    if active_payments:
+        return failure(
+            "This Order Confirmation cannot be deleted while an active payment is linked to it. Void the payment first.",
+            status=409, error="ORDER_HAS_ACTIVE_PAYMENT",
+            details={"payment_ids": [str(payment.get("_id")) for payment in active_payments]},
+        )
+    linked_incentives = linked_records_for_order(store, "incentives", order_id)
+    paid_incentives = [row for row in linked_incentives if str(row.get("status") or "").upper() == "PAID" or money(row.get("paid_amount")) > 0 or has_payout_link(row)]
+    linked_allocations = linked_records_for_order(store, "incentive_allocations", order_id)
+    paid_allocations = [row for row in linked_allocations if str(row.get("status") or "").upper() == "PAID" or money(row.get("paid_amount")) > 0 or has_payout_link(row)]
+    if paid_incentives or paid_allocations:
+        return failure("This Order Confirmation has a paid incentive and cannot be deleted.", status=409, error="ORDER_HAS_PAID_INCENTIVE")
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or request.args.get("reason") or "Deleted from Order Confirmations")[:500].strip()
+    now = utcnow()
+    linked_counts = {}
+    for collection, query in (
+        ("payments", {"$or": [{"order_id": order_id}, {"oc_id": order_id}]}),
+        ("incentives", {"$or": [{"order_id": order_id}, {"oc_id": order_id}]}),
+        ("incentive_allocations", {"$or": [{"order_id": order_id}, {"oc_id": order_id}]}),
+        ("order_documents", {"order_id": order_id}),
+    ):
+        linked_counts[collection] = store.list(collection, query, limit=100_000)[1]
+    now = utcnow()
+    actor_id = (current_user() or {}).get("_id")
+    incentive_result = cancel_unpaid_incentives_for_order(store, order_id, actor_id=actor_id, reason=reason)
+    updated = store.update_one("orders", {"_id": order_id}, {
+        "status": "Deleted",
+        "document_status": "Deleted",
+        "deleted_at": now,
+        "deleted_by": (current_user() or {}).get("_id"),
+        "deletion_reason": reason,
+        "incentive_cancellation": incentive_result,
+    }) or {**order, "status": "Deleted"}
+    audit("ORDER_CONFIRMATION_DELETED", "order", order_id, {
+        "reason": reason,
+        "previous_state": order.get("status", "Pending"),
+        "linked_records": linked_counts, "incentives": incentive_result,
+    })
+    quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "")
+    quotation_restored = False
+    if quotation_id:
+        quotation = store.find_one("quotations", {"_id": quotation_id})
+        if quotation and str(quotation.get("status") or "").casefold() == "converted to order":
+            quotation_history = [*(quotation.get("history") or []), {"status": "Sent", "at": now, "by": actor_id, "reason": "Order Confirmation deleted", "order_id": order_id}]
+            relationship_reset = {
+                "status": "Sent", "history": quotation_history,
+                "converted_order_id": None, "converted_oc_id": None, "converted_at": None,
+            }
+            # These legacy aliases are only cleared when they point to the
+            # order being deleted; unrelated quotation metadata is preserved.
+            if str(quotation.get("order_id") or "") == order_id:
+                relationship_reset["order_id"] = None
+            if str(quotation.get("oc_id") or "") == order_id:
+                relationship_reset["oc_id"] = None
+            store.update_one("quotations", {"_id": quotation_id}, relationship_reset)
+            quotation_restored = True
+            audit("quotation.restored_after_order_delete", "quotation", quotation_id, {"order_id": order_id, "status": "Sent"})
+    return success({"_id": updated.get("_id"), "status": "Deleted", "incentives": incentive_result, "quotation_restored": quotation_restored}, "Order Confirmation deleted")
 
 
 @bp.post("/orders/<order_id>/send-confirmation")
@@ -566,10 +642,12 @@ def convert_quotation(quotation_id: str):
     if idempotency_key:
         existing_by_key = store.find_one("orders", {"customer_id": quotation_customer_id, "idempotency_key": idempotency_key})
         if existing_by_key:
+            existing_by_key["idempotent_replay"] = True
             return success(existing_by_key, "Order Confirmation already created")
     existing = store.find_one("orders", {"quotation_id": quotation_id})
     if existing:
-        return failure("Quotation is already linked to an order", status=409)
+        existing["idempotent_replay"] = True
+        return success(existing, "Order Confirmation already created")
     try:
         additional_recipients = _additional_recipients(payload)
         payment_terms = _validated_payment_terms(payload.get("payment_terms"), quotation.get("payment_terms"))
@@ -599,6 +677,7 @@ def convert_quotation(quotation_id: str):
         "manager_id_at_creation": user.get("manager_id"),
         "manager_at_creation": manager_snapshot(store, user),
         "client_type_at_creation": quotation.get("client_type_at_creation") or customer_client_type(quotation.get("customer_snapshot") or {}),
+        "account_type_at_creation": quotation.get("account_type_at_creation") or ("DEALER" if quotation.get("client_type_at_creation") == "DEALER" else "DISTRIBUTOR"),
         "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
@@ -614,6 +693,7 @@ def convert_quotation(quotation_id: str):
         "created_at": now, "document_status": "Pending", "email_status": "Pending",
         "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
         "additional_recipients": additional_recipients,
+        "conversion_state": "PROCESSING",
         "history": [{"status": "Pending", "at": now, "by": (current_user() or {}).get("_id")}],
     }
     if idempotency_key:
@@ -630,7 +710,8 @@ def convert_quotation(quotation_id: str):
     with _CONVERSION_LOCK:
         existing = store.find_one("orders", {"quotation_id": quotation_id})
         if existing:
-            return failure("Quotation is already linked to an order", status=409)
+            existing["idempotent_replay"] = True
+            return success(existing, "Order Confirmation already created")
         try:
             # Allocate the customer-scoped OC sequence only after the
             # idempotency check is held under the conversion lock.
@@ -643,7 +724,8 @@ def convert_quotation(quotation_id: str):
             if exc.__class__.__name__ == "DuplicateKeyError":
                 existing = store.find_one("orders", {"quotation_id": quotation_id})
                 if existing:
-                    return failure("Quotation is already linked to an order", status=409)
+                    existing["idempotent_replay"] = True
+                    return success(existing, "Order Confirmation already created")
             raise
     try:
         order_pdf, order = _ensure_order_pdf(order)
@@ -702,6 +784,9 @@ def convert_quotation(quotation_id: str):
             current_app.logger.exception("order confirmation email after conversion failed order_id=%s", order.get("_id"))
             _mark_order_email_failed(order, exc)
             order = {**order, "email_status": "Failed", "email_error": str(getattr(exc, "error_code", "MESSAGE_SUBMISSION_FAILED"))}
+    order = store.update_one("orders", {"_id": order.get("_id")}, {
+        "conversion_state": "COMPLETE", "conversion_completed_at": utcnow(),
+    }) or order
     order["incentive_id"] = incentive.get("_id")
     return success(order, "Order Confirmation created", 201)
 

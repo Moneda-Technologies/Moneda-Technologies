@@ -136,6 +136,13 @@ export interface PricingResource {
   };
   price_updated_at?: string;
   price_updated_by?: string;
+  account_type?: "DISTRIBUTOR" | "DEALER";
+  pricing_scope?: "SHARED" | "ACCOUNT_TYPE";
+  source_document?: string;
+  pricing_note?: string;
+  configured_override_count?: number;
+  valid_from?: string;
+  valid_until?: string;
 }
 
 export interface PriceHistoryEntry {
@@ -164,6 +171,13 @@ export interface Customer {
   company_name?: string;
   name: string;
   client_type?: ClientType;
+  account_type?: "DISTRIBUTOR" | "DEALER" | null;
+  have_to_give_incentive?: boolean;
+  incentive_bearer_name?: string | null;
+  incentive_designation?: string | null;
+  customer_incentive_percentage?: number | null;
+  incentive_visible_to_managers?: boolean;
+  incentive_visible_to_salespersons?: boolean;
   contact_name?: string;
   email?: string;
   phone?: string;
@@ -316,7 +330,7 @@ export interface PageResult<T> {
   items: T[];
   pagination?: { page: number; limit: number; total: number; pages?: number };
   total?: number;
-  scope?: "own" | "all";
+  scope?: "own" | "team" | "all";
 }
 
 export interface DashboardData {

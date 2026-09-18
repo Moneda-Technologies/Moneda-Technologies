@@ -10,7 +10,7 @@ from app.pricing.engine import PricingUnavailable, calculate_line, resolve_mpack
 from app.customers.metadata import resolve_customer_currency
 from app.customers.countries import countries as country_catalogue
 from app.catalog.service import get_active_catalog_product, get_active_catalog_products
-from app.services.business_logic import customer_client_type
+from app.services.business_logic import pricing_client_type
 
 
 bp = Blueprint("catalog", __name__, url_prefix="/api")
@@ -314,7 +314,7 @@ def price_preview(product_id: str):
             privileged_discount="pricing.discount.override" in user.get("permissions", []),
             adjustments=resolve_product_adjustments(store, product_row, configuration), business_rules=settings,
             apply_tax=False, tax_mode_override="no_tax",
-            client_type=customer_client_type(customer_company),
+            client_type=pricing_client_type(customer_company),
             client_pricing=store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {},
         )
         line["display_currency"] = currency

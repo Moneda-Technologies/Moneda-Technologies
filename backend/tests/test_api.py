@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from datetime import timedelta
 from io import BytesIO
 from email.utils import parsedate_to_datetime
@@ -16,6 +17,7 @@ from app.finance.service import IncentiveConfigurationError, create_incentive_fo
 from app.middleware.access import repair_customer_assignments
 from app.orders.routes import _next_oc_number
 from app.repositories.store import build_store, utcnow
+from auth_helpers import complete_password_otp_login
 
 
 COMPANY = "company-moneda-demo"
@@ -96,22 +98,57 @@ def test_customer_creation_rejects_country_region_mismatch(authenticated):
 
 
 def test_password_login_accepts_username_and_user_id(client):
-    response = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "123@Admin"})
-    assert response.status_code == 200
-    cookie = "\n".join(response.headers.getlist("Set-Cookie"))
+    password = client.post("/api/v1/auth/login", json={"identifier": "Admin", "password": "123@Admin"})
+    assert password.status_code == 200
+    cookie = "\n".join(password.headers.getlist("Set-Cookie"))
     assert "session=" in cookie and "HttpOnly" in cookie and "SameSite=Lax" in cookie and "Path=/" in cookie
-    assert response.json["data"]["next_step"] == "company-selection"
-    me = client.get("/api/v1/me")
-    assert me.status_code == 200
-    assert me.json["data"]["user"]["username"] == "Admin"
+    assert password.json["data"]["next_step"] in {"company-selection", "customer-selection", "device-approval-pending"}
+    assert client.get("/api/v1/me").status_code == 200
+    assert client.get("/api/v1/me").json["data"]["user"]["username"] == "Admin"
 
     client.post("/api/v1/auth/logout", json={})
-    by_id = client.post("/api/v1/auth/login", json={"identifier": "user-demo-admin", "password": "123@Admin"})
+    _by_id, by_id = complete_password_otp_login(client.application, client, "user-demo-admin", "123@Admin")
     assert by_id.status_code == 200
 
     client.post("/api/v1/auth/logout", json={})
-    by_username = client.post("/api/v1/auth/login", json={"username": "Username Admin", "password": "123@Admin"})
+    _by_username, by_username = complete_password_otp_login(client.application, client, "Username Admin", "123@Admin")
     assert by_username.status_code == 200
+
+
+def test_login_otp_rejects_wrong_expired_and_reused_codes_and_supports_resend(app, client):
+    store = app.extensions["store"]
+    store.update_one("users", {"_id": "user-demo-admin"}, {"email": "admin@monedatechnologies.com"})
+
+    email = "admin@monedatechnologies.com"
+    login = client.post("/api/v1/auth/request-otp", json={"email": email, "purpose": "login"})
+    assert login.status_code == 200
+    assert client.get("/api/v1/me").status_code == 401
+
+    wrong = client.post("/api/v1/auth/verify-otp", json={"email": email, "code": "000000", "purpose": "login"})
+    assert wrong.status_code == 400
+    challenge = store.find_one("otp_challenges", {"email": email, "purpose": "login", "used": False})
+    assert challenge is not None
+    store.update_one("otp_challenges", {"_id": challenge["_id"]}, {"resend_after": utcnow() - timedelta(seconds=1)})
+    resent = client.post("/api/v1/auth/request-otp", json={"email": email, "purpose": "login"})
+    assert resent.status_code == 200
+
+    message = [item for item in app.extensions["email_provider"].messages if email in (item.get("to") or []) and "Secure login code" in item.get("subject", "")][-1]
+    code = re.search(r"<strong>(\d{6})</strong>", message["html"]).group(1)
+    verified = client.post("/api/v1/auth/verify-otp", json={"email": email, "code": code, "purpose": "login"})
+    assert verified.status_code == 200
+    assert client.get("/api/v1/me").status_code == 200
+    reused = client.post("/api/v1/auth/verify-otp", json={"email": email, "code": code, "purpose": "login"})
+    assert reused.status_code == 403
+
+    client.post("/api/v1/auth/logout", json={})
+    client.post("/api/v1/auth/logout", json={})
+    login_again = client.post("/api/v1/auth/request-otp", json={"email": email, "purpose": "login"})
+    assert login_again.status_code == 200
+    expired = store.find_one("otp_challenges", {"email": email, "purpose": "login", "used": False})
+    store.update_one("otp_challenges", {"_id": expired["_id"]}, {"expires_at": utcnow() - timedelta(seconds=1)})
+    expired_response = client.post("/api/v1/auth/verify-otp", json={"email": email, "code": "000000", "purpose": "login"})
+    assert expired_response.status_code == 400
+    assert client.get("/api/v1/me").status_code == 401
 
 
 def test_workspace_watermark_defaults_on_and_is_superadmin_configurable(authenticated):
@@ -137,6 +174,22 @@ def test_password_login_rejects_invalid_credentials(client):
     assert response.json["message"] == "Invalid username or password"
 
 
+def test_password_login_is_immediate_for_every_application_role(app, client):
+    """Every normal role can complete the password login without OTP."""
+    roles = ("superadmin", "admin", "manager_sales_admin", "user")
+    for index, role_id in enumerate(roles):
+        user = add_test_user(app, f"otp-role-{index}", role_id=role_id)
+        password = client.post("/api/v1/auth/login", json={
+            "identifier": user["username"], "password": "Secure123",
+        })
+        assert password.status_code == 200
+        payload = password.json["data"]
+        assert payload["next_step"] in {"company-selection", "customer-selection", "device-approval-pending"}
+        assert client.get("/api/v1/me").status_code == 200
+        assert client.get("/api/v1/me").json["data"]["user"]["role_id"] == role_id
+        assert client.post("/api/v1/auth/logout", json={}).status_code == 200
+
+
 def test_logout_invalidates_session(client):
     assert client.post("/api/v1/auth/demo", json={}).status_code == 200
     assert client.get("/api/v1/me").status_code == 200
@@ -144,19 +197,33 @@ def test_logout_invalidates_session(client):
     assert client.get("/api/v1/me").status_code == 401
 
 
-def test_otp_does_not_claim_delivery_when_mail_api_fails(app, client):
+def test_password_login_does_not_use_otp_delivery(app, client):
     class FailingProvider:
         def send(self, **_kwargs):
             raise RuntimeError("Mail API rejected the request")
 
     app.extensions["otp_service"].email_provider = FailingProvider()
-    user = app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {"email": "demo@moneda.example"})
+    before = app.extensions["store"].count("otp_challenges")
+    response = client.post("/api/v1/auth/login", json={"identifier": "user-demo-admin", "password": "123@Admin"})
+    assert response.status_code == 200
+    assert app.extensions["store"].count("otp_challenges") == before
+    assert client.get("/api/v1/me").status_code == 200
+
+
+def test_non_superadmin_email_otp_is_blocked_without_challenge(app, client):
+    user = add_test_user(app, "otp-normal-user", role_id="user")
+    before = app.extensions["store"].count("otp_challenges")
+
     response = client.post("/api/v1/auth/request-otp", json={"email": user["email"], "purpose": "login"})
-    assert response.status_code == 503
-    assert "could not be sent" in response.json["message"].lower()
-    assert app.extensions["store"].count("otp_challenges") == 1
-    challenge = app.extensions["store"].find_one("otp_challenges", {"email": user["email"].lower()})
-    assert challenge["used"] is True
+
+    assert response.status_code == 403
+    assert response.json["message"] == (
+        "Email OTP login is available only for Superadmin accounts. "
+        "Please contact your Superadmin to change or reset your password."
+    )
+    assert response.json["error"] == "superadmin_otp_required"
+    assert app.extensions["store"].count("otp_challenges") == before
+    assert client.get("/api/v1/me").status_code == 401
 
 
 def test_non_demo_store_fails_fast_without_mongodb_uri():
@@ -462,15 +529,18 @@ def test_mpack_machine_price_list_is_structured_and_server_authoritative(app, au
     assert response.status_code == 200
     line = response.json["data"]["line"]
     assert line["pricing_unit"] == "box"
+    # The demo issuer is migrated to the Distributor account type, so this
+    # preview must resolve the distributor matrix (the Dealer matrix is
+    # covered by the Price Lists API tests).
     assert line["price_per_sheet_eur"] == 0.221
-    assert line["price_per_box_eur"] == 22.06
+    assert line["price_per_box_eur"] == 44.11
     assert line["discounted_price_per_sheet_eur"] == 0.221
-    assert line["discounted_price_per_box_eur"] == 22.06
+    assert line["discounted_price_per_box_eur"] == 44.11
     assert line["sheets_per_box"] == 100
-    assert line["master_subtotal"] == 44.12
-    assert line["master_final_total"] == 44.12
-    assert line["configuration"]["price_per_box_eur"] == 22.06
-    assert line["configuration"]["total_eur"] == 44.12
+    assert line["master_subtotal"] == 88.22
+    assert line["master_final_total"] == 88.22
+    assert line["configuration"]["price_per_box_eur"] == 44.11
+    assert line["configuration"]["total_eur"] == 88.22
 
     added = authenticated.post("/api/v1/cart/items", json={
         "company_id": COMPANY, "product_id": "mtech-mpack", "quantity": 2,
@@ -478,8 +548,8 @@ def test_mpack_machine_price_list_is_structured_and_server_authoritative(app, au
     })
     assert added.status_code == 201
     assert added.json["data"]["pricing_preview"]["description"] == "Calibrated underpacking material."
-    assert added.json["data"]["configuration"]["price_per_box_eur"] == 22.06
-    assert added.json["data"]["configuration"]["total_eur"] == 44.12
+    assert added.json["data"]["configuration"]["price_per_box_eur"] == 44.11
+    assert added.json["data"]["configuration"]["total_eur"] == 88.22
 
 
 def test_mpack_rejects_machine_size_not_in_official_matrix(authenticated):
@@ -623,6 +693,26 @@ def test_sent_quotation_can_be_resent_without_duplication_and_logs_event(app, au
     failure_logs, failure_total = app.extensions["store"].list("email_logs", {"quotation_id": quotation_id}, limit=10)
     assert failure_total == 3
     assert any(row["event"] == "resend" and row["submission_status"] == "failed" for row in failure_logs)
+
+
+def test_quotation_without_customer_email_accepts_one_off_recipient(app, authenticated):
+    configure_product(app, base_price=10)
+    app.extensions["store"].update_one("customers", {"_id": COMPANY}, {"email": "-"})
+    app.extensions["store"].update_one("users", {"_id": "user-demo-admin"}, {"email": "salesperson@monedatechnologies.com"})
+    assert authenticated.post("/api/v1/cart/items", json={
+        "company_id": COMPANY, "product_id": "mtech-mpack", "currency": "EUR", "quantity": 1,
+        "configuration": {"length": 1000, "width": 1000, "dimension_unit": "mm", "thickness_micron": 100},
+    }).status_code == 201
+    created = authenticated.post("/api/v1/quotations", json={"company_id": COMPANY, "currency": "EUR"})
+    assert created.status_code == 201
+    quotation_id = created.json["data"]["_id"]
+
+    sent = authenticated.post(f"/api/v1/quotations/{quotation_id}/send", json={"to": "recipient@example.com"})
+
+    assert sent.status_code == 200
+    stored = app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    assert stored["to"] == ["recipient@example.com"]
+    assert app.extensions["email_provider"].messages[-1]["to"] == ["recipient@example.com"]
 
 
 def test_customer_specific_quotation_sequences_are_independent(app, authenticated):

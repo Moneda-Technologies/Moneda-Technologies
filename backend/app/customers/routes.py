@@ -9,7 +9,7 @@ from app.middleware.access import can_view_all_customers, customer_record, curre
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
-from app.services.business_logic import normalize_client_type
+from app.services.business_logic import normalize_client_type, customer_account_type, validate_customer_incentive_config
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
@@ -21,11 +21,47 @@ FIELDS = {
     "default_tax_rate", "default_tax_mode", "tax_enabled", "assigned_salesperson", "credit_limit",
     "notes", "status", "active", "continent", "country_code", "country_name", "region",
     "tax_profile", "custom_payment_days", "payment_terms_display",
-    "client_type",
+    "client_type", "account_type",
+    "have_to_give_incentive", "incentive_bearer_name", "incentive_designation", "customer_incentive_percentage",
+    "incentive_visible_to_managers", "incentive_visible_to_salespersons",
+}
+
+CUSTOMER_INCENTIVE_FIELDS = {
+    "have_to_give_incentive", "incentive_bearer_name", "incentive_designation", "customer_incentive_percentage",
+    "incentive_visible_to_managers", "incentive_visible_to_salespersons",
 }
 
 
-def _view(row: dict) -> dict:
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _customer_incentive_visible(row: dict, actor: dict | None = None) -> bool:
+    """Apply the global visibility guard and the customer's explicit opt-in."""
+    actor = actor or current_user() or {}
+    role = str(actor.get("role_id") or "")
+    if role == "superadmin":
+        return True
+    settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
+    if role in {"manager", "manager_sales_admin"}:
+        global_enabled = bool(settings.get("show_customer_incentives_to_manager", False))
+        field = "incentive_visible_to_managers"
+    elif role == "user":
+        global_enabled = bool(settings.get("show_customer_incentives_to_salesperson", False))
+        field = "incentive_visible_to_salespersons"
+    else:
+        return False
+    # Legacy customer records predate per-customer visibility. Preserve the
+    # existing global setting for those records until an admin edits them.
+    customer_enabled = global_enabled if field not in row else _as_bool(row.get(field))
+    return global_enabled and customer_enabled
+
+
+def _view(row: dict, *, include_sensitive: bool | None = None) -> dict:
     customer = {**row}
     customer.setdefault("customer_id", customer.get("_id"))
     customer.setdefault("company_name", customer.get("name"))
@@ -35,7 +71,31 @@ def _view(row: dict) -> dict:
     customer["default_currency"] = preferred_currency
     customer.setdefault("active", customer.get("status", "active") != "archived")
     customer["client_type"] = normalize_client_type(customer.get("client_type"))
+    customer["account_type"] = customer_account_type(customer)
+    if include_sensitive is None:
+        include_sensitive = _customer_incentive_visible(customer)
+    if not include_sensitive:
+        for field in CUSTOMER_INCENTIVE_FIELDS:
+            customer.pop(field, None)
     return customer
+
+
+def _customer_incentive_changes(raw: dict, existing: dict | None = None) -> tuple[dict, str | None]:
+    """Return validated customer incentive fields, preserving omitted edits."""
+    existing = existing or {}
+    enabled = raw.get("have_to_give_incentive", existing.get("have_to_give_incentive", False))
+    bearer = raw.get("incentive_bearer_name", existing.get("incentive_bearer_name"))
+    designation = raw.get("incentive_designation", existing.get("incentive_designation"))
+    percentage = raw.get("customer_incentive_percentage", existing.get("customer_incentive_percentage"))
+    value, error = validate_customer_incentive_config(enabled, bearer, designation, percentage)
+    if value is not None:
+        if value.get("have_to_give_incentive"):
+            value["incentive_visible_to_managers"] = _as_bool(raw.get("incentive_visible_to_managers"), _as_bool(existing.get("incentive_visible_to_managers")))
+            value["incentive_visible_to_salespersons"] = _as_bool(raw.get("incentive_visible_to_salespersons"), _as_bool(existing.get("incentive_visible_to_salespersons")))
+        else:
+            value["incentive_visible_to_managers"] = False
+            value["incentive_visible_to_salespersons"] = False
+    return value or {}, error
 
 
 def _permitted_query() -> dict:
@@ -87,6 +147,7 @@ def list_customers():
         query = _permitted_query()
         status = request.args.get("status")
         client_type_filter = str(request.args.get("client_type") or "").strip().upper()
+        account_type_filter = str(request.args.get("account_type") or "").strip().upper()
         if not status:
             # The directory's All view intentionally includes archived records;
             # authorization is still enforced by the assignment/global query.
@@ -98,6 +159,8 @@ def list_customers():
                 query.pop("active", None)
         if client_type_filter in {"WHOLESALER", "DEALER", "CUSTOMER"}:
             query["client_type"] = client_type_filter
+        if account_type_filter in {"DISTRIBUTOR", "DEALER"}:
+            query["account_type"] = account_type_filter
         term = request.args.get("search", "").strip()[:100]
         if term:
             query = {"$and": [query, {"$or": [{field: {"$regex": re.escape(term)}} for field in ("name", "company_name", "contact_name", "email", "phone")]}]}
@@ -113,6 +176,9 @@ def list_customers():
 @permission_required("customers.create")
 def create_customer():
     raw = request.get_json(silent=True) or {}
+    actor = current_user() or {}
+    if CUSTOMER_INCENTIVE_FIELDS.intersection(raw) and str(actor.get("role_id") or "") != "superadmin":
+        return failure("Only a Superadmin can configure customer incentives", status=403, error="customer_incentive_configuration_forbidden")
     payload = {key: value for key, value in raw.items() if key in FIELDS}
     name = str(payload.get("name") or payload.get("company_name") or "").strip()
     if not name:
@@ -134,6 +200,13 @@ def create_customer():
     payload.setdefault("preferred_currency", payload.get("default_currency", "EUR"))
     payload.setdefault("default_currency", payload["preferred_currency"])
     payload.setdefault("assigned_salesperson", (current_user() or {}).get("_id"))
+    if str(actor.get("role_id") or "") == "superadmin":
+        incentive_changes, incentive_error = _customer_incentive_changes(raw)
+        if incentive_error:
+            return failure(incentive_error, error="invalid_customer_incentive_configuration", status=422)
+        payload.update(incentive_changes)
+    else:
+        payload.update({"have_to_give_incentive": False, "incentive_bearer_name": None, "incentive_designation": None, "customer_incentive_percentage": None, "incentive_visible_to_managers": False, "incentive_visible_to_salespersons": False})
     creator_id = (current_user() or {}).get("_id")
     payload["created_by_user_id"] = creator_id
     payload["assigned_user_ids"] = list(dict.fromkeys([creator_id])) if creator_id else []
@@ -175,7 +248,11 @@ def update_customer(customer_id: str):
         return failure("Customer not found", status=404)
     if not enforce_customer(customer_id):
         return failure("Customer access denied", status=403)
-    changes = {key: value for key, value in (request.get_json(silent=True) or {}).items() if key in FIELDS}
+    raw = request.get_json(silent=True) or {}
+    actor = current_user() or {}
+    if CUSTOMER_INCENTIVE_FIELDS.intersection(raw) and str(actor.get("role_id") or "") != "superadmin":
+        return failure("Only a Superadmin can configure customer incentives", status=403, error="customer_incentive_configuration_forbidden")
+    changes = {key: value for key, value in raw.items() if key in FIELDS}
     if "company_name" in changes and "name" not in changes:
         changes["name"] = str(changes["company_name"]).strip()
     if "name" in changes:
@@ -185,6 +262,11 @@ def update_customer(customer_id: str):
     if error:
         return failure(validation_message(error), error=error, status=422)
     changes = normalized or changes
+    if CUSTOMER_INCENTIVE_FIELDS.intersection(raw):
+        incentive_changes, incentive_error = _customer_incentive_changes(raw, existing)
+        if incentive_error:
+            return failure(incentive_error, error="invalid_customer_incentive_configuration", status=422)
+        changes.update(incentive_changes)
     if changes.get("status") and changes["status"] not in {"active", "inactive", "archived"}:
         return failure("Invalid customer status", status=422)
     if changes.get("preferred_currency") and changes["preferred_currency"] not in {"EUR", "USD", "INR"}:
@@ -195,6 +277,22 @@ def update_customer(customer_id: str):
     if not row:
         return failure("Customer not found", status=404)
     audit_details = {"fields": sorted(changes)}
+    if CUSTOMER_INCENTIVE_FIELDS.intersection(changes):
+        audit_details["customer_incentive"] = {
+            "previous_enabled": bool(existing.get("have_to_give_incentive")),
+            "new_enabled": bool(changes.get("have_to_give_incentive", existing.get("have_to_give_incentive"))),
+            "previous_bearer": existing.get("incentive_bearer_name"),
+            "new_bearer": changes.get("incentive_bearer_name", existing.get("incentive_bearer_name")),
+            "previous_designation": existing.get("incentive_designation"),
+            "new_designation": changes.get("incentive_designation", existing.get("incentive_designation")),
+            "previous_percentage": existing.get("customer_incentive_percentage"),
+            "new_percentage": changes.get("customer_incentive_percentage", existing.get("customer_incentive_percentage")),
+            "previous_visible_to_managers": _as_bool(existing.get("incentive_visible_to_managers")),
+            "new_visible_to_managers": _as_bool(changes.get("incentive_visible_to_managers"), _as_bool(existing.get("incentive_visible_to_managers"))),
+            "previous_visible_to_salespersons": _as_bool(existing.get("incentive_visible_to_salespersons")),
+            "new_visible_to_salespersons": _as_bool(changes.get("incentive_visible_to_salespersons"), _as_bool(existing.get("incentive_visible_to_salespersons"))),
+            "changed_by": actor.get("_id"),
+        }
     if "client_type" in changes and changes.get("client_type") != existing.get("client_type"):
         audit_details.update({"old_client_type": normalize_client_type(existing.get("client_type")), "new_client_type": changes.get("client_type")})
     audit("customer.update", "customer", customer_id, audit_details)

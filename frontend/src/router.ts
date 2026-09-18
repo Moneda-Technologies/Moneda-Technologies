@@ -1,70 +1,17 @@
 import { refreshIcons } from "./components/icons";
 import { updateActiveNav } from "./layouts/shell";
-import { adminPage, companiesPage, myBankDetailsPage, profilePage, settingsPage, usersPage } from "./pages/management";
-import { catalogPage } from "./pages/catalog";
-import { crmPage, remindersWorkspacePage } from "./pages/crm";
-import { customerDetailPage, customersPage } from "./pages/customers";
-import { dashboardPage } from "./pages/dashboard";
-import { orderDetailPage, ordersPage } from "./pages/orders";
-import { cartPage, quotationDetailPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "./pages/quotations";
-import { reportDetailPage, reportsPage } from "./pages/reports";
-import { bankingPage, creditNotesPage, customerCreditsPage, incentivesPage, paymentsPage } from "./pages/finance";
-import { companySelectionPage } from "./pages/company-selection";
+import { customerDetailPage } from "./pages/customers";
+import { orderDetailPage } from "./pages/orders";
+import { quotationDetailPage } from "./pages/quotations";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
 import { customerCompanyApi } from "./api";
 import { toast } from "./components/toast";
 import { customerContextSignal } from "./state/customer-context";
+import { routes } from "./state/store";
 
-type PageFactory = () => Promise<HTMLElement>;
+export type PageFactory = () => Promise<HTMLElement>;
 let navigationRevision = 0;
-
-const routes: Record<string, PageFactory> = {
-  "/customer-selection": companySelectionPage,
-  "/company-selection": companySelectionPage,
-  "/calculator": () => companySelectionPage({ preserveCurrent: true, nextPath: "/products" }),
-  "/products": () => catalogPage(),
-  "/products/blankets": () => catalogPage("blankets"),
-  "/products/mpacks": () => catalogPage("mpacks"),
-  "/products/chemicals": () => catalogPage("chemicals"),
-  "/cart": cartPage,
-  "/quotation": quotationPreparationPage,
-  "/quotation/create": quotationPreparationPage,
-  "/quotations/create": quotationPreparationPage,
-  "/quotation-preview": quotationPreviewPage,
-  "/dashboard": dashboardPage,
-  "/catalog": catalogPage,
-  "/customers": customersPage,
-  "/quotations": quotationsPage,
-  "/orders": ordersPage,
-  "/order-confirmations": ordersPage,
-  "/banking": bankingPage,
-  "/payments": paymentsPage,
-  "/incentives": incentivesPage,
-  "/incentives/overview": incentivesPage,
-  "/incentives/rules": incentivesPage,
-  "/incentives/payouts": incentivesPage,
-  "/credit-notes": creditNotesPage,
-  "/customer-credits": customerCreditsPage,
-  "/crm": crmPage,
-  "/reminders": remindersWorkspacePage,
-  "/reports": reportsPage,
-  "/reports/sales-performance": () => reportDetailPage("sales-performance"),
-  "/reports/quotation-analysis": () => reportDetailPage("quotation-analysis"),
-  "/reports/customer-growth": () => reportDetailPage("customer-growth"),
-  "/reports/product-demand": () => reportDetailPage("product-demand"),
-  "/reports/tax-summary": () => reportDetailPage("tax-summary"),
-  "/reports/currency-exposure": () => reportDetailPage("currency-exposure"),
-  "/companies": companiesPage,
-  "/users": usersPage,
-  "/admin": adminPage,
-  "/settings": settingsPage,
-  "/settings/currencies": () => settingsPage("currencies"),
-  "/settings/communication": () => settingsPage("communication"),
-  "/settings/security": () => settingsPage("security"),
-  "/profile": profilePage,
-  "/my-bank-details": myBankDetailsPage,
-};
 
 export async function navigate(path: string, push = true): Promise<void> {
   const requestRevision = ++navigationRevision;

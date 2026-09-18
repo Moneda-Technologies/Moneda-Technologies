@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "currency": "EUR",
+  "valid_from": "2026-07-01",
+  "valid_until": "2026-12-31",
+  "account_types": ["DISTRIBUTOR", "DEALER"],
+  "categories": ["blankets", "underpacking", "chemicals"],
+  "sources": {
+    "blankets": {
+      "dealer": null,
+      "distributor": null,
+      "scope": "shared",
+      "notes": "The supplied RGF documents are MPack underpacking lists, not blanket price lists. Existing blanket pricing remains unchanged."
+    },
+    "underpacking": {
+      "dealer": "Dealer.pdf",
+      "distributor": "Distributor.pdf",
+      "scope": "account_type",
+      "notes": "Dealer.pdf is mapped to DEALER (RGF USA) and Distributor.pdf is mapped to DISTRIBUTOR (RGF EUROPE). Both per-sheet and per-box source values are retained without percentage derivation."
+    },
+    "chemicals": {
+      "dealer": null,
+      "distributor": null,
+      "scope": "account_type",
+      "notes": "No chemicals price source was supplied. Existing canonical catalogue values are preserved."
+    }
+  }
+}

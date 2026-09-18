@@ -157,7 +157,7 @@ export function signupPage(allowedDomains = ["monedatechnologies.com", "chemo.in
 }
 
 export function passwordResetPage(): HTMLElement {
-  const root = authFrame("Reset your password", "A secure verification code will be sent to the registered email.", `<form id="reset-email" class="auth-form"><label>Registered email<div class="input-icon"><i data-lucide="mail"></i><input name="email" type="email" required autocomplete="email"></div></label><button class="button button-primary button-full">Send reset code<i data-lucide="arrow-right"></i></button></form><form id="reset-otp" class="auth-form hidden"><label>Six-digit code<input name="code" class="otp-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button class="button button-primary button-full">Verify code<i data-lucide="arrow-right"></i></button></form><form id="reset-password" class="auth-form hidden"><label>New password<input name="password" type="password" minlength="10" required autocomplete="new-password"></label><label>Confirm password<input name="confirm" type="password" minlength="10" required autocomplete="new-password"></label><button class="button button-primary button-full">Set new password<i data-lucide="shield-check"></i></button></form>`);
+  const root = authFrame("Reset your password", "If your account is eligible, a secure verification code will be sent. Otherwise, contact your Superadmin.", `<form id="reset-email" class="auth-form"><label>Registered email<div class="input-icon"><i data-lucide="mail"></i><input name="email" type="email" required autocomplete="email"></div></label><button class="button button-primary button-full">Send reset code<i data-lucide="arrow-right"></i></button></form><form id="reset-otp" class="auth-form hidden"><label>Six-digit code<input name="code" class="otp-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button class="button button-primary button-full">Verify code<i data-lucide="arrow-right"></i></button></form><form id="reset-password" class="auth-form hidden"><label>New password<input name="password" type="password" minlength="10" required autocomplete="new-password"></label><label>Confirm password<input name="confirm" type="password" minlength="10" required autocomplete="new-password"></label><button class="button button-primary button-full">Set new password<i data-lucide="shield-check"></i></button></form>`);
   enhancePasswordFields(root);
   const emailForm = root.querySelector<HTMLFormElement>("#reset-email")!;
   const otpForm = root.querySelector<HTMLFormElement>("#reset-otp")!;
@@ -165,7 +165,15 @@ export function passwordResetPage(): HTMLElement {
   let email = "";
   emailForm.addEventListener("submit", async (event) => {
     event.preventDefault(); email = String(new FormData(emailForm).get("email") ?? "").trim();
-    try { await authApi.requestOtp(email, "reset"); emailForm.classList.add("hidden"); otpForm.classList.remove("hidden"); toast("Reset code requested", "info"); }
+    try {
+      const result = await authApi.requestOtp(email, "reset");
+      if (result?.next_step === "contact_superadmin") {
+        toast("Please contact your Superadmin to update your password.", "info");
+        return;
+      }
+      emailForm.classList.add("hidden"); otpForm.classList.remove("hidden");
+      toast("If this account is eligible, a verification code was sent. Otherwise, please contact your Superadmin.", "info");
+    }
     catch (error) { toast(authError(error, "Could not request a code"), "error"); }
   });
   otpForm.addEventListener("submit", async (event) => {

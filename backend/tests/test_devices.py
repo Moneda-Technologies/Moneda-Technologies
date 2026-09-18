@@ -2,6 +2,7 @@ from werkzeug.security import generate_password_hash
 import re
 
 from app.devices.service import _notify_superadmins
+from auth_helpers import complete_password_otp_login
 
 
 def _pending_app(app):
@@ -19,9 +20,8 @@ def _pending_app(app):
 def test_new_device_is_pending_and_approval_unlocks_session(app):
     store = _pending_app(app)
     client = app.test_client()
-    login = client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
-    assert login.status_code == 200
-    assert login.json["data"]["device_status"] == "pending"
+    _login, verified = complete_password_otp_login(app, client, "device-user", "Secure123")
+    assert verified.json["data"]["device_status"] == "pending"
     assert client.get("/api/v1/customers").status_code == 403
     device = store.find_one("devices", {"user_id": "device-user"})
     assert device and device["device_status"] == "pending" and "token_hash" in device
@@ -33,7 +33,7 @@ def test_new_device_is_pending_and_approval_unlocks_session(app):
 def test_revoked_device_loses_access_immediately(app):
     store = _pending_app(app)
     client = app.test_client()
-    client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
+    _login, _verified = complete_password_otp_login(app, client, "device-user", "Secure123")
     device = store.find_one("devices", {"user_id": "device-user"})
     store.update_one("devices", {"_id": device["_id"]}, {"device_status": "approved"})
     assert client.get("/api/v1/customers").status_code == 200
@@ -51,8 +51,7 @@ def test_superadmin_is_not_blocked_by_device_gate(app):
         "customer_ids": [], "customer_company_ids": [], "company_ids": [], "device_access_mode": "approved_devices_only",
     })
     client = app.test_client()
-    response = client.post("/api/v1/auth/login", json={"identifier": "superadmin-new-device", "password": "Secure123"})
-    assert response.status_code == 200
+    _login, response = complete_password_otp_login(app, client, "superadmin-new-device", "Secure123")
     assert response.json["data"]["application_access"] is True
     assert client.get("/api/v1/me").json["data"]["application_access"] is True
 
@@ -76,9 +75,14 @@ def test_emergency_access_requires_config_and_real_superadmin_password(app):
 def test_new_pending_device_notifies_superadmins_and_first_email_decision_wins(app):
     store = _pending_app(app)
     client = app.test_client()
-    client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
-    security_messages = app.extensions["email_provider"].messages
-    assert [item["subject"] for item in security_messages] == ["New Moneda device approval required"]
+    _login, _verified = complete_password_otp_login(app, client, "device-user", "Secure123")
+    # Password+OTP delivery is also recorded by the development provider;
+    # assert the security notification independently of that login message.
+    security_messages = [
+        item for item in app.extensions["email_provider"].messages
+        if item["subject"] == "New Moneda device approval required"
+    ]
+    assert len(security_messages) == 1
     assert not any(item["subject"] == "User login detected" for item in security_messages)
     message = next(item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required")
     assert "device-user@monedatechnologies.com" in message["html"]
@@ -95,7 +99,7 @@ def test_new_pending_device_notifies_superadmins_and_first_email_decision_wins(a
 def test_approval_email_is_idempotent_for_one_login_attempt(app):
     store = _pending_app(app)
     client = app.test_client()
-    assert client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"}).status_code == 200
+    _login, _verified = complete_password_otp_login(app, client, "device-user", "Secure123")
     device = store.find_one("devices", {"user_id": "device-user"})
     attempt = store.find_one("login_approvals", {"user_id": "device-user", "status": "pending"})
     assert device and attempt
@@ -113,14 +117,12 @@ def test_approval_email_is_idempotent_for_one_login_attempt(app):
 def test_login_approval_email_has_working_one_time_links_and_isolated_attempts(app):
     store = _pending_app(app)
     client = app.test_client()
-    first = client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
-    assert first.status_code == 200
+    first, _first_verified = complete_password_otp_login(app, client, "device-user", "Secure123")
     first_message = next(item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required")
     assert "Accept Login" in first_message["html"] and "Decline Login" in first_message["html"]
     first_token = re.search(r"/device-approval/([^?'\"]+)", first_message["html"]).group(1)
     # A second authenticated attempt gets a different server-side transaction.
-    second = client.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"})
-    assert second.status_code == 200
+    second, _second_verified = complete_password_otp_login(app, client, "device-user", "Secure123")
     messages = [item for item in app.extensions["email_provider"].messages if item["subject"] == "New Moneda device approval required"]
     second_token = re.search(r"/device-approval/([^?'\"]+)", messages[-1]["html"]).group(1)
     assert first_token != second_token
@@ -134,7 +136,7 @@ def test_login_approval_email_has_working_one_time_links_and_isolated_attempts(a
 def test_denial_requires_reason_and_reinstate_returns_to_pending_with_history(app):
     store = _pending_app(app)
     target = app.test_client()
-    assert target.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"}).status_code == 200
+    _login, _verified = complete_password_otp_login(app, target, "device-user", "Secure123")
     admin = app.test_client()
     assert admin.post("/api/v1/auth/demo", json={}).status_code == 200
     listing = admin.get("/api/v1/admin/users/device-user/devices")
@@ -171,7 +173,7 @@ def test_denial_requires_reason_and_reinstate_returns_to_pending_with_history(ap
 def test_denied_device_delete_requires_reason_and_preserves_audit(app):
     store = _pending_app(app)
     target = app.test_client()
-    assert target.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"}).status_code == 200
+    _login, _verified = complete_password_otp_login(app, target, "device-user", "Secure123")
     admin = app.test_client()
     assert admin.post("/api/auth/demo", json={}).status_code == 200
     device = store.find_one("devices", {"user_id": "device-user"})
@@ -188,7 +190,7 @@ def test_denied_device_delete_requires_reason_and_preserves_audit(app):
 def test_device_details_are_safe_structured_and_audited(app):
     store = _pending_app(app)
     target = app.test_client()
-    assert target.post("/api/v1/auth/login", json={"identifier": "device-user", "password": "Secure123"}).status_code == 200
+    _login, _verified = complete_password_otp_login(app, target, "device-user", "Secure123")
     device = store.find_one("devices", {"user_id": "device-user"})
     assert device and "last_ip" in device
     admin = app.test_client()

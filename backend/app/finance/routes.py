@@ -10,8 +10,14 @@ from app.finance.service import (
     PAYMENT_STATUS_AWAITING,
     PAYMENT_STATUS_CONFIRMED,
     PAYMENT_STATUS_REJECTED,
+    PAYMENT_STATUS_VOIDED,
+    PAYMENT_STATUS_DELETED,
     activate_incentive,
+    has_payout_link,
+    is_voided_or_deleted_payment,
     is_confirmed_payment,
+    incentive_transaction_id,
+    linked_records_for_order,
     money,
     payment_amount,
     payment_rollup,
@@ -61,8 +67,191 @@ def _order(order_id: str):
     return _store().find_one("orders", {"_id": order_id})
 
 
+def _incentive_order(row: dict):
+    return _order(incentive_transaction_id(row))
+
+
+def _incentive_recipient_ids(row: dict) -> set[str]:
+    """Read explicit allocation recipients before falling back to legacy owner fields."""
+    recipients = {
+        str(row.get(field) or "")
+        for field in ("recipient_user_id", "salesperson_id", "manager_user_id", "creator_user_id")
+        if row.get(field)
+    }
+    for line in row.get("incentive_lines") or []:
+        if isinstance(line, dict) and line.get("recipient_user_id"):
+            recipients.add(str(line["recipient_user_id"]))
+    transaction_id = incentive_transaction_id(row)
+    for allocation in linked_records_for_order(_store(), "incentive_allocations", transaction_id) if transaction_id else []:
+        if allocation.get("incentive_id") == row.get("_id") and allocation.get("recipient_user_id"):
+            recipients.add(str(allocation["recipient_user_id"]))
+    return recipients
+
+
 def _superadmin() -> bool:
     return str((current_user() or {}).get("role_id") or "") == "superadmin"
+
+
+def _customer_incentive_visibility(actor: dict | None = None) -> bool:
+    """Return whether this actor may receive customer-incentive details."""
+    actor = actor or current_user() or {}
+    if str(actor.get("role_id") or "") == "superadmin":
+        return True
+    settings = _store().find_one("app_settings", {"_id": "system"}) or {}
+    role = str(actor.get("role_id") or "")
+    if role in {"manager", "manager_sales_admin"}:
+        return bool(settings.get("show_customer_incentives_to_manager", False))
+    if role == "user":
+        return bool(settings.get("show_customer_incentives_to_salesperson", False))
+    return False
+
+
+def _customer_incentive_line(line: dict) -> bool:
+    return str(line.get("recipient_type") or "").upper() == "CUSTOMER" or str(line.get("category_id") or "") == "customer_incentive"
+
+
+CUSTOMER_INCENTIVE_SNAPSHOT_FIELDS = (
+    "customer_incentive_enabled_snapshot", "customer_incentive_bearer_name_snapshot",
+    "customer_incentive_designation_snapshot", "customer_incentive_bearer_designation_snapshot",
+    "customer_incentive_percentage_snapshot", "customer_incentive_base_amount_eur",
+    "customer_incentive_amount_snapshot", "customer_incentive_currency_snapshot",
+)
+
+
+def _serialize_incentive_for_actor(
+    row: dict,
+    actor: dict | None = None,
+    *,
+    view: str = "internal",
+) -> dict:
+    """Return one explicitly scoped internal or customer incentive snapshot.
+
+    A parent incentive contains the immutable OC snapshot for both concepts,
+    but the API never returns those concepts mixed together.  Internal rows
+    are also filtered to the signed-in user's permitted recipient scope.
+    """
+    actor = actor or current_user() or {}
+    result = {**row}
+    lines = [dict(line) for line in (row.get("incentive_lines") or []) if isinstance(line, dict)]
+    customer_lines = [line for line in lines if _customer_incentive_line(line)]
+    if view == "customer":
+        result["incentive_lines"] = customer_lines if _customer_incentive_visibility(actor) else []
+    else:
+        internal_lines = [line for line in lines if not _customer_incentive_line(line)]
+        role = str(actor.get("role_id") or "")
+        actor_id = str(actor.get("_id") or "")
+        if role in {"manager", "manager_sales_admin"}:
+            allowed_recipients = {str(value) for value in accessible_user_ids(_store(), actor) if value}
+            allowed_recipients.add(actor_id)
+            internal_lines = [
+                line for line in internal_lines
+                if str(line.get("recipient_user_id") or "") in allowed_recipients
+            ]
+        elif role == "user":
+            internal_lines = [
+                line for line in internal_lines
+                if str(line.get("recipient_user_id") or "") == actor_id
+            ]
+        result["incentive_lines"] = internal_lines
+        # Customer bearer details are never part of the internal incentive
+        # contract, including for Superadmin.  They remain available through
+        # the dedicated customer-incentives endpoint.
+        for field in CUSTOMER_INCENTIVE_SNAPSHOT_FIELDS:
+            result.pop(field, None)
+
+    visible_total = money(sum(money(line.get("incentive_amount")) for line in result["incentive_lines"]))
+    result["gross_incentive_amount"] = visible_total
+    result["net_payable_incentive"] = max(0.0, visible_total - money(result.get("credit_note_deduction")))
+    result["paid_amount"] = min(money(result.get("paid_amount")), result["net_payable_incentive"])
+    return result
+
+
+def _internal_allocation_views(row: dict, actor: dict | None = None) -> list[dict]:
+    """Flatten one OC snapshot into one API record per internal recipient."""
+    scoped = _serialize_incentive_for_actor(row, actor, view="internal")
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for line in scoped.get("incentive_lines") or []:
+        recipient_id = str(line.get("recipient_user_id") or "")
+        allocation_type = str(line.get("allocation_type") or "creator")
+        if not recipient_id:
+            continue
+        grouped.setdefault((recipient_id, allocation_type), []).append(line)
+
+    views: list[dict] = []
+    for (recipient_id, allocation_type), lines in grouped.items():
+        rates = {float(line.get("incentive_rate_snapshot") or 0) for line in lines}
+        first = lines[0]
+        total = money(sum(money(line.get("incentive_amount")) for line in lines))
+        view = {
+            **scoped,
+            "incentive_lines": lines,
+            "allocation_key": f"{scoped.get('_id')}:{recipient_id}:{allocation_type}",
+            "recipient_user_id": recipient_id,
+            "recipient_role": first.get("recipient_role"),
+            "recipient_type": first.get("recipient_type"),
+            "recipient_snapshot": first.get("recipient_snapshot") or {},
+            "allocation_type": allocation_type,
+            "incentive_percentage_snapshot": next(iter(rates)) if len(rates) == 1 else None,
+            "gross_incentive_amount": total,
+            "net_payable_incentive": total,
+            "paid_amount": min(money(scoped.get("paid_amount")), total),
+        }
+        views.append(view)
+    return views
+
+
+def _allocation_snapshot_views(
+    lines: list[dict],
+    *,
+    status: object = None,
+    payment_status: object = None,
+) -> list[dict]:
+    """Group the already-persisted incentive lines by actual recipient.
+
+    This is a presentation DTO only.  It deliberately reads recipient and
+    rate snapshots from each line instead of resolving today's incentive
+    rules, so historical Order Confirmations remain immutable.
+    """
+    grouped: dict[tuple[str, str, str], list[dict]] = {}
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        is_customer = _customer_incentive_line(line)
+        recipient_id = str(line.get("recipient_user_id") or line.get("customer_id") or "")
+        recipient_type = str(line.get("recipient_type") or ("CUSTOMER" if is_customer else "USER"))
+        allocation_type = str(line.get("allocation_type") or ("customer" if is_customer else "creator"))
+        # A legacy line without an id is still useful in the total view.  Keep
+        # it in a stable group rather than dropping the persisted allocation.
+        key = (recipient_id or f"legacy:{len(grouped)}", allocation_type, recipient_type)
+        grouped.setdefault(key, []).append(line)
+
+    views: list[dict] = []
+    for (recipient_id, allocation_type, recipient_type), grouped_lines in grouped.items():
+        first = grouped_lines[0]
+        snapshot = first.get("recipient_snapshot") if isinstance(first.get("recipient_snapshot"), dict) else {}
+        if recipient_type.upper() == "CUSTOMER":
+            snapshot = {
+                **snapshot,
+                "_id": snapshot.get("_id") or first.get("customer_id"),
+                "name": snapshot.get("name") or first.get("customer_name_snapshot") or first.get("bearer_name_snapshot"),
+            }
+        amount = money(sum(money(line.get("incentive_amount")) for line in grouped_lines))
+        rates = {float(line.get("incentive_rate_snapshot") or 0) for line in grouped_lines}
+        views.append({
+            "recipient_id": None if recipient_id.startswith("legacy:") else recipient_id,
+            "recipient_user_id": first.get("recipient_user_id"),
+            "recipient_type": recipient_type,
+            "recipient_role": first.get("recipient_role") or ("customer" if recipient_type.upper() == "CUSTOMER" else "user"),
+            "recipient_snapshot": snapshot,
+            "recipient_name": snapshot.get("name") or snapshot.get("email") or first.get("customer_name_snapshot") or first.get("bearer_name_snapshot"),
+            "allocation_type": allocation_type,
+            "rate": next(iter(rates)) if len(rates) == 1 else None,
+            "amount": amount,
+            "status": status,
+            "payment_status": payment_status,
+            "lines": grouped_lines,
+        })
+    return views
 
 
 def _user_id(user: dict | None = None) -> str:
@@ -156,23 +345,24 @@ def _can_view_incentive(row: dict, user: dict | None = None) -> bool:
     if str(actor.get("role_id") or "") == "superadmin":
         return True
     actor_id = _user_id(actor)
+    recipient_ids = _incentive_recipient_ids(row)
     if str(actor.get("role_id") or "") in {"manager", "manager_sales_admin"}:
         team_ids = set(accessible_user_ids(_store(), actor))
-        order = _order(str(row.get("order_id") or ""))
+        order = _incentive_order(row)
         owner_ids = _order_owner_ids(order) if order else set()
         return bool(
-            str(row.get("salesperson_id") or "") in team_ids
+            recipient_ids.intersection(team_ids | {actor_id})
+            or str(row.get("salesperson_id") or "") in team_ids
             or owner_ids.intersection(team_ids)
-            or (order and _can_access_order(order, actor))
         )
     if str(actor.get("role_id") or "") == "admin":
         return _customer_access(actor, str(row.get("customer_id") or ""))
-    if str(row.get("salesperson_id") or "") == actor_id:
-        order = _order(str(row.get("order_id") or ""))
+    if actor_id in recipient_ids:
+        order = _incentive_order(row)
         if order and actor_id in _order_owner_ids(order):
             return _can_access_order(order, actor)
-        return _customer_access(actor, str(row.get("customer_id") or ""))
-    order = _order(str(row.get("order_id") or ""))
+        return bool(order and _customer_access(actor, _order_customer_id(order))) or _customer_access(actor, str(row.get("customer_id") or ""))
+    order = _incentive_order(row)
     return bool(order and actor_id in _order_owner_ids(order) and _can_access_order(order, actor))
 
 
@@ -409,6 +599,10 @@ def list_payments():
     query: dict = {}
     if request.args.get("status"):
         query["status"] = request.args["status"]
+    else:
+        # Deleted records remain auditable in Mongo/audit logs but are not part
+        # of the operational Banking list.
+        query["status"] = {"$ne": PAYMENT_STATUS_DELETED}
     if order_id:
         query["order_id"] = order_id
         order = _order(order_id)
@@ -675,15 +869,82 @@ def reject_payment(payment_id: str):
     return success(row, "Payment sent back for correction")
 
 
+@bp.post("/payments/<payment_id>/void")
+@login_required
+def void_payment(payment_id: str):
+    """Void a payment without destroying its financial/audit history."""
+    actor = current_user() or {}
+    if not _can_create_payment(actor):
+        return failure("Payment voiding is not permitted", status=403, error="payment_void_forbidden")
+    store = _store()
+    payment = store.find_one("payments", {"_id": payment_id})
+    if not payment:
+        return failure("Payment not found", status=404)
+    if not _can_view_payment(payment, actor):
+        return failure("Payment access denied", status=403)
+    status = str(payment.get("status") or "").upper()
+    if status == PAYMENT_STATUS_VOIDED:
+        return success(_enrich_payment_rows([payment])[0], "Payment already voided")
+    if status == PAYMENT_STATUS_DELETED:
+        return failure("Deleted payments cannot be voided", status=409, error="payment_deleted")
+    reason = str((request.get_json(silent=True) or {}).get("reason") or "").strip()[:500]
+    if not reason:
+        return failure("A reason is required to void a payment", status=422, error="void_reason_required")
+    now = utcnow()
+    updated = store.update_one("payments", {"_id": payment_id}, {
+        "status": PAYMENT_STATUS_VOIDED, "voided_at": now, "voided_by_user_id": actor.get("_id"),
+        "void_reason": reason, "financial_locked": False,
+        "audit": [*(payment.get("audit") or []), {"action": "voided", "from": payment.get("status"), "to": PAYMENT_STATUS_VOIDED, "reason": reason, "by": actor.get("_id"), "at": now}],
+    }) or payment
+    order_id = str(payment.get("order_id") or payment.get("oc_id") or "")
+    if order_id:
+        sync_order_payment_state(store, order_id)
+    audit("payment.void", "payment", payment_id, {"order_id": order_id, "reason": reason, "previous_status": payment.get("status")})
+    return success(_enrich_payment_rows([updated])[0], "Payment voided")
+
+
+@bp.delete("/payments/<payment_id>")
+@login_required
+def delete_payment(payment_id: str):
+    """Soft-delete a payment only after it has been voided."""
+    actor = current_user() or {}
+    if not _can_create_payment(actor):
+        return failure("Payment deletion is not permitted", status=403, error="payment_delete_forbidden")
+    store = _store()
+    payment = store.find_one("payments", {"_id": payment_id})
+    if not payment:
+        return failure("Payment not found", status=404)
+    if not _can_view_payment(payment, actor):
+        return failure("Payment access denied", status=403)
+    status = str(payment.get("status") or "").upper()
+    if status == PAYMENT_STATUS_DELETED:
+        return success({"_id": payment_id, "status": PAYMENT_STATUS_DELETED}, "Payment already deleted")
+    if status != PAYMENT_STATUS_VOIDED:
+        return failure("Active payments must be voided before deletion", status=409, error="payment_must_be_voided")
+    reason = str((request.get_json(silent=True) or {}).get("reason") or "Deleted after payment was voided")[:500].strip()
+    now = utcnow()
+    updated = store.update_one("payments", {"_id": payment_id}, {
+        "status": PAYMENT_STATUS_DELETED, "deleted_at": now, "deleted_by_user_id": actor.get("_id"),
+        "deletion_reason": reason, "audit": [*(payment.get("audit") or []), {"action": "deleted", "from": PAYMENT_STATUS_VOIDED, "to": PAYMENT_STATUS_DELETED, "reason": reason, "by": actor.get("_id"), "at": now}],
+    }) or payment
+    order_id = str(payment.get("order_id") or payment.get("oc_id") or "")
+    if order_id:
+        sync_order_payment_state(store, order_id)
+    audit("payment.delete", "payment", payment_id, {"order_id": order_id, "reason": reason})
+    return success({"_id": updated.get("_id"), "status": PAYMENT_STATUS_DELETED}, "Payment deleted")
+
+
 @bp.get("/incentives")
 @login_required
 def list_incentives():
     store = _store()
     user = current_user() or {}
     has_permission = "incentives.view" in user.get("permissions", []) or "incentives.manage" in user.get("permissions", [])
-    if not has_permission and str(user.get("role_id") or "") not in {"admin", "superadmin", "user", "manager_sales_admin"}:
+    if not has_permission and str(user.get("role_id") or "") not in {"admin", "superadmin", "user", "manager", "manager_sales_admin"}:
         return failure("You do not have permission to view incentives", status=403)
     query: dict = {}
+    if str(request.args.get("include_cancelled") or "").lower() not in {"1", "true", "yes"}:
+        query["status"] = {"$ne": "CANCELLED"}
     # Superadmin has company-wide visibility. Admins are restricted to their
     # assigned customer scope; sales people and managers remain restricted to
     # their own OC relationships.
@@ -700,18 +961,26 @@ def list_incentives():
         query["$or"] = [
             {"salesperson_id": {"$in": team_ids}},
             {"order_id": {"$in": owner_order_ids or ["__no_owned_orders__"]}},
+            {"oc_id": {"$in": owner_order_ids or ["__no_owned_orders__"]}},
         ]
         if str(user.get("role_id") or "") in {"admin", "manager", "manager_sales_admin"} and allowed_customer_ids:
             query["$or"].append({"customer_id": {"$in": allowed_customer_ids}})
     for key in ("status", "salesperson_id", "customer_id", "order_id"):
         if request.args.get(key):
+            if key == "status" and str(request.args[key]).upper() == "CANCELLED" and str(request.args.get("include_cancelled") or "").lower() not in {"1", "true", "yes"}:
+                return success({"items": [], "total": 0})
             if key == "salesperson_id" and not global_scope:
                 allowed_salespeople = set(accessible_user_ids(store, user)) if str(user.get("role_id") or "") in {"manager", "manager_sales_admin"} else {str(user.get("_id") or "")}
                 if request.args[key] not in allowed_salespeople:
                     return success({"items": [], "total": 0})
             if key == "customer_id" and allowed_customer_ids is not None and request.args[key] not in allowed_customer_ids:
                 return success({"items": [], "total": 0})
-            query[key] = request.args[key]
+            if key == "order_id":
+                # Keep the role/customer scope while supporting legacy
+                # incentives that only retained oc_id.
+                query.setdefault("$and", []).append({"$or": [{"order_id": request.args[key]}, {"oc_id": request.args[key]}]})
+            else:
+                query[key] = request.args[key]
     # Search and payment/date filters are applied to the server-authorized
     # result set below.  Fetching the bounded management list first avoids
     # allowing a client-supplied filter to bypass the scope query above.
@@ -732,31 +1001,46 @@ def list_incentives():
         if refreshed:
             rows[index] = refreshed
         row = rows[index]
-        if product_filter and not any(str(line.get("product_id") or "") == product_filter for line in (row.get("incentive_lines") or [])):
-            continue
-        if category_filter and not any(str(line.get("category_id") or line.get("category_name") or "").casefold() == category_filter for line in (row.get("incentive_lines") or [])):
-            continue
         if not global_scope and not _can_view_incentive(row, user):
             continue
-        order = store.find_one("orders", {"_id": row.get("order_id")}) or {}
+        order = _incentive_order(row) or {}
+        if not order or str(order.get("status") or "").casefold() == "deleted":
+            # A transaction-linked incentive is not an independent payable
+            # record.  Do not expose orphan/deleted-OC rows in any overview.
+            continue
         if not row.get("customer_snapshot"):
             row["customer_snapshot"] = order.get("customer_snapshot") or order.get("customer_company_snapshot") or order.get("company_snapshot") or {}
         if not row.get("salesperson_snapshot"):
             row["salesperson_snapshot"] = order.get("salesperson_snapshot") or {}
         row["order_number"] = row.get("order_number") or order.get("order_number")
+        transaction_id = incentive_transaction_id(row)
         payments, _ = store.list(
             "payments",
-            {"$or": [{"order_id": row.get("order_id")}, {"oc_id": row.get("order_id")}]},
+            {"$or": [{"order_id": transaction_id}, {"oc_id": transaction_id}]},
             limit=100,
         )
         payment_status = "Paid" if row.get("payment_confirmation_date") or any(str(payment.get("status") or "").upper() == "CONFIRMED" for payment in payments) else "Pending Payment"
         row["payment_status"] = payment_status
         customer = row.get("customer_snapshot") or {}
         salesperson = row.get("salesperson_snapshot") or {}
+        internal_lines = [
+            line for line in (row.get("incentive_lines") or [])
+            if isinstance(line, dict) and not _customer_incentive_line(line)
+        ]
+        recipient_text = " ".join(
+            str(value or "")
+            for line in internal_lines
+            for value in (
+                line.get("recipient_user_id"),
+                (line.get("recipient_snapshot") or {}).get("name"),
+                (line.get("recipient_snapshot") or {}).get("email"),
+                line.get("recipient_role"),
+            )
+        )
         haystack = " ".join(str(value or "") for value in (
             row.get("order_number"), row.get("oc_number"), row.get("order_id"),
             row.get("customer_id"), customer.get("name"), customer.get("company_name"),
-            salesperson.get("name"), salesperson.get("email"), row.get("salesperson_id"),
+            salesperson.get("name"), salesperson.get("email"), row.get("salesperson_id"), recipient_text,
         )).casefold()
         if search and search not in haystack:
             continue
@@ -767,8 +1051,101 @@ def list_incentives():
             continue
         if to_date and (not created_at or created_at >= to_date):
             continue
-        filtered.append(row)
+        allocation_views = _internal_allocation_views(row, user)
+        for allocation in allocation_views:
+            lines = list(allocation.get("incentive_lines") or [])
+            if product_filter:
+                lines = [line for line in lines if str(line.get("product_id") or "") == product_filter]
+            if category_filter:
+                lines = [
+                    line for line in lines
+                    if str(line.get("category_id") or line.get("category_name") or "").casefold() == category_filter
+                ]
+            recipient_role_filter = str(request.args.get("recipient_role") or "").strip().casefold()
+            if recipient_role_filter and recipient_role_filter not in {
+                str(allocation.get("recipient_role") or "").casefold(),
+                str(allocation.get("recipient_type") or "").casefold(),
+            }:
+                continue
+            if not lines:
+                continue
+            allocation["incentive_lines"] = lines
+            allocation["gross_incentive_amount"] = money(sum(money(line.get("incentive_amount")) for line in lines))
+            allocation["net_payable_incentive"] = allocation["gross_incentive_amount"]
+            rates = {float(line.get("incentive_rate_snapshot") or 0) for line in lines}
+            allocation["incentive_percentage_snapshot"] = next(iter(rates)) if len(rates) == 1 else None
+            filtered.append(allocation)
     return success({"items": filtered, "total": len(filtered)})
+
+
+@bp.get("/customer-incentives")
+@login_required
+def list_customer_incentives():
+    """List the customer allocation view without exposing hidden snapshots."""
+    store = _store()
+    actor = current_user() or {}
+    if not _customer_incentive_visibility(actor):
+        return failure("Customer incentive visibility is disabled", status=403, error="customer_incentive_visibility_denied")
+    global_scope = str(actor.get("role_id") or "") == "superadmin"
+    allowed_ids = set(customer_access_ids_for_user(str(actor.get("_id") or ""))) if not global_scope else set()
+    rows, _ = store.list("incentives", {"status": {"$ne": "CANCELLED"}}, limit=min(int(request.args.get("limit", 500)), 500))
+    search = str(request.args.get("search") or "").strip().casefold()
+    result: list[dict] = []
+    for row in rows:
+        lines = [line for line in (row.get("incentive_lines") or []) if isinstance(line, dict) and _customer_incentive_line(line)]
+        if not lines:
+            continue
+        customer_id = str(row.get("customer_id") or lines[0].get("customer_id") or "")
+        if not global_scope and customer_id not in allowed_ids:
+            continue
+        order = _incentive_order(row) or {}
+        if not order or str(order.get("status") or "").casefold() == "deleted":
+            continue
+        customer = row.get("customer_snapshot") or {}
+        haystack = " ".join(str(value or "") for value in (
+            customer.get("company_name"), customer.get("name"), row.get("oc_number"),
+            row.get("order_number"), row.get("customer_id"), row.get("salesperson_id"),
+        )).casefold()
+        if search and search not in haystack:
+            continue
+        result.append(_serialize_incentive_for_actor(row, actor, view="customer"))
+    return success({"items": result, "total": len(result)})
+
+
+@bp.get("/customer-incentive-visibility")
+@login_required
+def customer_incentive_visibility_for_actor():
+    """Expose only the effective visibility flag to the signed-in actor.
+
+    Unlike the admin settings endpoint this never returns the global toggle
+    values, so it is safe to use for role-aware navigation/bootstrap.
+    """
+    actor = current_user() or {}
+    return success({
+        "visible": _customer_incentive_visibility(actor),
+        "can_manage": str(actor.get("role_id") or "") == "superadmin",
+    })
+
+
+@bp.get("/customer-incentives/<incentive_id>")
+@login_required
+def get_customer_incentive(incentive_id: str):
+    store = _store()
+    actor = current_user() or {}
+    if not _customer_incentive_visibility(actor):
+        return failure("Customer incentive visibility is disabled", status=403, error="customer_incentive_visibility_denied")
+    row = store.find_one("incentives", {"_id": incentive_id})
+    if not row or not any(_customer_incentive_line(line) for line in (row.get("incentive_lines") or []) if isinstance(line, dict)):
+        return failure("Customer incentive not found", status=404)
+    if str(actor.get("role_id") or "") != "superadmin":
+        customer_lines = [line for line in (row.get("incentive_lines") or []) if isinstance(line, dict) and _customer_incentive_line(line)]
+        customer_id = str(row.get("customer_id") or (customer_lines[0].get("customer_id") if customer_lines else "") or "")
+        if customer_id not in set(customer_access_ids_for_user(str(actor.get("_id") or ""))):
+            return failure("Customer incentive access denied", status=403)
+    order = _incentive_order(row) or {}
+    if not order or str(order.get("status") or "").casefold() == "deleted":
+        return failure("The originating Order Confirmation no longer exists", status=410, error="INCENTIVE_TRANSACTION_DELETED")
+    return success(_serialize_incentive_for_actor(recompute_incentive_totals(store, incentive_id) or row, actor, view="customer"))
 
 
 @bp.get("/incentives/<incentive_id>")
@@ -781,7 +1158,119 @@ def get_incentive(incentive_id: str):
     user = current_user() or {}
     if not _can_view_incentive(row, user):
         return failure("Incentive access denied", status=403)
-    return success(recompute_incentive_totals(store, incentive_id) or row)
+    order = _incentive_order(row)
+    if not order or str(order.get("status") or "").casefold() == "deleted":
+        return failure("The originating Order Confirmation no longer exists", status=410, error="INCENTIVE_TRANSACTION_DELETED")
+    snapshot = recompute_incentive_totals(store, incentive_id) or row
+    result = _serialize_incentive_for_actor(snapshot, user, view="internal")
+    # Internal and customer allocations are kept separate in the response so
+    # the UI can expose only the recipient tabs the actor is authorized to see.
+    if _customer_incentive_visibility(user):
+        result["customer_incentive_lines"] = [
+            line for line in (snapshot.get("incentive_lines") or [])
+            if isinstance(line, dict) and _customer_incentive_line(line)
+        ]
+    else:
+        result["customer_incentive_lines"] = []
+    visible_lines = [
+        line for line in (result.get("incentive_lines") or [])
+        if isinstance(line, dict)
+    ] + [
+        line for line in (result.get("customer_incentive_lines") or [])
+        if isinstance(line, dict)
+    ]
+    payment_status = result.get("payment_status") or order.get("payment_status") or "Pending Payment"
+    allocations = _allocation_snapshot_views(
+        visible_lines,
+        status=result.get("status") or "PENDING PAYMENT",
+        payment_status=payment_status,
+    )
+    result["allocations"] = allocations
+    result["total_incentive"] = money(sum(money(allocation.get("amount")) for allocation in allocations))
+    requested_recipient = str(request.args.get("recipient_user_id") or "")
+    requested_allocation = str(request.args.get("allocation_type") or "")
+    if requested_recipient:
+        result["incentive_lines"] = [
+            line for line in result.get("incentive_lines") or []
+            if str(line.get("recipient_user_id") or "") == requested_recipient
+            and (not requested_allocation or str(line.get("allocation_type") or "creator") == requested_allocation)
+        ]
+        if not result["incentive_lines"]:
+            return failure("Incentive allocation not found", status=404)
+        first = result["incentive_lines"][0]
+        result.update({
+            "recipient_user_id": first.get("recipient_user_id"),
+            "recipient_role": first.get("recipient_role"),
+            "recipient_type": first.get("recipient_type"),
+            "recipient_snapshot": first.get("recipient_snapshot") or {},
+            "allocation_type": first.get("allocation_type") or "creator",
+        })
+        result["gross_incentive_amount"] = money(sum(money(line.get("incentive_amount")) for line in result["incentive_lines"]))
+        result["net_payable_incentive"] = result["gross_incentive_amount"]
+    return success(result)
+
+
+@bp.delete("/incentives/<incentive_id>")
+@permission_required("incentives.delete")
+def cancel_incentive(incentive_id: str):
+    """Soft-cancel an unpaid incentive while retaining its audit snapshot."""
+    store = _store()
+    row = store.find_one("incentives", {"_id": incentive_id})
+    if not row:
+        return failure("Incentive not found", status=404)
+    actor = current_user() or {}
+    if not _can_view_incentive(row, actor):
+        return failure("Incentive access denied", status=403)
+    status = str(row.get("status") or "").upper()
+    paid_amount = money(row.get("paid_amount"))
+    allocations, _ = store.list("incentive_allocations", {"incentive_id": incentive_id}, limit=100_000)
+    has_paid_allocation = any(
+        str(allocation.get("status") or "").upper() == "PAID" or money(allocation.get("paid_amount")) > 0
+        for allocation in allocations
+    )
+    payout_linked = has_payout_link(row) or any(has_payout_link(allocation) for allocation in allocations)
+    if status == "PAID" or paid_amount > 0 or has_paid_allocation or payout_linked:
+        return failure(
+            "Paid or payout-linked incentives cannot be deleted",
+            status=409,
+            error="INCENTIVE_FINANCIALLY_LOCKED",
+        )
+    if status == "CANCELLED":
+        return success(row, "Incentive already cancelled")
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "Cancelled from Incentive Overview").strip()[:500]
+    now = utcnow()
+    audit_entry = {
+        "action": "cancelled",
+        "from": status or "PENDING PAYMENT",
+        "to": "CANCELLED",
+        "reason": reason,
+        "by": actor.get("_id"),
+        "at": now,
+    }
+    updated = store.update_one("incentives", {"_id": incentive_id}, {
+        "status": "CANCELLED",
+        "cancelled_at": now,
+        "cancelled_by": actor.get("_id"),
+        "cancelled_reason": reason,
+        "financial_locked": True,
+        "audit": [*(row.get("audit") or []), audit_entry],
+    }) or row
+    for allocation in allocations:
+        allocation_status = str(allocation.get("status") or "").upper()
+        if allocation_status not in {"PAID", "CANCELLED"} and money(allocation.get("paid_amount")) <= 0 and not has_payout_link(allocation):
+            store.update_one("incentive_allocations", {"_id": allocation.get("_id")}, {
+                "status": "CANCELLED",
+                "cancelled_at": now,
+                "cancelled_by": actor.get("_id"),
+                "cancelled_reason": reason,
+            })
+    audit("incentive.cancel", "incentive", incentive_id, {
+        "order_id": row.get("order_id"),
+        "customer_id": row.get("customer_id"),
+        "reason": reason,
+    })
+    return success(updated, "Incentive cancelled")
 
 
 @bp.post("/incentives/<incentive_id>/pay")

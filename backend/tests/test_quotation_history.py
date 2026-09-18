@@ -39,3 +39,35 @@ def test_global_quotation_permission_sees_all_users_without_customer_selection(a
     numbers = {row["quotation_number"] for row in response.json["data"]["items"]}
     assert {"MT-USER-001", "MT-ADMIN-001"}.issubset(numbers)
     assert response.json["data"]["scope"] == "all"
+
+
+def test_quotation_must_be_archived_before_superadmin_can_delete(app, authenticated):
+    store = app.extensions["store"]
+    quotation_id = "quotation-lifecycle-001"
+    quotation = _quotation("MT-LIFECYCLE-001", "user-demo-admin", "customer-demo-1", 300)
+    quotation["_id"] = quotation_id
+    store.insert_one("quotations", quotation)
+    # A permanent flag cannot skip the reversible archive step.
+    archived = authenticated.delete(
+        f"/api/v1/quotations/{quotation_id}",
+        json={"reason": "retire test quotation", "permanent": True},
+    )
+    assert archived.status_code == 200
+    assert store.find_one("quotations", {"_id": quotation_id})["status"] == "archived"
+
+    # Even after archival, a normal user cannot permanently delete it.
+    store.update_one("users", {"_id": "user-demo-admin"}, {"role_id": "user"})
+    denied = authenticated.delete(
+        f"/api/v1/quotations/{quotation_id}",
+        json={"reason": "not allowed", "permanent": True},
+    )
+    assert denied.status_code == 403
+    assert store.find_one("quotations", {"_id": quotation_id}) is not None
+
+    store.update_one("users", {"_id": "user-demo-admin"}, {"role_id": "superadmin"})
+    deleted = authenticated.delete(
+        f"/api/v1/quotations/{quotation_id}",
+        json={"reason": "approved cleanup", "permanent": True},
+    )
+    assert deleted.status_code == 200
+    assert store.find_one("quotations", {"_id": quotation_id}) is None

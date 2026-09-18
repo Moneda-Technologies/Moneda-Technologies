@@ -82,13 +82,28 @@ function openGroupEditor(data: ConfiguratorData, group: IncentiveRuleGroup): voi
     const status = content.querySelector<HTMLSelectElement>('select[name="status"]');
     if (status) status.value = next.active === false ? "inactive" : "active";
   };
+  const form = content.querySelector<HTMLFormElement>("[data-incentive-group-form]");
+  const saveButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+  let baseline = "";
+  const formState = () => JSON.stringify(Array.from(form?.querySelectorAll<HTMLSelectElement>("select") ?? []).map((field) => [field.name, field.value]));
+  const resetBaseline = () => {
+    baseline = formState();
+    if (saveButton) saveButton.disabled = true;
+  };
+  const updateDirtyState = () => {
+    if (saveButton) saveButton.disabled = formState() === baseline;
+  };
   renderSelectedGroup(group);
+  resetBaseline();
+  form?.addEventListener("input", updateDirtyState);
+  form?.addEventListener("change", updateDirtyState);
   content.querySelector<HTMLSelectElement>("[data-edit-customer-type]")?.addEventListener("change", (event) => {
     const customerType = (event.currentTarget as HTMLSelectElement).value;
     const next = logicalGroups(data, ruleType === "user" ? "users" : "managers", customerType).find((item) => item.incentive_type === selectedGroup.incentive_type) || defaultGroup(data, ruleType, customerType);
     renderSelectedGroup(next);
+    resetBaseline();
   });
-  content.querySelector<HTMLFormElement>("[data-incentive-group-form]")?.addEventListener("submit", async (event) => {
+  form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;

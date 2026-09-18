@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from typing import Any
 
 from app.pricing.tax import money
-from app.services.business_logic import normalize_client_type
+from app.services.business_logic import normalize_client_type, normalize_price_list_account_type
 
 
 MASTER_CURRENCY = "EUR"
@@ -191,9 +191,34 @@ def validate_blanket_machine_selection(
         raise ValueError("Selected machine name is not available for this product")
 
 
-def _client_mpack_override(client_pricing: dict[str, Any] | None, configuration: dict[str, Any]) -> dict[str, Any] | None:
+def _client_mpack_override(client_pricing: dict[str, Any] | None, configuration: dict[str, Any], account_type: str | None = None) -> dict[str, Any] | None:
     if not client_pricing:
         return None
+    scope = normalize_price_list_account_type(account_type, fallback="DISTRIBUTOR")
+    matrix = client_pricing.get("mpack_price_matrix") or {}
+    source_matrix = client_pricing.get("mpack_source_matrix") or {}
+    try:
+        thickness_micron = int(round(float(configuration.get("thickness_micron") or float(configuration.get("thickness_mm")) * 1000)))
+        machine_scope = "::".join(str(configuration.get(field) or "").strip() for field in ("manufacturer", "machine_model"))
+        matrix_key = f"{machine_scope}|{int(configuration.get('width_mm'))}x{int(configuration.get('length_mm'))}|{thickness_micron}"
+        legacy_matrix_key = f"{int(configuration.get('width_mm'))}x{int(configuration.get('length_mm'))}|{thickness_micron}"
+    except (TypeError, ValueError):
+        matrix_key = ""
+        legacy_matrix_key = ""
+    if scope and matrix_key:
+        scoped_matrix = matrix.get(scope) or {}
+        matrix_price = scoped_matrix.get(matrix_key)
+        if matrix_price is None:
+            matrix_price = scoped_matrix.get(legacy_matrix_key)
+        source_price = (source_matrix.get(scope) or {}).get(matrix_key)
+        if source_price is None:
+            source_price = (source_matrix.get(scope) or {}).get(legacy_matrix_key)
+        if matrix_price is not None:
+            if isinstance(matrix_price, dict):
+                return {**(source_price if isinstance(source_price, dict) else {}), **matrix_price}
+            return {**(source_price if isinstance(source_price, dict) else {}), "price_per_box_eur": matrix_price}
+        if isinstance(source_price, dict):
+            return source_price
     prices = client_pricing.get("dealer_underpacking", {}).get("prices", {})
     if not isinstance(prices, dict):
         return None
@@ -212,11 +237,17 @@ def calculate_master_unit_price(
 ) -> Decimal:
     mpack_selection = resolve_mpack_selection(product, configuration)
     if mpack_selection:
-        override = _client_mpack_override(client_pricing if normalize_client_type(client_type) == "DEALER" else None, configuration)
+        override = _client_mpack_override(client_pricing, configuration, normalize_price_list_account_type(client_type))
         if override:
             mpack_selection["price_per_box_eur"] = float(override["price_per_box_eur"])
             if override.get("price_per_sheet_eur") is not None:
                 mpack_selection["price_per_sheet_eur"] = float(override["price_per_sheet_eur"])
+            if override.get("sheets_per_box") is not None:
+                mpack_selection["sheets_per_box"] = int(override["sheets_per_box"])
+            mpack_selection["price_list"] = {
+                key: override.get(key) for key in ("source", "source_document", "version", "valid_from", "valid_until")
+                if override.get(key) is not None
+            }
         # Client-supplied price fields are deliberately ignored.  The exact
         # per-box amount always comes from the seeded official price matrix.
         return money(decimal_value(mpack_selection["price_per_box_eur"], "price_per_box_eur"))
@@ -422,13 +453,19 @@ def calculate_line(
     validate_configuration(product, configuration)
     mpack_selection = resolve_mpack_selection(product, configuration)
     if mpack_selection:
-        override = _client_mpack_override(client_pricing if normalize_client_type(client_type) == "DEALER" else None, configuration)
+        override = _client_mpack_override(client_pricing, configuration, normalize_price_list_account_type(client_type))
         if override:
             mpack_selection["price_per_box_eur"] = float(override["price_per_box_eur"])
             if override.get("price_per_sheet_eur") is not None:
                 mpack_selection["price_per_sheet_eur"] = float(override["price_per_sheet_eur"])
+            if override.get("sheets_per_box") is not None:
+                mpack_selection["sheets_per_box"] = int(override["sheets_per_box"])
+            mpack_selection["price_list"] = {
+                key: override.get(key) for key in ("source", "source_document", "version", "valid_from", "valid_until")
+                if override.get(key) is not None
+            }
         configuration.update(mpack_selection)
-        price_list = product.get("configuration", {}).get("machine_price_list") or {}
+        price_list = mpack_selection.get("price_list") or product.get("configuration", {}).get("machine_price_list") or {}
         configuration["price_list_id"] = str(price_list.get("id", ""))
         configuration["price_valid_from"] = str(price_list.get("valid_from", ""))
         configuration["price_valid_until"] = str(price_list.get("valid_until", ""))
@@ -491,7 +528,7 @@ def calculate_line(
         result["discounted_price_per_sheet_eur"] = float(sheet_money(Decimal(str(mpack_selection["price_per_sheet_eur"])) * (Decimal("100") - discount) / Decimal("100")))
         result["discounted_price_per_box_eur"] = float(money(Decimal(str(mpack_selection["price_per_box_eur"])) * (Decimal("100") - discount) / Decimal("100")))
         result["sheets_per_box"] = mpack_selection["sheets_per_box"]
-        result["price_list"] = product.get("configuration", {}).get("machine_price_list") or {}
+        result["price_list"] = mpack_selection.get("price_list") or product.get("configuration", {}).get("machine_price_list") or {}
     if product.get("pricing", {}).get("pricing_type") in {"per_sqm", "formula"}:
         result["area_sqm"] = float(area_sqm(configuration))
     return result

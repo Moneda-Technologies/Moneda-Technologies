@@ -59,10 +59,19 @@ function mpackSize(configuration: Record<string, unknown>): string | null {
 }
 
 function openQuotationEmailComposer(quote: Quotation, onSent: () => Promise<void> | void): void {
-  const recipient = quote.customer_snapshot?.email ?? "";
+  const snapshotRecipient = String(quote.customer_snapshot?.email ?? "").trim();
+  const hasCustomerRecipient = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(snapshotRecipient);
+  const storedRecipient = Array.isArray((quote as Quotation & { to?: unknown }).to)
+    ? String(((quote as Quotation & { to?: unknown }).to as unknown[])[0] ?? "").trim()
+    : String((quote as Quotation & { to?: unknown }).to ?? "").trim();
+  const recipient = hasCustomerRecipient ? snapshotRecipient : storedRecipient;
   const resend = quote.status === "Sent" || quote.status === "send_failed";
   const content = document.createElement("div");
-  content.innerHTML = `<form class="stack-form email-composer-form"><label>To<input name="to" type="email" value="${escapeHtml(recipient)}" disabled></label><p class="form-hint">Customer-facing CC/BCC routing is managed centrally in Settings → Zoho Mail.</p><label>Subject<input name="subject" value="Quotation ${escapeHtml(quote.quotation_number)} - Moneda Technologies" required></label><label>Message<textarea name="message" rows="6" required>Please find quotation ${escapeHtml(quote.quotation_number)} attached.</textarea></label><div class="attachment-chip"><i data-lucide="paperclip"></i><span>${escapeHtml(quote.quotation_number)}.pdf</span><small>PDF attachment</small></div><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Send Email</button></div></form>`;
+  const recipientHint = hasCustomerRecipient
+    ? "Customer-facing CC/BCC routing is managed centrally in Settings → Zoho Mail."
+    : "No email is saved for this customer. Enter a recipient for this quotation. Customer-facing CC/BCC routing is managed centrally in Settings → Zoho Mail.";
+  const recipientInput = hasCustomerRecipient ? "disabled" : "required placeholder=\"customer@example.com\" autocomplete=\"email\"";
+  content.innerHTML = `<form class="stack-form email-composer-form"><label>${hasCustomerRecipient ? "To" : "Recipient email *"}<input name="to" type="email" value="${escapeHtml(recipient)}" ${recipientInput}></label><p class="form-hint">${recipientHint}</p><label>Subject<input name="subject" value="Quotation ${escapeHtml(quote.quotation_number)} - Moneda Technologies" required></label><label>Message<textarea name="message" rows="6" required>Please find quotation ${escapeHtml(quote.quotation_number)} attached.</textarea></label><div class="attachment-chip"><i data-lucide="paperclip"></i><span>${escapeHtml(quote.quotation_number)}.pdf</span><small>PDF attachment</small></div><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit"><i data-lucide="send"></i>Send Email</button></div></form>`;
   const submit = content.querySelector<HTMLButtonElement>("[type=submit]");
   if (submit && resend) submit.innerHTML = '<i data-lucide="send"></i>Send Again';
   const dialog = openModal(resend ? "Send quotation again" : "Email quotation", content, "wide");
@@ -73,8 +82,9 @@ function openQuotationEmailComposer(quote: Quotation, onSent: () => Promise<void
     const data = new FormData(form); const button = form.querySelector<HTMLButtonElement>("[type=submit]")!;
     button.disabled = true; button.textContent = "Sending…";
     try {
-      await quotationApi.send(quote._id, { subject: String(data.get("subject") ?? ""), message: String(data.get("message") ?? "") });
-      dialog.close(); toast(resend ? `${quote.quotation_number} sent again successfully to ${recipient}.` : `${quote.quotation_number} sent successfully to ${recipient}.`); await onSent();
+      const submittedRecipient = String(data.get("to") ?? recipient).trim();
+      await quotationApi.send(quote._id, { to: submittedRecipient, subject: String(data.get("subject") ?? ""), message: String(data.get("message") ?? "") });
+      dialog.close(); toast(resend ? `${quote.quotation_number} sent again successfully to ${submittedRecipient}.` : `${quote.quotation_number} sent successfully to ${submittedRecipient}.`); await onSent();
     } catch (error) { toast(error instanceof Error ? error.message : "Email failed. Retry when configuration is available.", "error"); button.disabled = false; button.innerHTML = '<i data-lucide="send"></i>Retry'; refreshIcons(button); }
   });
   refreshIcons(content);
@@ -96,6 +106,8 @@ async function openOrderConversionModal(quotationId: string, onConverted: () => 
   const content = document.createElement("div");
   content.innerHTML = `<form class="stack-form"><p class="form-hint">The Quote remains unchanged. Review and confirm the Order Confirmation details below.</p><section class="panel"><strong>Quote ${escapeHtml(String(quote.quotation_number ?? ""))}</strong><p>${escapeHtml(String(quote.customer_snapshot?.company_name ?? quote.customer_snapshot?.name ?? "Customer"))} · ${formatMoney(Number(quote.totals?.grand_total ?? 0), "EUR")}</p><small>Original payment terms: ${escapeHtml(String(quote.payment_terms ?? "—"))}</small></section><label>OC Number<input name="oc_number" value="${escapeHtml(String(defaults.oc_number ?? "Generated on confirmation"))}" readonly><span class="form-hint">Automatically generated by Moneda for this customer.</span></label><label>OC Date<input name="oc_date" type="date" required value="${today}"></label><label>Payment Terms<select name="payment_terms" required>${paymentTermOptions(selectedTerms)}</select></label><label>Order amount (EUR)<input name="order_amount" type="number" min="0" step="0.01" required value="${Number(defaults.order_amount ?? quote.totals?.grand_total ?? 0).toFixed(2)}" readonly><span class="form-hint">Taken from the server-calculated quotation total.</span></label><p class="form-hint">Sales Person: ${escapeHtml(String((defaults.salesperson as Record<string, unknown> | undefined)?.name ?? "Assigned from Quote"))}</p><section class="oc-recipients"><strong>Email recipients</strong><p class="form-hint">Quotation recipients will be included automatically.</p><div class="oc-inherited-recipients">${recipientLine("To:", inheritedTo)}${recipientLine("CC:", inheritedCc)}${recipientLine("BCC:", inheritedBcc)}${!inheritedTo.length && !inheritedCc.length && !inheritedBcc.length ? "<span>No saved CC/BCC recipients</span>" : ""}</div><button class="button button-secondary" type="button" data-add-recipients><i data-lucide="plus"></i>Add more email recipients</button><div class="oc-additional-recipients" data-additional-recipients hidden><p class="form-hint">Additional recipients (maximum 5)</p><div data-recipient-list></div><button class="button button-quiet" type="button" data-add-recipient><i data-lucide="plus"></i>Add recipient</button></div></section><small class="field-error" data-oc-error></small><div class="modal-actions"><button class="button button-quiet" type="button" data-cancel>Cancel</button><button class="button button-primary" type="submit">Confirm &amp; Convert to Order</button></div></form>`;
   const dialog = openModal("Order Confirmation Configuration", content, "wide");
+  const idempotencyKey = crypto.randomUUID();
+  let submitting = false;
   const recipientSection = content.querySelector<HTMLElement>("[data-additional-recipients]")!;
   const recipientList = content.querySelector<HTMLElement>("[data-recipient-list]")!;
   const addRecipient = () => {
@@ -115,12 +127,16 @@ async function openOrderConversionModal(quotationId: string, onConverted: () => 
   });
   content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (submitting) return;
+    submitting = true;
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     const errorNode = content.querySelector<HTMLElement>("[data-oc-error]");
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (submit) { submit.disabled = true; submit.textContent = "Creating Order Confirmation…"; }
     try {
       const additionalRecipients = Array.from(form.querySelectorAll<HTMLInputElement>("[name='additional_recipient']")).map((input) => input.value.trim()).filter(Boolean);
-      const createdOrder = await orderApi.convert(quotationId, { oc_date: data.get("oc_date"), payment_terms: data.get("payment_terms"), additional_recipients: additionalRecipients }) as Record<string, unknown>;
+      const createdOrder = await orderApi.convert(quotationId, { oc_date: data.get("oc_date"), payment_terms: data.get("payment_terms"), additional_recipients: additionalRecipients }, idempotencyKey) as Record<string, unknown>;
       dialog.close();
       if (String(createdOrder.email_status ?? "").toLowerCase() === "failed") {
         toast("Order Confirmation created, but the email failed. You can resend it from the Order page.", "error");
@@ -130,6 +146,8 @@ async function openOrderConversionModal(quotationId: string, onConverted: () => 
       await onConverted();
     } catch (error) {
       if (errorNode) errorNode.textContent = error instanceof Error ? error.message : "Order Confirmation could not be created";
+      submitting = false;
+      if (submit) { submit.disabled = false; submit.textContent = "Confirm & Convert to Order"; }
     }
   });
   refreshIcons(content);
@@ -184,17 +202,22 @@ function quotationRows(quotations: Quotation[], emptyTitle = "No quotations matc
   if (!quotations.length) return `<div class="quotation-empty">${emptyState("file-text", emptyTitle, emptyCopy)}</div>`;
   const canSend = appStore.can("quotations.send");
   const canDownload = appStore.can("quotations.download");
-  const canDelete = appStore.can("quotations.delete") || appStore.can("quotations.archive");
-  const canRestore = appStore.can("quotations.restore") || appStore.can("quotations.delete");
+  // Quotations follow a two-step lifecycle: active records are archived first,
+  // and only a Superadmin may permanently delete an archived record. Keep the
+  // UI aligned with the server guard so a trash action is never shown for an
+  // active quotation (or to a non-Superadmin).
+  const canArchive = appStore.can("quotations.archive");
+  const canDelete = appStore.state.user?.role_id === "superadmin" && appStore.can("quotations.delete");
+  const canRestore = appStore.can("quotations.restore");
   const rows = quotations.map((quote) => {
     const status = quote.status.toLowerCase();
     const resend = status === "sent" || status === "send_failed";
     const sendAction = canSend && (status === "draft" || resend)
       ? `<button class="icon-button send-quote" data-id="${escapeHtml(quote._id)}" aria-label="${resend ? "Send quotation again" : "Send quotation"}" title="${resend ? "Send quotation again" : "Send quotation"}"><i data-lucide="mail"></i></button>`
       : "";
-    const lifecycleAction = quote.status === "archived"
-      ? (canRestore ? `<button class="icon-button restore-quote" data-id="${escapeHtml(quote._id)}" aria-label="Restore quotation" title="Restore quotation"><i data-lucide="archive-restore"></i></button>` : "")
-      : canDelete ? `<button class="icon-button ${quote.status === "Draft" ? "delete-quote" : "archive-quote"}" data-id="${escapeHtml(quote._id)}" aria-label="${quote.status === "Draft" ? "Delete quotation" : "Archive quotation"}" title="${quote.status === "Draft" ? "Delete quotation" : "Archive quotation"}"><i data-lucide="${quote.status === "Draft" ? "trash-2" : "archive"}"></i></button>` : "";
+    const lifecycleAction = status === "archived"
+      ? `${canRestore ? `<button class="icon-button restore-quote" data-id="${escapeHtml(quote._id)}" aria-label="Restore quotation" title="Restore quotation"><i data-lucide="archive-restore"></i></button>` : ""}${canDelete ? `<button class="icon-button delete-quote" data-id="${escapeHtml(quote._id)}" aria-label="Delete quotation" title="Delete quotation"><i data-lucide="trash-2"></i></button>` : ""}`
+      : canArchive ? `<button class="icon-button archive-quote" data-id="${escapeHtml(quote._id)}" aria-label="Archive quotation" title="Archive quotation"><i data-lucide="archive"></i></button>` : "";
     const converted = new Set(["converted to order", "converted_to_order", "converted"]).has(status);
     return `<tr><td><strong>${escapeHtml(quote.quotation_number)}</strong><small>${quote.lines.length} line${quote.lines.length === 1 ? "" : "s"}</small></td><td>${escapeHtml(quote.customer_snapshot?.company_name ?? quote.customer_snapshot?.name ?? "Customer")}</td><td>${statusBadge(quote.status)}</td><td>${formatDate(quote.created_at)}</td><td><span class="currency-tag">${escapeHtml(quote.currency)}</span></td><td class="money">${formatMoney(quote.totals.grand_total, quote.currency)}</td><td><div class="row-actions"><a class="icon-button" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank" aria-label="View quotation" title="View quotation"><i data-lucide="eye"></i></a>${!converted ? `<button class="icon-button convert-quote" data-id="${escapeHtml(quote._id)}" aria-label="Convert to order" title="Convert to order"><i data-lucide="shopping-bag"></i></button>` : ""}${canDownload ? `<a class="icon-button" href="${quotationPdfUrl(quote._id)}" aria-label="Download PDF" title="Download PDF"><i data-lucide="download"></i></a><button class="icon-button print-quote" data-id="${escapeHtml(quote._id)}" aria-label="Print quotation" title="Print quotation"><i data-lucide="printer"></i></button>` : ""}${sendAction}${canSend ? `<button class="icon-button whatsapp-quote" data-id="${escapeHtml(quote._id)}" aria-label="Send via WhatsApp" title="Send via WhatsApp"><i data-lucide="message-circle"></i></button>` : ""}${lifecycleAction}</div></td></tr>`;
   }).join("");
@@ -321,6 +344,18 @@ export async function quotationPreviewPage(): Promise<HTMLElement> {
     root.querySelector(".preview-print")?.addEventListener("click", () => root.querySelector<HTMLIFrameElement>(".quotation-pdf-preview")?.contentWindow?.print());
     const sendSaved = async (quote: Quotation, button: HTMLButtonElement) => {
       const resend = quote.status === "Sent" || quote.status === "send_failed";
+      const snapshotRecipient = String(quote.customer_snapshot?.email ?? "").trim();
+      const hasCustomerRecipient = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(snapshotRecipient);
+      if (!hasCustomerRecipient) {
+        button.disabled = false;
+        button.textContent = resend ? "Send Again" : "Send Email";
+        openQuotationEmailComposer(quote, async () => {
+          bundle = { ...bundle!, document: await quotationApi.get(quote._id!) };
+          if (draftKey) localStorage.setItem(draftKey, JSON.stringify(bundle));
+          render();
+        });
+        return;
+      }
       button.disabled = true; button.textContent = "Sending...";
       try {
         const sent = await quotationApi.send(quote._id!, {}); bundle = { ...bundle!, document: sent };
@@ -438,9 +473,9 @@ export async function quotationsPage(): Promise<HTMLElement> {
       const result = await quotationApi.list(params);
       const pagination = result.pagination ?? { page: pageNumber, limit: 25, total: result.items.length };
       const count = body.querySelector<HTMLElement>("[data-quotation-count]"); if (count) count.textContent = `${pagination.total} record${pagination.total === 1 ? "" : "s"}`;
-      const scope = body.querySelector<HTMLElement>("[data-quotation-scope]"); if (scope) scope.textContent = result.scope === "all" ? "All authorized quotations" : "Your quotations";
+      const scope = body.querySelector<HTMLElement>("[data-quotation-scope]"); if (scope) scope.textContent = result.scope === "all" ? "All authorized quotations" : result.scope === "team" ? "Your team quotations" : "Your quotations";
       const hasFilters = Object.values(fields).some(Boolean);
-      const emptyTitle = hasFilters ? "No quotations match these filters." : result.scope === "all" ? "No quotations found." : "You haven't created any quotations yet.";
+      const emptyTitle = hasFilters ? "No quotations match these filters." : result.scope === "all" ? "No quotations found." : result.scope === "team" ? "No team quotations found." : "You haven't created any quotations yet.";
       const emptyCopy = hasFilters ? "Clear filters or adjust the search criteria." : "Create a quotation from the Cart to see it here.";
       const rows = body.querySelector<HTMLElement>("[data-quotation-rows]"); if (rows) { rows.innerHTML = quotationRows(result.items, emptyTitle, emptyCopy); refreshIcons(rows); }
       const pager = body.querySelector<HTMLElement>("[data-quotation-pagination]"); const pages = Math.max(1, Math.ceil(pagination.total / pagination.limit));

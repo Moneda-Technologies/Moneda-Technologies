@@ -26,6 +26,8 @@ DATA_FILE_PATHS: dict[str, Path] = {
     "pricing_eur.json": Path("pricing") / "pricing_eur.json",
     "dealer_underpacking_pricing.json": Path("pricing") / "dealer_underpacking_pricing.json",
     "mpack_price_list_2026_h2.json": Path("pricing") / "mpack_price_list_2026_h2.json",
+    "dealer_mpack_price_list_2026_h2.json": Path("pricing") / "dealer_mpack_price_list_2026_h2.json",
+    "price_list_sources.json": Path("pricing") / "price_list_sources.json",
     "tax_rules.json": Path("tax") / "tax_rules.json",
     "countries.json": Path("geography") / "countries.json",
 }

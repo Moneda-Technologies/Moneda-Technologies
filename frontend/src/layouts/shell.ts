@@ -78,8 +78,9 @@ const navGroups: NavGroup[] = [
   ] },
   { key: "my-account", label: "My Account", icon: "user-round", items: [
     { id: "my-account-profile", label: "My Account", path: "/profile", icon: "user-round", permission: "account.view" },
-    { id: "my-incentives", label: "My Incentives", path: "/incentives/overview", icon: "badge-euro", permission: "incentives.view", roles: ["user"] },
-    { id: "my-bank-details", label: "My Bank Details", path: "/my-bank-details", icon: "landmark", permission: "account.view", roles: ["user"] },
+    { id: "my-incentives", label: "User Incentive", path: "/incentives/user", icon: "badge-euro", permission: "incentives.view", roles: ["user", "manager", "manager_sales_admin"] },
+    { id: "customer-incentive", label: "Customer Incentive", path: "/incentives/customer", icon: "building-2", permission: "incentives.view", roles: ["user", "manager", "manager_sales_admin"] },
+    { id: "my-bank-details", label: "My Bank Details", path: "/my-bank-details", icon: "landmark", permission: "account.view", roles: ["user", "manager", "manager_sales_admin"] },
   ] },
   { key: "account-admin", label: "Account", icon: "user-round", items: [
     { id: "account-settings", label: "Account Settings", path: "/profile", icon: "user-round", permission: "account.view" },
@@ -89,6 +90,8 @@ const navGroups: NavGroup[] = [
   { key: "incentives-admin", label: "Incentives", icon: "badge-euro", items: [
     { id: "incentive-overview", label: "Incentive Overview", path: "/incentives/overview", icon: "badge-euro", permission: "incentives.view" },
     { id: "incentive-rules", label: "Incentive Rules", path: "/incentives/rules", icon: "sliders-horizontal", permission: "incentives.manage" },
+    { id: "user-incentive", label: "User Incentive", path: "/incentives/user", icon: "users-round", permission: "incentives.view" },
+    { id: "customer-incentive", label: "Customer Incentive", path: "/incentives/customer", icon: "building-2", permission: "incentives.view", roles: ["superadmin"] },
     { id: "incentive-payouts", label: "Incentive Payouts", path: "/incentives/payouts", icon: "wallet-cards", permission: "incentives.manage" },
   ] },
   { key: "reports", label: "Reports", icon: "chart-spline", items: [
@@ -96,7 +99,7 @@ const navGroups: NavGroup[] = [
   ] },
   { key: "settings", label: "Settings", icon: "settings", items: [
     { id: "settings-brand", label: "Settings", path: "/settings", icon: "palette", permission: "settings.view" },
-    { id: "product-pricing", label: "Product & Pricing", path: "/admin", icon: "badge-euro", permission: "pricing.history" },
+    { id: "price-lists", label: "Price Lists", path: "/price-lists", icon: "badge-euro", permission: "pricing.history", roles: ["superadmin"] },
     { id: "currencies", label: "Currencies", path: "/settings/currencies", icon: "euro", permission: "settings.view" },
     { id: "communication", label: "Communication", path: "/settings/communication", icon: "mail", permission: "settings.view" },
   ] },
@@ -120,7 +123,7 @@ export function renderShell(): HTMLElement {
     // represent a server permission and therefore must not disappear merely
     // because an older session has a partial permission snapshot.
     const roleId = String(appStore.state.user?.role_id || "");
-    const visible = group.items.filter((item) => (!item.roles || item.roles.includes(roleId)) && (item.permission === "account.view" ? Boolean(appStore.state.user) : appStore.can(item.permission)));
+    const visible = group.items.filter((item) => item.id !== "customer-incentive" || roleId === "superadmin" || state.customerIncentiveVisible).filter((item) => (!item.roles || item.roles.includes(roleId)) && (item.permission === "account.view" ? Boolean(appStore.state.user) : appStore.can(item.permission)));
     if (!visible.length) return "";
     const childLinks = visible.map((item) => renderNavLink(item, true)).join("");
     return `<section class="nav-group" data-nav-group="${group.key}"><button type="button" class="nav-parent" data-nav-parent="${group.key}"${group.defaultPath ? ` data-nav-default="${group.defaultPath}"` : ""} aria-expanded="false" aria-controls="nav-submenu-${group.key}" aria-label="${group.label}" title="${group.label}"><span class="nav-icon" aria-hidden="true"><i data-lucide="${group.icon}"></i></span><span class="nav-label">${group.label}</span><i class="nav-chevron" data-lucide="chevron-right" aria-hidden="true"></i></button><div class="nav-submenu" id="nav-submenu-${group.key}" hidden><strong class="nav-flyout-title">${group.label}</strong>${childLinks}</div></section>`;
@@ -134,6 +137,7 @@ export function renderShell(): HTMLElement {
   };
   const renderSection = (label: string, content: string) => content ? `<div class="nav-section">${label}</div>${content}` : "";
   const isAdministrator = ["admin", "superadmin"].includes(String(state.user?.role_id || ""));
+  const hasGlobalCustomerScope = state.user?.customer_access_global === true;
   const nav = [
     renderSection("Workspace", renderDirect(directNav[0])),
     renderSection("Sales", renderNamedGroup("sales")),
@@ -156,7 +160,7 @@ export function renderShell(): HTMLElement {
         <button class="icon-button mobile-menu" aria-label="Open navigation" title="Open navigation"><i data-lucide="menu"></i></button>
         <button class="search-trigger"><i data-lucide="search"></i><span>Search customers, quotes, products…</span><kbd>Ctrl K</kbd></button>
         <div class="top-actions">
-          ${state.customers.length ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer"><option value="" ${!state.activeCustomerId ? "selected" : ""}>All Customers</option>${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
+          ${state.customers.length ? `<label class="compact-select customer-select"><span>Customer</span><select id="company-switcher" aria-label="Select customer"><option value="" ${!state.activeCustomerId ? "selected" : ""}>${hasGlobalCustomerScope ? "All Customers" : "All Assigned Customers"}</option>${customerOptions.map((customer) => `<option value="${customer.customer_id ?? customer._id}" ${(customer.customer_id ?? customer._id) === state.activeCustomerId ? "selected" : ""}>${escapeHtml(customer.company_name ?? customer.name)}</option>`).join("")}</select></label>` : '<a class="select-company-action" href="/customer-selection" data-route="/customer-selection"><i data-lucide="building-2"></i>Select Customer</a>'}
           <div class="currency-fx-control" data-fx-control><label class="compact-select currency-select"><span>Display Currency</span><select id="currency-switcher" aria-label="Select display currency" aria-describedby="fx-popover">${["EUR", "USD", "INR"].map((currency) => `<option ${currency === state.currency ? "selected" : ""}>${currency}</option>`).join("")}</select></label><div id="fx-popover" class="fx-popover" role="tooltip" aria-label="Foreign exchange rates"></div></div>
           <div class="notification-control"><button class="icon-button" id="notification-button" aria-label="Notifications" title="Notifications" aria-expanded="false"><i data-lucide="bell"></i><span class="notification-dot" data-notification-count>${state.notificationCount || ""}</span></button><div id="notification-popover" class="notification-popover" role="dialog" aria-label="Notifications" hidden></div></div>
           <div class="user-menu-control"><button class="avatar avatar-button" id="user-menu-button" aria-label="Open user menu" aria-expanded="false">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</button><div id="user-menu" class="user-menu" role="menu" hidden><div class="user-menu-head"><strong>${escapeHtml(state.user?.name ?? "User")}</strong><span>${escapeHtml(state.user?.role_display_name ?? "User")}</span></div><a href="/profile" data-route="/profile" role="menuitem"><i data-lucide="user-round"></i>Profile</a><button type="button" data-open-notifications role="menuitem"><i data-lucide="bell"></i>Notifications</button><div class="user-menu-divider"></div><button type="button" data-sign-out role="menuitem"><i data-lucide="log-out"></i>Sign out</button></div></div>
@@ -266,8 +270,13 @@ export function renderShell(): HTMLElement {
     };
     parent?.addEventListener("click", () => {
       const defaultPath = parent.dataset.navDefault;
+      // Navigate first used to reopen the active group and then immediately
+      // toggle it closed. Keep the parent open when it owns a default route;
+      // this makes expanded and collapsed Finance navigation use the same
+      // submenu state.
+      const wasOpen = group.classList.contains("is-open");
+      openOnlyThisGroup(defaultPath ? true : !wasOpen);
       if (defaultPath) window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: defaultPath }));
-      openOnlyThisGroup(!group.classList.contains("is-open"));
     });
     group.addEventListener("mouseenter", () => {
       if (!root.classList.contains("sidebar-collapsed")) return;
@@ -507,6 +516,7 @@ export function updateActiveNav(path: string): void {
     if (target === "/incentives/overview") return routePath === target || (routePath === "/incentives" && !routeQuery.includes("view=rules") && !routeQuery.includes("view=payouts"));
     if (target === "/incentives/rules") return routePath === target || (routePath === "/incentives" && routeQuery.includes("view=rules"));
     if (target === "/incentives/payouts") return routePath === target || (routePath === "/incentives" && routeQuery.includes("view=payouts"));
+    if (target === "/incentives/customer") return routePath === target;
     return routePath === target || routePath.startsWith(`${target}/`);
   };
   document.querySelectorAll(".nav-link").forEach((node) => {

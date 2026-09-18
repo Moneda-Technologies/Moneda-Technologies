@@ -4,17 +4,29 @@ import copy
 import logging
 import re
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import AutoReconnect, ConfigurationError, OperationFailure, PyMongoError, ServerSelectionTimeoutError
+from pymongo.errors import (
+    AutoReconnect,
+    ConfigurationError,
+    ConnectionFailure,
+    NetworkTimeout,
+    OperationFailure,
+    PyMongoError,
+    ServerSelectionTimeoutError,
+)
 
 
 _MONGO_URI_CREDENTIALS = re.compile(r"(mongodb(?:\+srv)?://)([^@\s]+)@", re.IGNORECASE)
 _LOGGER = logging.getLogger(__name__)
+_INDEX_INIT_MAX_ATTEMPTS = 3
+_INDEX_INIT_BACKOFF_SECONDS = 0.25
+_INDEX_TRANSIENT_ERRORS = (AutoReconnect, ConnectionFailure, NetworkTimeout, ServerSelectionTimeoutError)
 
 
 def _mongo_connection_metadata(uri: str, database: str) -> dict[str, str]:
@@ -213,7 +225,7 @@ class MongoStore:
         )
         try:
             # Keep startup bounded while allowing Atlas SRV discovery and a
-            # transient socket reset to recover once. These options do not
+            # transient socket reset to recover within the index retry window. These options do not
             # mask a failure: ping and index initialization still have to
             # complete before the application is considered healthy.
             self.client = MongoClient(
@@ -230,7 +242,7 @@ class MongoStore:
             _LOGGER.info("mongodb startup ping=ok host=%s database=%s", metadata["host"], metadata["database"])
             self.db = self.client[database]
             stage = "index_initialization"
-            self._indexes()
+            self._initialize_indexes_with_retry(metadata["database"])
             _LOGGER.info("mongodb startup indexes=ready database=%s", metadata["database"])
         except OperationFailure as exc:
             _LOGGER.error(
@@ -263,71 +275,166 @@ class MongoStore:
             )
             raise RuntimeError("MongoDB connection failed") from exc
 
+    @staticmethod
+    def _index_operation_label(collection: str, keys: Any) -> str:
+        if isinstance(keys, str):
+            return f"{collection}.{keys}"
+        if isinstance(keys, (list, tuple)):
+            fields: list[str] = []
+            for item in keys:
+                if isinstance(item, (list, tuple)) and item:
+                    fields.append(str(item[0]))
+                else:
+                    fields.append(str(item))
+            return f"{collection}.{'_'.join(fields)}"
+        return f"{collection}.index"
+
+    def _create_index(self, collection: str, keys: Any, **options: Any) -> str:
+        """Create one index while recording a safe diagnostic operation label."""
+        self._current_index_operation = self._index_operation_label(collection, keys)
+        return self.db[collection].create_index(keys, **options)
+
+    def _initialize_indexes_with_retry(self, database: str) -> None:
+        """Ensure all indexes, retrying only transient connection failures.
+
+        Index creation is idempotent in MongoDB, so retrying the complete bounded
+        initialization pass is safe when a socket is reset halfway through it.
+        Non-transient driver, authorization, duplicate-key, and specification
+        errors are intentionally allowed to propagate immediately.
+        """
+        self._current_index_operation = "index_initialization"
+        for attempt in range(1, _INDEX_INIT_MAX_ATTEMPTS + 1):
+            _LOGGER.info(
+                "mongodb index initialization stage=index_initialization attempt=%s/%s database=%s result=started",
+                attempt,
+                _INDEX_INIT_MAX_ATTEMPTS,
+                database,
+            )
+            try:
+                self._indexes()
+            except _INDEX_TRANSIENT_ERRORS as exc:
+                operation = getattr(self, "_current_index_operation", "index_initialization")
+                if attempt >= _INDEX_INIT_MAX_ATTEMPTS:
+                    _LOGGER.error(
+                        "mongodb index initialization stage=index_initialization database=%s index=%s "
+                        "result=failed retry_count=%s "
+                        "error_type=%s error=%s",
+                        database,
+                        operation,
+                        attempt,
+                        type(exc).__name__,
+                        _safe_mongo_error(exc),
+                    )
+                    raise
+                _LOGGER.warning(
+                    "mongodb index initialization stage=index_initialization database=%s index=%s "
+                    "result=transient_network_error attempt=%s/%s error_type=%s error=%s",
+                    database,
+                    operation,
+                    attempt,
+                    _INDEX_INIT_MAX_ATTEMPTS,
+                    type(exc).__name__,
+                    _safe_mongo_error(exc),
+                )
+                time.sleep(_INDEX_INIT_BACKOFF_SECONDS * attempt)
+            else:
+                _LOGGER.info(
+                    "mongodb index initialization stage=index_initialization database=%s result=success",
+                    database,
+                )
+                return
+
     def _indexes(self) -> None:
-        self.db.users.create_index("email", unique=True)
-        self.db.users.create_index("username", unique=True, sparse=True)
-        self.db.users.create_index("username_normalized", unique=True, sparse=True)
-        self.db.users.create_index("manager_id")
-        self.db.companies.create_index("name")
-        self.db.products.create_index([("category_id", ASCENDING), ("active", ASCENDING)])
-        self.db.customers.create_index([("customer_id", ASCENDING), ("name", ASCENDING)])
-        self.db.customers.create_index("customer_code", unique=True, sparse=True)
-        self.db.carts.create_index([("user_id", ASCENDING), ("customer_id", ASCENDING)], unique=True)
-        self.db.customers.create_index([("company_id", ASCENDING), ("name", ASCENDING)])  # legacy bridge
-        self.db.customers.create_index("assigned_user_ids")
-        self.db.customers.create_index("created_by_user_id")
-        self.db.customers.create_index("client_type")
-        self.db.quotations.create_index("quotation_number", unique=True)
-        self.db.quotations.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
-        self.db.quotations.create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])  # legacy bridge
-        self.db.quotations.create_index([("created_by_user_id", ASCENDING), ("created_at", DESCENDING)])
-        self.db.quotations.create_index([("currency", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)])
-        self.db.quotations.create_index([("user_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
-        self.db.orders.create_index([("customer_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
-        self.db.orders.create_index([("company_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)  # legacy bridge
-        self.db.leads.create_index([("customer_id", ASCENDING), ("status", ASCENDING)])
-        self.db.leads.create_index([("company_id", ASCENDING), ("status", ASCENDING)])  # legacy bridge
-        self.db.reminders.create_index([("assigned_to", ASCENDING), ("due_date", ASCENDING)])
-        self.db.audit_logs.create_index("created_at")
-        self.db.otp_challenges.create_index("expires_at", expireAfterSeconds=0)
-        self.db.pending_signups.create_index("expires_at", expireAfterSeconds=0)
-        self.db.email_logs.create_index([("created_at", DESCENDING), ("status", ASCENDING)])
-        self.db.oauth_states.create_index("expires_at", expireAfterSeconds=0)
-        self.db.oauth_states.create_index("transaction_hash", unique=True, sparse=True)
-        self.db.devices.create_index([("user_id", ASCENDING), ("token_hash", ASCENDING)], unique=True)
-        self.db.devices.create_index([("user_id", ASCENDING), ("device_status", ASCENDING)])
-        self.db.login_approvals.create_index("expires_at", expireAfterSeconds=0)
-        self.db.login_approvals.create_index("token_hash", unique=True)
-        self.db.login_approvals.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
-        self.db.orders.create_index("quotation_id")
-        self.db.order_documents.create_index("order_id", unique=True)
-        self.db.payments.create_index([("order_id", ASCENDING), ("status", ASCENDING)])
-        self.db.user_bank_details.create_index("user_id", unique=True)
-        self.db.incentives.create_index([("salesperson_id", ASCENDING), ("status", ASCENDING)])
-        self.db.incentives.create_index("order_id", unique=True)
-        self.db.credit_notes.create_index([("order_id", ASCENDING), ("created_at", DESCENDING)])
-        self.db.incentive_adjustments.create_index([("incentive_id", ASCENDING), ("created_at", DESCENDING)])
+        self._create_index("users", "email", unique=True)
+        self._create_index("users", "username", unique=True, sparse=True)
+        self._create_index("users", "username_normalized", unique=True, sparse=True)
+        self._create_index("users", "manager_id")
+        self._create_index("companies", "name")
+        self._create_index("products", [("category_id", ASCENDING), ("active", ASCENDING)])
+        self._create_index("customers", [("customer_id", ASCENDING), ("name", ASCENDING)])
+        self._create_index("customers", "customer_code", unique=True, sparse=True)
+        self._create_index("carts", [("user_id", ASCENDING), ("customer_id", ASCENDING)], unique=True)
+        self._create_index("customers", [("company_id", ASCENDING), ("name", ASCENDING)])  # legacy bridge
+        self._create_index("customers", "assigned_user_ids")
+        self._create_index("customers", "created_by_user_id")
+        self._create_index("customers", "client_type")
+        self._create_index("quotations", "quotation_number", unique=True)
+        self._create_index("quotations", [("customer_id", ASCENDING), ("created_at", DESCENDING)])
+        self._create_index("quotations", [("company_id", ASCENDING), ("created_at", DESCENDING)])  # legacy bridge
+        self._create_index("quotations", [("created_by_user_id", ASCENDING), ("created_at", DESCENDING)])
+        self._create_index("quotations", [("currency", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)])
+        self._create_index("quotations", [("user_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
+        self._create_index("orders", [("customer_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)
+        self._create_index("orders", [("company_id", ASCENDING), ("idempotency_key", ASCENDING)], unique=True, sparse=True)  # legacy bridge
+        self._create_index("leads", [("customer_id", ASCENDING), ("status", ASCENDING)])
+        self._create_index("leads", [("company_id", ASCENDING), ("status", ASCENDING)])  # legacy bridge
+        self._create_index("reminders", [("assigned_to", ASCENDING), ("due_date", ASCENDING)])
+        self._create_index("audit_logs", "created_at")
+        self._create_index("otp_challenges", "expires_at", expireAfterSeconds=0)
+        self._create_index("pending_signups", "expires_at", expireAfterSeconds=0)
+        self._create_index("email_logs", [("created_at", DESCENDING), ("status", ASCENDING)])
+        self._create_index("oauth_states", "expires_at", expireAfterSeconds=0)
+        self._create_index("oauth_states", "transaction_hash", unique=True, sparse=True)
+        self._create_index("devices", [("user_id", ASCENDING), ("token_hash", ASCENDING)], unique=True)
+        self._create_index("devices", [("user_id", ASCENDING), ("device_status", ASCENDING)])
+        self._create_index("login_approvals", "expires_at", expireAfterSeconds=0)
+        self._create_index("login_approvals", "token_hash", unique=True)
+        self._create_index("login_approvals", [("user_id", ASCENDING), ("status", ASCENDING)])
+        # A quotation can produce exactly one Order Confirmation.  The old
+        # non-unique lookup index left concurrent workers able to insert two
+        # orders before either request observed the other.  Upgrade that
+        # index in place, but refuse to hide pre-existing duplicate business
+        # records: those need an explicit audited repair.
+        self._current_index_operation = "orders.quotation_id.duplicate_check"
+        quotation_key = [("quotation_id", ASCENDING)]
+        duplicate_quotation = next(self.db.orders.aggregate([
+            {"$match": {"quotation_id": {"$exists": True, "$nin": [None, ""]}}},
+            {"$group": {"_id": "$quotation_id", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gt": 1}}},
+            {"$limit": 1},
+        ]), None)
+        if duplicate_quotation:
+            raise RuntimeError(
+                "Duplicate Order Confirmations exist for quotation "
+                f"{duplicate_quotation.get('_id')}; repair them before startup"
+            )
+        self._current_index_operation = "orders.quotation_id.index_information"
+        for name, info in self.db.orders.index_information().items():
+            if list(info.get("key", [])) == quotation_key and not info.get("unique"):
+                self._current_index_operation = f"orders.{name}.drop"
+                self.db.orders.drop_index(name)
+        self._create_index("orders", "quotation_id", unique=True, sparse=True)
+        self._create_index("order_documents", "order_id", unique=True)
+        self._create_index("payments", [("order_id", ASCENDING), ("status", ASCENDING)])
+        self._create_index("user_bank_details", "user_id", unique=True)
+        self._create_index("incentives", [("salesperson_id", ASCENDING), ("status", ASCENDING)])
+        self._create_index("incentives", "order_id", unique=True)
+        self._create_index("credit_notes", [("order_id", ASCENDING), ("created_at", DESCENDING)])
+        self._create_index("incentive_adjustments", [("incentive_id", ASCENDING), ("created_at", DESCENDING)])
         # Category is the configuration key.  Drop the pre-category product
         # index when upgrading an existing Mongo database so multiple category
         # rows can coexist for one user.
-        try:
+        self._current_index_operation = "incentive_configurations.user_id_1_product_id_1.index_information"
+        if "user_id_1_product_id_1" in self.db.incentive_configurations.index_information():
+            self._current_index_operation = "incentive_configurations.user_id_1_product_id_1.drop"
             self.db.incentive_configurations.drop_index("user_id_1_product_id_1")
-        except Exception:
-            pass
-        self.db.incentive_configurations.create_index([("user_id", ASCENDING), ("category_id", ASCENDING)], unique=True)
+        self._create_index("incentive_configurations", [("user_id", ASCENDING), ("category_id", ASCENDING)], unique=True)
         # ``allocation_type`` is part of the rule scope: a manager override
         # and a creator rule may legitimately share client/role/category while
         # carrying different rates. Replace the legacy three-field unique
         # index before seeding those distinct scopes.
         incentive_rules = self.db.incentive_rules
         legacy_rule_key = [("client_type", ASCENDING), ("recipient_role", ASCENDING), ("category_id", ASCENDING)]
+        self._current_index_operation = "incentive_rules.index_information"
         for name, info in incentive_rules.index_information().items():
             if info.get("unique") and list(info.get("key", [])) == legacy_rule_key:
+                self._current_index_operation = f"incentive_rules.{name}.drop"
                 incentive_rules.drop_index(name)
         # A database created before the corrected scope index may contain
         # duplicate documents. Preserve the most recently updated active row
         # and archive every other row before enforcing the new constraint.
         grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        self._current_index_operation = "incentive_rules.find"
         for row in incentive_rules.find({}):
             key = (
                 str(row.get("allocation_type") or ""),
@@ -354,6 +461,7 @@ class MongoStore:
                 duplicate_id = duplicate.get("_id")
                 if not duplicate_id:
                     continue
+                self._current_index_operation = f"incentive_rule_archives.duplicate:{duplicate_id}.replace"
                 self.db.incentive_rule_archives.replace_one(
                     {"_id": f"duplicate:{duplicate_id}"},
                     {
@@ -367,12 +475,14 @@ class MongoStore:
                     },
                     upsert=True,
                 )
+                self._current_index_operation = f"incentive_rules.{duplicate_id}.delete"
                 incentive_rules.delete_one({"_id": duplicate_id})
-        incentive_rules.create_index([
+        self._create_index("incentive_rules", [
             ("allocation_type", ASCENDING), ("client_type", ASCENDING),
             ("recipient_role", ASCENDING), ("category_id", ASCENDING),
         ], unique=True, sparse=True)
-        self.db.incentive_allocations.create_index([("incentive_id", ASCENDING), ("recipient_user_id", ASCENDING)])
+        self._create_index("incentive_allocations", [("incentive_id", ASCENDING), ("recipient_user_id", ASCENDING)])
+        self._create_index("incentive_allocations", "allocation_key", unique=True, sparse=True)
 
     def list(self, collection: str, query: dict[str, Any] | None = None, *, page: int = 1,
              limit: int = 50, sort: str = "created_at", direction: int = -1) -> tuple[list[dict[str, Any]], int]:

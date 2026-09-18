@@ -10,9 +10,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 from pathlib import Path
-from xml.etree import ElementTree as ET
+
+try:
+    import fitz
+except ImportError as exc:  # pragma: no cover - exercised by operators
+    raise SystemExit(
+        "PyMuPDF is required for MPack PDF imports. Install backend requirements first."
+    ) from exc
 
 
 THICKNESSES = (
@@ -36,13 +41,12 @@ def _money(text: str) -> float:
 
 
 def _row_text(words: list[tuple[float, float, str]], x_min: float, x_max: float, y: float) -> str:
-    # Table data uses a .5 y-coordinate.  The repeated page watermark/section
-    # headings overlap the first table row but use .8, so exclude them.
+    # Manufacturer/model cells are vertically centred beside the two price
+    # lines.  Reading the bounded cell (rather than flattened page text) keeps
+    # wrapped model names attached to the correct dimensions.
     selected = []
     for x, word_y, text in sorted(words, key=lambda item: (item[1], item[0])):
         if not (x_min <= x < x_max and y - 5 <= word_y <= y + 30):
-            continue
-        if abs((word_y % 1) - 0.5) > 0.08:
             continue
         selected.append(text)
     return re.sub(r"\s+", " ", " ".join(selected)).strip()
@@ -59,28 +63,24 @@ def _dimension(words: list[tuple[float, float, str]], x_min: float, x_max: float
     return values[0]
 
 
-def extract(pdf_path: Path, temporary_parent: Path | None = None) -> dict:
-    temporary_parent = temporary_parent or Path.cwd()
-    bbox_path = temporary_parent / f".{pdf_path.stem}.bbox.html"
-    try:
-        subprocess.run(
-            ["pdftotext", "-bbox-layout", str(pdf_path), str(bbox_path)],
-            check=True,
-        )
-        root = ET.parse(bbox_path).getroot()
-    finally:
-        bbox_path.unlink(missing_ok=True)
+def extract(
+    pdf_path: Path,
+    temporary_parent: Path | None = None,
+    *,
+    price_list_id: str = "mpack-2026-h2-q3-q4",
+    account_type: str = "DISTRIBUTOR",
+) -> dict:
+    del temporary_parent  # retained for compatibility with older callers
+    account_type = account_type.strip().upper()
+    if account_type not in {"DISTRIBUTOR", "DEALER"}:
+        raise ValueError("account_type must be DISTRIBUTOR or DEALER")
 
-    namespace = {"x": "http://www.w3.org/1999/xhtml"}
+    document = fitz.open(pdf_path)
     records: list[dict] = []
     previous_manufacturer = ""
     previous_model = ""
-
-    for page in root.findall(".//x:page", namespace):
-        words = [
-            (float(word.attrib["xMin"]), float(word.attrib["yMin"]), "".join(word.itertext()))
-            for word in page.findall(".//x:word", namespace)
-        ]
+    for page in document:
+        words = [(float(word[0]), float(word[1]), str(word[4])) for word in page.get_text("words")]
         price_rows: dict[float, list[tuple[float, str]]] = {}
         for x, y, text in words:
             if x >= 275 and y > 200 and text.startswith("\N{EURO SIGN}"):
@@ -96,12 +96,18 @@ def extract(pdf_path: Path, temporary_parent: Path | None = None) -> dict:
             if len(box_prices) != len(THICKNESSES):
                 raise ValueError(f"Missing per-box row after sheet-price row y={y}")
 
-            manufacturer = _row_text(words, 35, 103, y) or previous_manufacturer
-            model = _row_text(words, 103, 197, y) or previous_model
+            manufacturer = _row_text(words, 35, 103, y)
+            model = _row_text(words, 103, 197, y)
+            # Excel merges repeated machine-name cells across adjacent size
+            # rows in a few places. PyMuPDF correctly exposes that text only
+            # once, so inherit the immediately preceding identity while the
+            # manufacturer remains the same.
+            if not manufacturer:
+                manufacturer = previous_manufacturer
+            if not model and manufacturer == previous_manufacturer:
+                model = previous_model
             if not manufacturer or not model:
                 raise ValueError(f"Missing manufacturer/model at y={y}")
-            previous_manufacturer = manufacturer
-            previous_model = model
 
             prices = []
             for (thickness, micron, sheets_per_box), (_, sheet), (_, box) in zip(
@@ -122,17 +128,24 @@ def extract(pdf_path: Path, temporary_parent: Path | None = None) -> dict:
                 "length_mm": _dimension(words, 238, 278, y),
                 "prices": prices,
             })
+            previous_manufacturer = manufacturer
+            previous_model = model
 
     if len(records) != 63:
         raise ValueError(f"Expected 63 machine-size rows, extracted {len(records)}")
     if len({(r["manufacturer"], r["machine_model"], r["width_mm"], r["length_mm"]) for r in records}) != len(records):
         raise ValueError("Extracted machine-size keys are not unique")
 
+    first_page_text = document[0].get_text("text") if len(document) else ""
+    source = "RGF USA" if "RGF USA" in first_page_text else "RGF EUROPE" if "RGF EUROPE" in first_page_text else "RGF"
     return {
         "schema_version": 1,
         "price_list": {
-            "id": "mpack-2026-h2-q3-q4",
-            "name": "MPack Price List 2026 H2 / Q3 / Q4",
+            "id": price_list_id,
+            "name": f"{source} MPack Price List 2026 H2 / Q3 / Q4",
+            "account_type": account_type,
+            "source": source,
+            "version": "2026 H2 / Q3 / Q4",
             "currency": "EUR",
             "valid_from": "2026-07-01",
             "valid_until": "2026-12-31",
@@ -151,8 +164,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source_pdf", type=Path)
     parser.add_argument("output_json", type=Path)
+    parser.add_argument("--account-type", choices=("DISTRIBUTOR", "DEALER"), default="DISTRIBUTOR")
+    parser.add_argument("--price-list-id", default="mpack-2026-h2-q3-q4")
     args = parser.parse_args()
-    document = extract(args.source_pdf, args.output_json.parent)
+    document = extract(
+        args.source_pdf,
+        args.output_json.parent,
+        price_list_id=args.price_list_id,
+        account_type=args.account_type,
+    )
     args.output_json.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {len(document['machine_sizes'])} machine-size rows to {args.output_json}")
 

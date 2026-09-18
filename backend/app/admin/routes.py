@@ -20,7 +20,7 @@ from app.auth.policy import (
     normalize_signup_email,
 )
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
-from app.middleware.access import can_view_all_customers, customer_access_ids_for_user, current_user, customer_record, permission_required
+from app.middleware.access import can_view_all_customers, customer_access_ids_for_user, current_user, customer_record, permission_required, superadmin_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
@@ -35,6 +35,140 @@ PRICING_TYPES = {
     "fixed", "quantity", "per_piece", "per_bar", "per_sqm", "per_meter", "per_litre",
     "per_kg", "per_pack", "per_packet", "per_roll", "formula", "on_request",
 }
+
+PRICE_LIST_ACCOUNT_TYPES = ("DISTRIBUTOR", "DEALER")
+PRICE_LIST_CATEGORIES = (
+    ("blankets", "Blankets", "Shared between Distributor and Dealer"),
+    ("mpacks", "Underpacking", "Separate account-type prices when configured"),
+    ("chemicals", "Chemicals & Maintenance", "Account-type pricing namespace"),
+)
+
+
+def _mpack_source_machine_rows(store, price_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Return the normalized MPack machine/size catalogue from persisted sources.
+
+    The source matrix is written by the idempotent catalog seed from the two
+    audited price-list PDFs.  Keeping this lookup here prevents the admin UI
+    from depending on a stale, single-product configuration snapshot and lets
+    future source rows appear without a frontend model allow-list.
+    """
+    config = price_config or store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {}
+    source_matrix = config.get("mpack_source_matrix") or {}
+    rows: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+    for account_type in PRICE_LIST_ACCOUNT_TYPES:
+        for raw_key, source in (source_matrix.get(account_type) or {}).items():
+            if not isinstance(source, dict):
+                continue
+            parts = str(raw_key).split("|")
+            if len(parts) != 3 or "::" not in parts[0] or "x" not in parts[1].lower():
+                continue
+            manufacturer, machine_model = parts[0].split("::", 1)
+            width_text, length_text = parts[1].lower().split("x", 1)
+            try:
+                width, length, micron = int(width_text), int(length_text), int(float(parts[2]))
+            except (TypeError, ValueError):
+                continue
+            identity = (manufacturer.strip(), machine_model.strip(), width, length)
+            row = rows.setdefault(identity, {
+                "manufacturer": identity[0], "machine_model": identity[1],
+                "width_mm": width, "length_mm": length, "prices": {},
+            })
+            # Both official lists currently define the same quantity per
+            # micron.  Preserve the first source value for validation/fallback;
+            # account-specific prices are resolved from source_matrix below.
+            row["prices"].setdefault(micron, {
+                "thickness_micron": micron,
+                "sheets_per_box": source.get("sheets_per_box"),
+            })
+    if rows:
+        normalized = list(rows.values())
+        for row in normalized:
+            row["prices"] = list((row.get("prices") or {}).values())
+        return normalized
+
+    # Backward-compatible read path for an older deployment before the source
+    # matrix was seeded.  New startups reconcile this snapshot automatically.
+    product = store.find_one("products", {"_id": "mtech-mpack"}) or {}
+    return product.get("configuration", {}).get("machine_sizes") or []
+
+
+def _mpack_machine_name(row: dict[str, Any]) -> str:
+    return " ".join(f"{row.get('manufacturer', '')} - {row.get('machine_model', '')}".split()).casefold()
+
+
+def _mpack_matrix_for_rows(
+    account_type: str,
+    selected_rows: list[dict[str, Any]],
+    price_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the existing MPack size x micron matrix for one model.
+
+    The source matrix remains authoritative for the catalogue identity and
+    quantities.  Account-type overrides are layered on top exactly as they
+    are in the legacy single-machine response; this helper only packages the
+    same data for the grouped manufacturer response.
+    """
+    matrix_overrides = price_config.get("mpack_price_matrix") or {}
+    source_matrix = price_config.get("mpack_source_matrix") or {}
+    rows = []
+    thicknesses = sorted({
+        float(price.get("thickness_micron"))
+        for selected in selected_rows
+        for price in (selected.get("prices") or [])
+        if price.get("thickness_micron") is not None
+    })
+    thicknesses = [int(value) if value.is_integer() else value for value in thicknesses]
+    machine_scope = "::".join(
+        str(selected_rows[0].get(field) or "").strip()
+        for field in ("manufacturer", "machine_model")
+    )
+    for selected in selected_rows:
+        prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+        box_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+        source_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+        source_box_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+        sheets_per_box = {}
+        for price in selected.get("prices") or []:
+            thickness_micron = price.get("thickness_micron")
+            if thickness_micron is None:
+                continue
+            key = f"{machine_scope}|{selected.get('width_mm')}x{selected.get('length_mm')}|{thickness_micron}"
+            legacy_key = f"{selected.get('width_mm')}x{selected.get('length_mm')}|{thickness_micron}"
+            for scope in PRICE_LIST_ACCOUNT_TYPES:
+                scoped_overrides = matrix_overrides.get(scope) or {}
+                override = scoped_overrides.get(key)
+                if override is None:
+                    override = scoped_overrides.get(legacy_key)
+                source = (source_matrix.get(scope) or {}).get(key)
+                if source is None:
+                    source = (source_matrix.get(scope) or {}).get(legacy_key)
+                source = source if isinstance(source, dict) else {}
+                current = ({**source, **override} if isinstance(override, dict)
+                           else {**source, **({"price_per_box_eur": override} if override is not None else {})})
+                thickness_key = str(int(float(thickness_micron))) if float(thickness_micron).is_integer() else str(thickness_micron)
+                prices_eur[scope][thickness_key] = current.get("price_per_sheet_eur")
+                box_prices_eur[scope][thickness_key] = current.get("price_per_box_eur")
+                source_prices_eur[scope][thickness_key] = source.get("price_per_sheet_eur")
+                source_box_prices_eur[scope][thickness_key] = source.get("price_per_box_eur")
+                if scope == account_type:
+                    sheets_per_box[thickness_key] = current.get("sheets_per_box") or price.get("sheets_per_box")
+        rows.append({
+            "size": f"{selected.get('width_mm')} x {selected.get('length_mm')} mm",
+            "width_mm": selected.get("width_mm"),
+            "length_mm": selected.get("length_mm"),
+            "sheets_per_box": sheets_per_box,
+            "prices_eur": prices_eur,
+            "box_prices_eur": box_prices_eur,
+            "source_prices_eur": source_prices_eur,
+            "source_box_prices_eur": source_box_prices_eur,
+        })
+    source_metadata = next(iter((source_matrix.get(account_type) or {}).values()), {})
+    source_metadata = source_metadata if isinstance(source_metadata, dict) else {}
+    return {
+        "thicknesses": thicknesses,
+        "matrix": rows,
+        "source": {key: source_metadata.get(key) for key in ("source", "source_document", "version", "valid_from", "valid_until")},
+    }
 
 
 def _can_configure_incentive(user: dict[str, Any] | None = None) -> bool:
@@ -225,7 +359,7 @@ PRICE_STATUSES = {"configured", "on_request", "pending", "inactive"}
 PRICE_MAPS = {"variant_prices", "dimension_prices", "package_prices"}
 
 
-def _master_price(value: Any) -> float | None:
+def _master_price(value: Any, *, decimal_places: int = 2) -> float | None:
     if value is None or value == "":
         return None
     if isinstance(value, bool):
@@ -238,7 +372,8 @@ def _master_price(value: Any) -> float | None:
         raise ValueError("Price must be a finite number")
     if price < 0:
         raise ValueError("Price cannot be negative")
-    return float(price.quantize(Decimal("0.01")))
+    quantum = Decimal("1").scaleb(-decimal_places)
+    return float(price.quantize(quantum))
 
 
 def _find_pricing_resource(resource_id: str) -> tuple[str, str, dict[str, Any]] | None:
@@ -315,6 +450,244 @@ def list_pricing_products():
     return success({"items": rows, "total": len(rows)})
 
 
+@bp.get("/admin/price-lists")
+@permission_required("pricing.history")
+def price_lists():
+    """Return the canonical account-type/category price-list hierarchy.
+
+    This endpoint is deliberately a view over the existing product catalogue
+    and persisted account-type source matrix; it does not create duplicate
+    product records. Blankets and bars carry a shared scope, while
+    underpacking/chemicals retain their account-type namespace.
+    """
+    store = current_app.extensions["store"]
+    account_type = str(request.args.get("account_type") or "").strip().upper()
+    category = str(request.args.get("category") or "").strip().lower()
+    if account_type and account_type not in PRICE_LIST_ACCOUNT_TYPES:
+        return failure("Price list account type must be Distributor or Dealer", status=422)
+    if category and category not in {item[0] for item in PRICE_LIST_CATEGORIES}:
+        return failure("Unknown price list category", status=422)
+    if not account_type:
+        return success({"account_types": [
+            {"code": "DISTRIBUTOR", "label": "Distributor", "description": "Pricing used by Distributor customers."},
+            {"code": "DEALER", "label": "Dealer", "description": "Pricing used by Dealer customers."},
+        ], "categories": [], "items": [], "currency": "EUR", "valid_from": "2026-07-01", "valid_until": "2026-12-31"})
+    if not category:
+        return success({"account_type": account_type, "categories": [
+            {"id": key, "name": name, "description": description}
+            for key, name, description in PRICE_LIST_CATEGORIES
+        ], "items": [], "currency": "EUR", "valid_from": "2026-07-01", "valid_until": "2026-12-31"})
+    if category == "mpacks" and not request.args.get("machine"):
+        price_config = store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {}
+        machine_rows = _mpack_source_machine_rows(store, price_config)
+        requested_manufacturer = " ".join(str(request.args.get("manufacturer") or "").split()).casefold()
+        manufacturer_counts: dict[str, int] = {}
+        for row in machine_rows:
+            manufacturer = " ".join(str(row.get("manufacturer") or "").split())
+            if manufacturer:
+                manufacturer_counts[manufacturer] = manufacturer_counts.get(manufacturer, 0) + 1
+        manufacturers = [
+            {"id": name, "name": name, "size_rows": count}
+            for name, count in sorted(manufacturer_counts.items(), key=lambda item: item[0].casefold())
+        ]
+        if requested_manufacturer:
+            machine_rows = [
+                row for row in machine_rows
+                if " ".join(str(row.get("manufacturer") or "").split()).casefold() == requested_manufacturer
+            ]
+        machines = []
+        seen = set()
+        for row in machine_rows:
+            key = f"{row.get('manufacturer')}::{row.get('machine_model')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            machines.append({"id": key, "manufacturer": row.get("manufacturer"), "machine_model": row.get("machine_model"), "label": f"{row.get('manufacturer')} - {row.get('machine_model')}", "sizes": sum(1 for candidate in machine_rows if candidate.get("manufacturer") == row.get("manufacturer") and candidate.get("machine_model") == row.get("machine_model"))})
+        selected_manufacturer = next((item["name"] for item in manufacturers if item["name"].casefold() == requested_manufacturer), None)
+        if selected_manufacturer:
+            # The manufacturer is the detail entry point.  Group the already
+            # filtered source rows by model and return every model matrix in
+            # one response; the legacy `machines` list is retained for API
+            # compatibility with older clients.
+            model_groups: dict[str, list[dict[str, Any]]] = {}
+            model_names: dict[str, str] = {}
+            for row in machine_rows:
+                model = " ".join(str(row.get("machine_model") or "").split())
+                if not model:
+                    continue
+                model_key = model.casefold()
+                model_groups.setdefault(model_key, []).append(row)
+                model_names.setdefault(model_key, model)
+            models = []
+            for model_key in sorted(model_groups, key=lambda value: value.casefold()):
+                matrix = _mpack_matrix_for_rows(account_type, model_groups[model_key], price_config)
+                models.append({
+                    "model": model_names[model_key],
+                    "machine_model": model_names[model_key],
+                    "rows": matrix["matrix"],
+                    "thicknesses": matrix["thicknesses"],
+                    "source": matrix["source"],
+                })
+            return success({
+                "account_type": account_type,
+                "category": category,
+                "product": "MPACK",
+                "manufacturers": manufacturers,
+                "manufacturer": selected_manufacturer,
+                "models": models,
+                "machines": machines,
+                "items": [],
+                "total": len(models),
+                "currency": "EUR",
+            })
+        return success({"account_type": account_type, "category": category, "product": "MPACK", "manufacturers": manufacturers, "manufacturer": None, "models": [], "machines": machines, "items": [], "total": len(machines), "currency": "EUR"})
+    products, _ = store.list("products", {"category_id": category}, limit=100_000, sort="name", direction=1)
+    products = [row for row in products if not is_legacy_product(row) and not (category == "mpacks" and row.get("_id") != "mtech-mpack")]
+    bars = []
+    if category == "blankets":
+        bars = store.list("blanket_bars", limit=10_000, sort="article_no", direction=1)[0]
+    if category == "mpacks" and request.args.get("machine"):
+        machine = str(request.args.get("machine") or "").strip().casefold()
+        machine_label = machine.replace("::", " - ")
+        price_config = store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {}
+        machine_rows = _mpack_source_machine_rows(store, price_config)
+        selected_rows = [row for row in machine_rows if _mpack_machine_name(row) in {machine, machine_label} or str(row.get("machine_model") or "").casefold() == machine]
+        if not selected_rows:
+            return failure("Mpack machine not found", status=404)
+        matrix_overrides = price_config.get("mpack_price_matrix") or {}
+        source_matrix = price_config.get("mpack_source_matrix") or {}
+        rows = []
+        thicknesses = sorted({float(price.get("thickness_micron")) for selected in selected_rows for price in (selected.get("prices") or []) if price.get("thickness_micron") is not None})
+        thicknesses = [int(value) if value.is_integer() else value for value in thicknesses]
+        machine_scope = "::".join(str(selected_rows[0].get(field) or "").strip() for field in ("manufacturer", "machine_model"))
+        for selected in selected_rows:
+            prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+            box_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+            source_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+            source_box_prices_eur = {scope: {} for scope in PRICE_LIST_ACCOUNT_TYPES}
+            sheets_per_box = {}
+            for price in selected.get("prices") or []:
+                thickness_micron = price.get("thickness_micron")
+                if thickness_micron is None:
+                    continue
+                key = f"{machine_scope}|{selected.get('width_mm')}x{selected.get('length_mm')}|{thickness_micron}"
+                legacy_key = f"{selected.get('width_mm')}x{selected.get('length_mm')}|{thickness_micron}"
+                for scope in PRICE_LIST_ACCOUNT_TYPES:
+                    scoped_overrides = matrix_overrides.get(scope) or {}
+                    override = scoped_overrides.get(key)
+                    if override is None:
+                        override = scoped_overrides.get(legacy_key)
+                    source = (source_matrix.get(scope) or {}).get(key)
+                    if source is None:
+                        source = (source_matrix.get(scope) or {}).get(legacy_key)
+                    source = source if isinstance(source, dict) else {}
+                    current = ({**source, **override} if isinstance(override, dict)
+                               else {**source, **({"price_per_box_eur": override} if override is not None else {})})
+                    thickness_key = str(int(float(thickness_micron))) if float(thickness_micron).is_integer() else str(thickness_micron)
+                    prices_eur[scope][thickness_key] = current.get("price_per_sheet_eur")
+                    box_prices_eur[scope][thickness_key] = current.get("price_per_box_eur")
+                    source_prices_eur[scope][thickness_key] = source.get("price_per_sheet_eur")
+                    source_box_prices_eur[scope][thickness_key] = source.get("price_per_box_eur")
+                    # Quantities belong to the selected account-type source.
+                    # Do not let the final Distributor/Dealer loop iteration
+                    # overwrite the quantity shown for the current list.
+                    if scope == account_type:
+                        sheets_per_box[thickness_key] = current.get("sheets_per_box") or price.get("sheets_per_box")
+            rows.append({"size": f"{selected.get('width_mm')} x {selected.get('length_mm')} mm", "width_mm": selected.get("width_mm"), "length_mm": selected.get("length_mm"), "sheets_per_box": sheets_per_box, "prices_eur": prices_eur, "box_prices_eur": box_prices_eur, "source_prices_eur": source_prices_eur, "source_box_prices_eur": source_box_prices_eur})
+        selected = selected_rows[0]
+        source_metadata = next(iter((source_matrix.get(account_type) or {}).values()), {})
+        return success({"account_type": account_type, "category": category, "product": "MPACK", "machine": {"manufacturer": selected.get("manufacturer"), "machine_model": selected.get("machine_model")}, "thicknesses": thicknesses, "matrix": rows, "currency": "EUR", "source": {key: source_metadata.get(key) for key in ("source", "source_document", "version", "valid_from", "valid_until")}})
+    items = [_resource_payload("product", row) for row in products] + [_resource_payload("bar", row) for row in bars]
+    pricing_config = store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {}
+    dealer_override = (pricing_config.get("dealer_underpacking") or {}).get("prices") or {}
+    for item in items:
+        shared = category == "blankets"
+        item["account_type"] = account_type
+        item["pricing_scope"] = "SHARED" if shared else "ACCOUNT_TYPE"
+        # Keep the source audit explicit.  The two supplied RGF PDFs are
+        # regional lists with different values, so we must not claim that one
+        # PDF was silently imported as the shared canonical list.
+        item["source_document"] = "price_list_sources.json" if shared else ("dealer_underpacking_pricing.json" if account_type == "DEALER" else "pricing_eur.json")
+        item["valid_from"] = "2026-07-01"
+        item["valid_until"] = "2026-12-31"
+        if category == "mpacks" and account_type == "DEALER":
+            item["configured_override_count"] = sum(1 for value in dealer_override.values() if value is not None)
+            item["pricing_note"] = "Dealer-specific values are shown only when configured; no values are invented."
+        elif shared:
+            item["pricing_note"] = "Shared blanket scope. Supplied Dealer and Distributor PDFs differ by region; source choice is pending, so existing canonical values were preserved."
+    return success({"account_type": account_type, "category": category, "items": items, "total": len(items), "currency": "EUR", "valid_from": "2026-07-01", "valid_until": "2026-12-31"})
+
+
+@bp.patch("/admin/price-lists/mpack")
+@superadmin_required
+def update_mpack_price_list():
+    """Persist one account-type MPack EUR cell without duplicating catalogue rows."""
+    payload = request.get_json(silent=True) or {}
+    account_type = str(payload.get("account_type") or "").strip().upper()
+    if account_type not in PRICE_LIST_ACCOUNT_TYPES:
+        return failure("Price list account type must be Distributor or Dealer", status=422)
+    machine = payload.get("machine") or {}
+    width = payload.get("width_mm")
+    length = payload.get("length_mm")
+    thickness = payload.get("thickness_micron")
+    if not machine or width in (None, "") or length in (None, "") or thickness in (None, ""):
+        return failure("Machine, size and thickness are required", status=422)
+    store = current_app.extensions["store"]
+    price_config = store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {}
+    machine_rows = _mpack_source_machine_rows(store, price_config)
+    machine_name = " ".join(f"{machine.get('manufacturer', '')} - {machine.get('machine_model', '')}".split()).casefold() if isinstance(machine, dict) else str(machine).strip().casefold()
+    valid_machine = False
+    valid_cell = False
+    matched_machine = None
+    for source_row in machine_rows:
+        source_name = " ".join(f"{source_row.get('manufacturer', '')} - {source_row.get('machine_model', '')}".split()).casefold()
+        if machine_name not in {source_name, str(source_row.get("machine_model") or "").casefold()}:
+            continue
+        valid_machine = True
+        matched_machine = source_row
+        if int(source_row.get("width_mm") or 0) == int(width) and int(source_row.get("length_mm") or 0) == int(length):
+            valid_cell = any(int(price.get("thickness_micron") or 0) == int(thickness) for price in (source_row.get("prices") or []))
+            break
+    if not valid_machine or not valid_cell:
+        return failure("Machine, size and thickness are not present in the official MPack catalogue", status=422)
+    if "price_per_sheet_eur" not in payload and "price_per_box_eur" not in payload and "price_eur" not in payload:
+        return failure("A per-sheet or per-box EUR price is required", status=422)
+    try:
+        sheet_price = _master_price(payload.get("price_per_sheet_eur"), decimal_places=3) if "price_per_sheet_eur" in payload else None
+        box_price = _master_price(payload.get("price_per_box_eur", payload.get("price_eur"))) if ("price_per_box_eur" in payload or "price_eur" in payload) else None
+    except ValueError as exc:
+        return failure(str(exc), status=422)
+    machine_scope = "::".join(str(matched_machine.get(field) or "").strip() for field in ("manufacturer", "machine_model"))
+    key = f"{machine_scope}|{int(width)}x{int(length)}|{int(thickness)}"
+    legacy_key = f"{int(width)}x{int(length)}|{int(thickness)}"
+    existing = store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {"_id": "client-pricing"}
+    matrix = {**(existing.get("mpack_price_matrix") or {})}
+    source = ((existing.get("mpack_source_matrix") or {}).get(account_type) or {}).get(key) or {}
+    if not source:
+        source = ((existing.get("mpack_source_matrix") or {}).get(account_type) or {}).get(legacy_key) or {}
+    old_override = (matrix.get(account_type) or {}).get(key)
+    if old_override is None:
+        old_override = (matrix.get(account_type) or {}).get(legacy_key)
+    old_current = ({**source, **old_override} if isinstance(old_override, dict)
+                   else {**source, **({"price_per_box_eur": old_override} if old_override is not None else {})})
+    source_price_row = next(
+        price for price in matched_machine.get("prices") or []
+        if int(price.get("thickness_micron") or 0) == int(thickness)
+    )
+    configured = {
+        "price_per_sheet_eur": sheet_price if "price_per_sheet_eur" in payload else old_current.get("price_per_sheet_eur"),
+        "price_per_box_eur": box_price if ("price_per_box_eur" in payload or "price_eur" in payload) else old_current.get("price_per_box_eur"),
+        "sheets_per_box": int(source.get("sheets_per_box") or source_price_row.get("sheets_per_box")),
+    }
+    scoped = {**(matrix.get(account_type) or {}), key: configured}
+    matrix[account_type] = scoped
+    now = utcnow()
+    store.update_one("pricing_configurations", {"_id": "client-pricing"}, {"mpack_price_matrix": matrix, "updated_at": now}, upsert=True)
+    history = store.insert_one("price_history", {"resource_id": "mtech-mpack", "product_id": "mtech-mpack", "entity_type": "mpack_matrix", "account_type": account_type, "machine": {"manufacturer": matched_machine.get("manufacturer"), "machine_model": matched_machine.get("machine_model")}, "size": {"width_mm": int(width), "length_mm": int(length)}, "thickness_micron": int(thickness), "old_price_eur": old_current.get("price_per_sheet_eur"), "new_price_eur": configured.get("price_per_sheet_eur"), "old_price_per_box_eur": old_current.get("price_per_box_eur"), "new_price_per_box_eur": configured.get("price_per_box_eur"), "source_price_per_sheet_eur": source.get("price_per_sheet_eur"), "source_price_per_box_eur": source.get("price_per_box_eur"), "currency": "EUR", "changed_by": (current_user() or {}).get("_id"), "changed_by_name": (current_user() or {}).get("name"), "changed_at": now, "effective_from": now, "reason": str(payload.get("reason") or "").strip()[:500], "source": "admin"})
+    audit("pricing.mpack_matrix.update", "mpack_matrix", key, {"account_type": account_type, "history_id": history.get("_id")})
+    return success({"account_type": account_type, "key": key, **configured}, "MPack EUR price updated")
+
+
 @bp.get("/admin/pricing/products/<resource_id>")
 @permission_required("pricing.history")
 def pricing_product_detail(resource_id: str):
@@ -332,7 +705,7 @@ def pricing_product_detail(resource_id: str):
 
 
 @bp.patch("/admin/pricing/products/<resource_id>")
-@permission_required("pricing.edit")
+@superadmin_required
 def edit_master_price(resource_id: str):
     found = _find_pricing_resource(resource_id)
     if not found:
@@ -954,7 +1327,40 @@ def update_user(user_id: str):
     if changes.get("active") is False:
         current_app.logger.info("session_revoked user_id=%s reason=admin_deactivated", user_id)
     audit("user.update", "user", user_id, {"fields": sorted(changes)})
-    return success(row, "User updated")
+    # Never expose credential material through a mutation response.  The
+    # store returns the complete document after an update, which includes the
+    # password hash retained on the user record.  Keep the response contract
+    # useful for the UI while explicitly projecting that field out.
+    public_row = dict(row or {})
+    public_row.pop("password_hash", None)
+    return success(public_row, "User updated")
+
+
+@bp.post("/admin/users/<user_id>/password")
+@superadmin_required
+def set_user_password(user_id: str):
+    """Allow only a Superadmin to set another user's password.
+
+    Plaintext credentials are accepted only for the duration of this request;
+    neither the hash nor the password is returned or written to audit data.
+    """
+    store = current_app.extensions["store"]
+    # Inactive accounts remain administratively manageable; changing a
+    # password must not require temporarily re-enabling the account.
+    target = store.find_one("users", {"_id": user_id})
+    if not target:
+        return failure("User not found", status=404)
+    payload = request.get_json(silent=True) or {}
+    password = str(payload.get("password") or "")
+    confirmation = str(payload.get("confirm_password") or "")
+    if password != confirmation:
+        return failure("Passwords do not match", status=422, error="password_confirmation_mismatch")
+    if not is_valid_signup_password(password):
+        return failure(SIGNUP_PASSWORD_POLICY_MESSAGE, status=422, error="password_policy_invalid")
+    actor = current_user() or {}
+    row = store.update_one("users", {"_id": user_id}, {"password_hash": generate_password_hash(password), "password_changed_at": utcnow()})
+    audit("auth.password_changed_by_superadmin", "user", user_id, {"actor_user_id": actor.get("_id")})
+    return success({"user_id": user_id, "updated": bool(row)}, "Password updated")
 
 
 @bp.get("/admin/roles")
@@ -1176,7 +1582,7 @@ def configure_product_incentive_rules():
         return failure("Unsupported incentive allocation type", status=422)
     client_type = str(payload.get("client_type") or "").strip().upper()
     if client_type not in CLIENT_TYPES:
-        return failure("Client type must be WHOLESALER, DEALER or CUSTOMER", status=422)
+        return failure("Customer type must be DISTRIBUTOR, DEALER or CUSTOMER", status=422)
     recipient_role = str(payload.get("recipient_role") or "*").strip().lower()
     if recipient_role not in {"admin", "manager", "manager_sales_admin", "user", "*"}:
         return failure("Unsupported incentive recipient role", status=422)
@@ -1251,7 +1657,7 @@ def create_incentive_rule():
     raw_client_type = str(payload.get("client_type") or "*").strip().upper()
     client_type = raw_client_type if raw_client_type == "*" or raw_client_type in CLIENT_TYPES else ""
     if not client_type:
-        return failure("Client type must be WHOLESALER, DEALER, CUSTOMER or *", status=422)
+        return failure("Customer type must be DISTRIBUTOR, DEALER, CUSTOMER or *", status=422)
     category_id = str(payload.get("category_id") or "*").strip().lower()
     if category_id != "*" and category_id not in INCENTIVE_CATEGORIES:
         return failure("Category must be blankets, mpacks, chemicals or *", status=422)
@@ -1360,6 +1766,34 @@ def get_settings():
         store.update_one("app_settings", {"_id": "system"}, {"watermark_enabled": True})
         settings["watermark_enabled"] = True
     return success(settings)
+
+
+@bp.get("/admin/customer-incentive-visibility")
+@superadmin_required
+def customer_incentive_visibility():
+    settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
+    actor = current_user() or {}
+    return success({
+        "show_customer_incentives_to_manager": bool(settings.get("show_customer_incentives_to_manager", False)),
+        "show_customer_incentives_to_salesperson": bool(settings.get("show_customer_incentives_to_salesperson", False)),
+        "can_manage": str(actor.get("role_id") or "") == "superadmin",
+    })
+
+
+@bp.patch("/admin/customer-incentive-visibility")
+@superadmin_required
+def update_customer_incentive_visibility():
+    payload = request.get_json(silent=True) or {}
+    allowed = {"show_customer_incentives_to_manager", "show_customer_incentives_to_salesperson"}
+    if any(key in payload and not isinstance(payload[key], bool) for key in allowed):
+        return failure("Customer incentive visibility settings must be boolean", status=422)
+    changes = {key: payload[key] for key in allowed if key in payload}
+    if not changes:
+        return failure("At least one visibility setting is required", status=422)
+    store = current_app.extensions["store"]
+    row = store.update_one("app_settings", {"_id": "system"}, changes)
+    audit("customer_incentive.visibility.update", "settings", "system", {"fields": sorted(changes), "changed_by": (current_user() or {}).get("_id")})
+    return success(row or changes, "Customer incentive visibility updated")
 
 
 @bp.get("/admin/email/health")

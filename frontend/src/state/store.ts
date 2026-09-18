@@ -1,3 +1,14 @@
+import { catalogPage } from "../pages/catalog";
+import { companySelectionPage } from "../pages/company-selection";
+import { crmPage, remindersWorkspacePage } from "../pages/crm";
+import { customersPage } from "../pages/customers";
+import { dashboardPage } from "../pages/dashboard";
+import { bankingPage, paymentsPage, incentivesPage, customerIncentivesPage, creditNotesPage, customerCreditsPage } from "../pages/finance";
+import { companiesPage, usersPage, adminPage, settingsPage, profilePage, myBankDetailsPage } from "../pages/management";
+import { ordersPage } from "../pages/orders";
+import { cartPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "../pages/quotations";
+import { reportsPage, reportDetailPage } from "../pages/reports";
+import { PageFactory } from "../router";
 import type { Company, Currency, Customer, User } from "../types/domain";
 
 export interface AppState {
@@ -17,6 +28,7 @@ export interface AppState {
   cartCount: number;
   notificationCount: number;
   watermarkEnabled: boolean;
+  customerIncentiveVisible: boolean;
 }
 
 type Listener = (state: AppState) => void;
@@ -37,6 +49,7 @@ const initial: AppState = {
   cartCount: 0,
   notificationCount: 0,
   watermarkEnabled: true,
+  customerIncentiveVisible: false,
 };
 
 class Store {
@@ -69,3 +82,52 @@ class Store {
 }
 
 export const appStore = new Store();
+export const routes: Record<string, PageFactory> = {
+  "/customer-selection": companySelectionPage,
+  "/company-selection": companySelectionPage,
+  "/calculator": () => companySelectionPage({ preserveCurrent: true, nextPath: "/products" }),
+  "/products": () => catalogPage(),
+  "/products/blankets": () => catalogPage("blankets"),
+  "/products/mpacks": () => catalogPage("mpacks"),
+  "/products/chemicals": () => catalogPage("chemicals"),
+  "/cart": cartPage,
+  "/quotation": quotationPreparationPage,
+  "/quotation/create": quotationPreparationPage,
+  "/quotations/create": quotationPreparationPage,
+  "/quotation-preview": quotationPreviewPage,
+  "/dashboard": dashboardPage,
+  "/catalog": catalogPage,
+  "/customers": customersPage,
+  "/quotations": quotationsPage,
+  "/orders": ordersPage,
+  "/order-confirmations": ordersPage,
+  "/banking": bankingPage,
+  "/payments": paymentsPage,
+  "/incentives": incentivesPage,
+  "/incentives/overview": incentivesPage,
+  "/incentives/rules": incentivesPage,
+  "/incentives/user": incentivesPage,
+  "/incentives/payouts": incentivesPage,
+  "/incentives/customer": customerIncentivesPage,
+  "/credit-notes": creditNotesPage,
+  "/customer-credits": customerCreditsPage,
+  "/crm": crmPage,
+  "/reminders": remindersWorkspacePage,
+  "/reports": reportsPage,
+  "/reports/sales-performance": () => reportDetailPage("sales-performance"),
+  "/reports/quotation-analysis": () => reportDetailPage("quotation-analysis"),
+  "/reports/customer-growth": () => reportDetailPage("customer-growth"),
+  "/reports/product-demand": () => reportDetailPage("product-demand"),
+  "/reports/tax-summary": () => reportDetailPage("tax-summary"),
+  "/reports/currency-exposure": () => reportDetailPage("currency-exposure"),
+  "/companies": companiesPage,
+  "/users": usersPage,
+  "/admin": adminPage,
+  "/price-lists": adminPage,
+  "/settings": settingsPage,
+  "/settings/currencies": () => settingsPage("currencies"),
+  "/settings/communication": () => settingsPage("communication"),
+  "/settings/security": () => settingsPage("security"),
+  "/profile": profilePage,
+  "/my-bank-details": myBankDetailsPage,
+};

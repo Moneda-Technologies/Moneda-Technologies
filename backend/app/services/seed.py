@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash
 
 from app.repositories.store import Store, utcnow
 from app.customers.codes import customer_code
-from app.services.business_logic import CLIENT_TYPES, MANAGER_ROLE_IDS, normalize_client_type
+from app.services.business_logic import CLIENT_TYPES, MANAGER_ROLE_IDS, normalize_client_type, customer_account_type
 from app.services.data_paths import data_file
 
 
@@ -19,11 +19,11 @@ PERMISSIONS = [
     "pricing.discount.override", "taxes.view", "taxes.manage", "currency.view", "currency.manage",
     "cart.view", "cart.manage", "customers.view", "customers.create", "customers.update",
     "customers.delete", "customers.archive", "customers.restore", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
-    "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create",
+    "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create", "orders.delete",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
     "payments.view", "payments.create", "payments.confirm", "payments.manage",
     "bank_details.view", "bank_details.update",
-    "incentives.view", "incentives.manage", "credit_notes.view", "credit_notes.create", "credit_notes.manage",
+    "incentives.view", "incentives.manage", "incentives.delete", "credit_notes.view", "credit_notes.create", "credit_notes.manage",
     "reminders.view", "reminders.manage", "reports.view", "users.view", "users.create",
     "users.update", "users.delete", "roles.view", "roles.manage", "companies.view",
     "companies.create", "companies.update", "companies.delete", "settings.view", "settings.currencies.view", "settings.currencies.manage",
@@ -73,18 +73,18 @@ def _seed_default_incentive_rules(store: Store) -> int:
 
 ROLE_PERMISSIONS = {
     "superadmin": PERMISSIONS,
-    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage", "payments.confirm"}],
+    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage", "payments.confirm", "quotations.delete"}],
     "manager_sales_admin": [
         permission for permission in PERMISSIONS
         if (permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
-            and permission not in {"products.delete", "customers.delete", "quotations.delete", "quotations.view_all", "pricing.edit", "pricing.update"})
+            and permission not in {"products.delete", "customers.delete", "quotations.delete", "orders.delete", "quotations.view_all", "pricing.edit", "pricing.update"})
         or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update"}
     ],
     "user": [
         "dashboard.view", "calculator.view", "products.view", "pricing.view", "currency.view",
         "cart.view", "cart.manage", "companies.view", "customers.view", "customers.create",
         "customers.update", "quotations.view", "quotations.create", "quotations.edit",
-        "quotations.download", "quotations.send", "orders.view", "crm.view", "reminders.view",
+        "quotations.download", "quotations.send", "quotations.archive", "orders.view", "crm.view", "reminders.view",
         "payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update",
     ],
 }
@@ -113,7 +113,40 @@ def _valid_price(value: Any) -> bool:
     return value is None or isinstance(value, (int, float)) and value >= 0
 
 
-def _client_pricing_document(dealer_pricing: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+def _mpack_source_matrix(*price_lists: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Flatten the audited PDFs without deriving either sheet or box prices."""
+    matrix: dict[str, dict[str, dict[str, Any]]] = {}
+    for price_list in price_lists:
+        metadata = price_list.get("price_list") or {}
+        account_type = str(metadata.get("account_type") or "").upper()
+        if account_type not in {"DISTRIBUTOR", "DEALER"}:
+            raise ValueError("MPack source price list must identify Distributor or Dealer")
+        scoped = matrix.setdefault(account_type, {})
+        for machine in price_list.get("machine_sizes") or []:
+            machine_scope = "::".join(str(machine.get(field) or "").strip() for field in ("manufacturer", "machine_model"))
+            for price in machine.get("prices") or []:
+                micron = int(price["thickness_micron"])
+                key = f"{machine_scope}|{int(machine['width_mm'])}x{int(machine['length_mm'])}|{micron}"
+                if key in scoped:
+                    raise ValueError(f"Duplicate MPack source cell {account_type}:{key}")
+                scoped[key] = {
+                    "price_per_sheet_eur": price["price_per_sheet_eur"],
+                    "price_per_box_eur": price["price_per_box_eur"],
+                    "sheets_per_box": int(price["sheets_per_box"]),
+                    "source": metadata.get("source"),
+                    "source_document": metadata.get("source_document"),
+                    "version": metadata.get("version"),
+                    "valid_from": metadata.get("valid_from"),
+                    "valid_until": metadata.get("valid_until"),
+                }
+    return matrix
+
+
+def _client_pricing_document(
+    dealer_pricing: dict[str, Any], existing: dict[str, Any] | None = None,
+    distributor_price_list: dict[str, Any] | None = None,
+    dealer_price_list: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the canonical client-type pricing namespace without inventing prices."""
     existing_prices = ((existing or {}).get("dealer_underpacking") or {}).get("prices") or {}
     merged_prices = dict(dealer_pricing.get("prices") or {})
@@ -123,6 +156,8 @@ def _client_pricing_document(dealer_pricing: dict[str, Any], existing: dict[str,
     dealer_underpacking = {**dealer_pricing, "prices": merged_prices}
     return {
         "_id": "client-pricing", "version": 1, "currency": "EUR",
+        "account_types": ["DISTRIBUTOR", "DEALER"],
+        "distributor": {"blankets": {"source": "shared_blankets"}, "underpacking": {"source": "pricing_eur.json"}, "chemicals": {"source": "pricing_eur.json"}},
         "wholesaler": {"source": "pricing_eur.json"},
         "dealer": {
             "blankets": {"source": "wholesaler"},
@@ -132,6 +167,14 @@ def _client_pricing_document(dealer_pricing: dict[str, Any], existing: dict[str,
         # Keep the existing flat key as a compatibility bridge for the pricing
         # engine while the nested namespace is the canonical configuration API.
         "dealer_underpacking": dealer_underpacking,
+        # Account-type MPack cells are administered in Mongo.  Never lose
+        # those overrides when the controlled JSON seed is reconciled.
+        "mpack_price_matrix": (existing or {}).get("mpack_price_matrix") or {},
+        # Exact, separately imported PDF values. Runtime resolution checks the
+        # admin override matrix first and then this immutable source matrix.
+        "mpack_source_matrix": _mpack_source_matrix(
+            *(item for item in (distributor_price_list, dealer_price_list) if item)
+        ),
         "customer": {"fallback": "WHOLESALER", "blankets": {}, "underpacking": {}, "chemicals": {}},
         "updated_at": utcnow(),
     }
@@ -142,11 +185,15 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
     names = (
         "product_types.json", "blanket_categories.json", "blanket_options.json", "machines.json",
         "blanket_bars.json", "blankets.json", "mpack_types.json", "mpack_options.json",
-        "mpacks.json", "mpack_price_list_2026_h2.json", "chemical_categories.json", "chemical_options.json",
+        "mpacks.json", "mpack_price_list_2026_h2.json", "dealer_mpack_price_list_2026_h2.json", "chemical_categories.json", "chemical_options.json",
         "chemicals.json", "pricing_eur.json", "tax_rules.json",
         "dealer_underpacking_pricing.json",
     )
     documents = {name: _load(data_file(data_directory, name)) for name in names}
+    source_manifest_path = data_file(data_directory, "price_list_sources.json")
+    # This manifest is metadata only.  Keep it optional so an existing
+    # deployment without the new audit file can still start safely.
+    source_manifest = _load(source_manifest_path) if source_manifest_path.exists() else {}
     dealer_pricing = documents["dealer_underpacking_pricing.json"]
     if dealer_pricing.get("client_type") != "DEALER" or dealer_pricing.get("currency") != "EUR":
         raise ValueError("dealer_underpacking_pricing.json must define DEALER EUR pricing")
@@ -224,11 +271,19 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         raise ValueError("Underpacking product references an unknown type")
 
     mpack_price_list = documents["mpack_price_list_2026_h2.json"]
+    dealer_mpack_price_list = documents["dealer_mpack_price_list_2026_h2.json"]
     price_list_meta = mpack_price_list.get("price_list", {})
     if price_list_meta.get("currency") != "EUR" or price_list_meta.get("quantity_unit") != "box":
         raise ValueError("MPack machine prices must use EUR per box")
     if (price_list_meta.get("valid_from"), price_list_meta.get("valid_until")) != ("2026-07-01", "2026-12-31"):
         raise ValueError("MPack price-list validity must be 01 Jul through 31 Dec 2026")
+    if price_list_meta.get("account_type") != "DISTRIBUTOR" or (dealer_mpack_price_list.get("price_list") or {}).get("account_type") != "DEALER":
+        raise ValueError("MPack PDF sources must define separate Distributor and Dealer lists")
+    dealer_price_list_meta = dealer_mpack_price_list.get("price_list") or {}
+    if dealer_price_list_meta.get("currency") != "EUR" or dealer_price_list_meta.get("quantity_unit") != "box":
+        raise ValueError("Dealer MPack machine prices must use EUR per box")
+    if (dealer_price_list_meta.get("valid_from"), dealer_price_list_meta.get("valid_until")) != ("2026-07-01", "2026-12-31"):
+        raise ValueError("Dealer MPack price-list validity must be 01 Jul through 31 Dec 2026")
     mpack_machine_sizes = mpack_price_list.get("machine_sizes", [])
     if not mpack_machine_sizes:
         raise ValueError("MPack price list requires machine-size rows")
@@ -256,6 +311,29 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
             for price in prices
         ):
             raise ValueError(f"MPack row {key} has invalid pricing")
+    dealer_keys = {
+        (str(row.get("manufacturer", "")).strip(), str(row.get("machine_model", "")).strip(), int(row.get("width_mm", 0)), int(row.get("length_mm", 0)))
+        for row in dealer_mpack_price_list.get("machine_sizes") or []
+    }
+    if dealer_keys != machine_size_keys:
+        raise ValueError("Dealer and Distributor MPack lists must define the same machine-size keys")
+    for row in dealer_mpack_price_list.get("machine_sizes") or []:
+        key = (
+            str(row.get("manufacturer", "")).strip(), str(row.get("machine_model", "")).strip(),
+            int(row.get("width_mm", 0)), int(row.get("length_mm", 0)),
+        )
+        prices = row.get("prices", [])
+        if {Decimal(str(price.get("thickness_mm"))) for price in prices} != expected_thicknesses:
+            raise ValueError(f"Dealer MPack row {key} does not define every supported thickness")
+        if any(
+            price.get("price_per_sheet_eur") is None
+            or not _valid_price(price.get("price_per_sheet_eur"))
+            or price.get("price_per_box_eur") is None
+            or not _valid_price(price.get("price_per_box_eur"))
+            or int(price.get("sheets_per_box", 0)) <= 0
+            for price in prices
+        ):
+            raise ValueError(f"Dealer MPack row {key} has invalid pricing")
 
     chemical_categories_source = documents["chemical_categories.json"].get("categories", [])
     chemical_category_map = {row["id"]: row for row in chemical_categories_source}
@@ -371,6 +449,9 @@ def _catalog_seed(data_directory: Path) -> dict[str, Any]:
         ],
         "tax_rules": documents["tax_rules.json"],
         "dealer_underpacking_pricing": dealer_pricing,
+        "distributor_mpack_price_list": mpack_price_list,
+        "dealer_mpack_price_list": dealer_mpack_price_list,
+        "price_list_sources": source_manifest,
     }
 
 
@@ -394,8 +475,14 @@ def ensure_business_logic_schema(store: Store, data_directory: Path) -> dict[str
             changed_users += 1
     for customer in store.list("customers", limit=100_000)[0]:
         client_type = normalize_client_type(customer.get("client_type"))
+        account_type = customer_account_type({**customer, "client_type": client_type}) or "DISTRIBUTOR"
+        changes = {}
         if customer.get("client_type") != client_type:
-            store.update_one("customers", {"_id": customer.get("_id")}, {"client_type": client_type})
+            changes["client_type"] = client_type
+        if customer.get("account_type") != account_type:
+            changes["account_type"] = account_type
+        if changes:
+            store.update_one("customers", {"_id": customer.get("_id")}, changes)
             changed_customers += 1
 
     # Keep the role registry current without removing any installation-specific
@@ -423,6 +510,38 @@ def ensure_business_logic_schema(store: Store, data_directory: Path) -> dict[str
                 store.update_one("roles", {"_id": role_id}, {"permissions": merged})
         store.insert_one("system_migrations", {"_id": role_policy_migration, "applied_at": utcnow()})
 
+    # Keep quotation lifecycle permissions synchronized even when production
+    # starts with AUTO_SEED disabled. Active quotations are archivable by all
+    # quotation-capable roles; permanent deletion is Superadmin-only.
+    quotation_lifecycle_migration = "quotation-lifecycle-permissions-v1"
+    if not store.find_one("system_migrations", {"_id": quotation_lifecycle_migration}):
+        for role_id in ("superadmin", "admin", "manager_sales_admin", "user"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if not role:
+                continue
+            permissions = set(role.get("permissions") or [])
+            permissions.add("quotations.archive")
+            if role_id == "superadmin":
+                permissions.add("quotations.delete")
+            else:
+                permissions.discard("quotations.delete")
+            store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": quotation_lifecycle_migration, "applied_at": utcnow()})
+
+    # Production startup intentionally does not run the full ``seed`` routine
+    # unless AUTO_SEED is enabled.  Keep this security-critical repair in the
+    # always-run schema sync as well, otherwise an existing production role
+    # registry can deny the Superadmin OC delete route even though the
+    # canonical permission is present in ROLE_PERMISSIONS.
+    order_delete_schema_migration = "order-confirmation-delete-permission-v3"
+    if not store.find_one("system_migrations", {"_id": order_delete_schema_migration}):
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role and "orders.delete" not in set(role.get("permissions") or []):
+                permissions = sorted(set(role.get("permissions") or []).union({"orders.delete"}))
+                store.update_one("roles", {"_id": role_id}, {"permissions": permissions})
+        store.insert_one("system_migrations", {"_id": order_delete_schema_migration, "applied_at": utcnow()})
+
     rules_added = _seed_default_incentive_rules(store)
 
     # The JSON file defines supported dealer dimensions and null placeholders;
@@ -432,7 +551,9 @@ def ensure_business_logic_schema(store: Store, data_directory: Path) -> dict[str
     if pricing_path.exists():
         dealer_pricing = _load(pricing_path)
         existing = store.find_one("pricing_configurations", {"_id": "client-pricing"})
-        configuration = _client_pricing_document(dealer_pricing, existing)
+        distributor_list = _load(data_file(data_directory, "mpack_price_list_2026_h2.json"))
+        dealer_list = _load(data_file(data_directory, "dealer_mpack_price_list_2026_h2.json"))
+        configuration = _client_pricing_document(dealer_pricing, existing, distributor_list, dealer_list)
         if existing:
             store.update_one("pricing_configurations", {"_id": "client-pricing"}, configuration)
         else:
@@ -485,6 +606,24 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
             permissions.add("quotations.send")
             store.update_one("roles", {"_id": "user"}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": quotation_send_migration, "applied_at": utcnow()})
+
+    # Enforce the quotation lifecycle on existing installations as well as new
+    # seeds: every quotation-capable role may archive, but permanent deletion
+    # belongs exclusively to Superadmin and only applies after archival.
+    quotation_lifecycle_migration = "quotation-lifecycle-permissions-v1"
+    if not store.find_one("system_migrations", {"_id": quotation_lifecycle_migration}):
+        for role_id in ("superadmin", "admin", "manager_sales_admin", "user"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if not role:
+                continue
+            permissions = set(role.get("permissions") or [])
+            permissions.add("quotations.archive")
+            if role_id == "superadmin":
+                permissions.add("quotations.delete")
+            else:
+                permissions.discard("quotations.delete")
+            store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": quotation_lifecycle_migration, "applied_at": utcnow()})
 
     customer_access_migration = "customer-view-all-v1"
     if not store.find_one("system_migrations", {"_id": customer_access_migration}):
@@ -547,6 +686,32 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": finance_role_baseline_migration, "applied_at": utcnow()})
 
+    incentive_delete_migration = "incentive-delete-admin-permissions-v1"
+    if not store.find_one("system_migrations", {"_id": incentive_delete_migration}):
+        # Cancellation is an audited financial correction, so only the two
+        # privileged roles receive it. Paid/payout-linked rows are still
+        # protected by the finance route regardless of this permission.
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.add("incentives.delete")
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": incentive_delete_migration, "applied_at": utcnow()})
+
+    # Repair installations that already recorded the original migration but
+    # later lost the Superadmin permission through a manual role edit/import.
+    # This is intentionally narrow: it restores only the canonical privileged
+    # capability and does not broaden manager/user access.
+    incentive_delete_repair = "incentive-delete-superadmin-permission-v2"
+    if not store.find_one("system_migrations", {"_id": incentive_delete_repair}):
+        role = store.find_one("roles", {"_id": "superadmin"}) or {}
+        if role and "incentives.delete" not in set(role.get("permissions") or []):
+            store.update_one("roles", {"_id": "superadmin"}, {
+                "permissions": sorted(set(role.get("permissions") or []).union({"incentives.delete"})),
+            })
+        store.insert_one("system_migrations", {"_id": incentive_delete_repair, "applied_at": utcnow()})
+
     manager_finance_migration = "manager-finance-bank-details-v1"
     if not store.find_one("system_migrations", {"_id": manager_finance_migration}):
         # Managers and users receive only scoped bank-detail capabilities. The
@@ -565,6 +730,33 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                     permissions.discard("payments.confirm")
                 store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
         store.insert_one("system_migrations", {"_id": manager_finance_migration, "applied_at": utcnow()})
+
+    # Order Confirmation deletion is an administrative control. Existing
+    # installations need this permission backfilled explicitly; manager and
+    # user roles intentionally remain unable to delete financial documents.
+    order_delete_migration = "order-confirmation-delete-permission-v1"
+    if not store.find_one("system_migrations", {"_id": order_delete_migration}):
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role:
+                permissions = set(role.get("permissions", []))
+                permissions.add("orders.delete")
+                store.update_one("roles", {"_id": role_id}, {"permissions": sorted(permissions)})
+        store.insert_one("system_migrations", {"_id": order_delete_migration, "applied_at": utcnow()})
+
+    # Repair installations where the original migration marker was written
+    # before the role existed, or where an older role document was restored
+    # without the administrative delete capability.  This remains narrowly
+    # scoped to the canonical privileged roles and is safe to run repeatedly;
+    # manager/user roles are intentionally never broadened here.
+    order_delete_repair_migration = "order-confirmation-delete-permission-v2"
+    if not store.find_one("system_migrations", {"_id": order_delete_repair_migration}):
+        for role_id in ("superadmin", "admin"):
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if role and "orders.delete" not in set(role.get("permissions") or []):
+                permissions = sorted(set(role.get("permissions") or []).union({"orders.delete"}))
+                store.update_one("roles", {"_id": role_id}, {"permissions": permissions})
+        store.insert_one("system_migrations", {"_id": order_delete_repair_migration, "applied_at": utcnow()})
 
     pricing_policy_migration = "eur-only-no-tax-v1"
     if not store.find_one("system_migrations", {"_id": pricing_policy_migration}):
@@ -635,7 +827,10 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
     catalog = _catalog_seed(data_directory)
     dealer_pricing = catalog["dealer_underpacking_pricing"]
     existing_client_pricing = store.find_one("pricing_configurations", {"_id": "client-pricing"})
-    pricing_configuration = _client_pricing_document(dealer_pricing, existing_client_pricing)
+    pricing_configuration = _client_pricing_document(
+        dealer_pricing, existing_client_pricing,
+        catalog["distributor_mpack_price_list"], catalog["dealer_mpack_price_list"],
+    )
     if existing_client_pricing:
         store.update_one("pricing_configurations", {"_id": "client-pricing"}, pricing_configuration)
     else:
@@ -877,6 +1072,15 @@ def sync_underpacking_catalog(store: Store, data_directory: Path) -> dict[str, i
     Underpacking collections.
     """
     catalog = _catalog_seed(data_directory)
+    # Production restarts run this focused reconciliation even when AUTO_SEED
+    # is disabled.  Keep the persisted source matrix in sync as well, while
+    # preserving any Superadmin MPack overrides already stored in MongoDB.
+    existing_pricing = store.find_one("pricing_configurations", {"_id": "client-pricing"})
+    pricing_configuration = _client_pricing_document(
+        catalog["dealer_underpacking_pricing"], existing_pricing,
+        catalog["distributor_mpack_price_list"], catalog["dealer_mpack_price_list"],
+    )
+    store.update_one("pricing_configurations", {"_id": "client-pricing"}, pricing_configuration, upsert=True)
     canonical_products = [row for row in catalog["products"] if row.get("category_id") == "mpacks"]
     canonical_ids = {row["_id"] for row in canonical_products}
     deactivated = 0

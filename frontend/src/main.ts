@@ -1,5 +1,5 @@
 import "./styles/main.css";
-import { authApi, customerCompanyApi } from "./api";
+import { authApi, customerCompanyApi, financeApi } from "./api";
 import { api, ApiError } from "./api/client";
 import { refreshIcons } from "./components/icons";
 import { renderShell } from "./layouts/shell";
@@ -54,7 +54,10 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     await customerCompanyApi.clearSelection(customerContextSignal()).catch(() => undefined);
   }
   if (customer && session.active_customer_id !== (customer.customer_id ?? customer._id)) await customerCompanyApi.select(customer.customer_id ?? customer._id);
-  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR", watermarkEnabled: session.watermark_enabled !== false });
+  const customerIncentiveVisible = session.user.role_id === "superadmin"
+    ? true
+    : await financeApi.customerIncentiveVisibility().then((result) => Boolean(result.visible)).catch(() => false);
+  appStore.set({ user: session.user, customers, customer, activeCustomerId: customer?.customer_id ?? customer?._id ?? null, customerCompanies, customerCompany, companies: customerCompanies, company: customerCompany, currency: customer?.preferred_currency ?? customer?.default_currency ?? "EUR", watermarkEnabled: session.watermark_enabled !== false, customerIncentiveVisible });
   if (location.pathname === "/quotation-preview") {
     document.body.classList.add("print-preview-mode");
     app.replaceChildren(await quotationPreviewPage());
@@ -68,7 +71,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     : authEntry
       ? "/dashboard"
       : location.pathname;
-  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/order-confirmations", "/banking", "/payments", "/incentives", "/incentives/overview", "/incentives/rules", "/incentives/payouts", "/credit-notes", "/customer-credits", "/reminders", "/reports", "/users", "/settings", "/profile", "/my-bank-details"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
+  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/order-confirmations", "/banking", "/payments", "/incentives", "/incentives/overview", "/incentives/rules", "/incentives/payouts", "/incentives/customer", "/credit-notes", "/customer-credits", "/reminders", "/reports", "/users", "/settings", "/profile", "/my-bank-details"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 
