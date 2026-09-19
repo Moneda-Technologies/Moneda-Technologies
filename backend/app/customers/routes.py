@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from uuid import uuid4
 
 from flask import Blueprint, current_app, request
 
@@ -9,6 +10,7 @@ from app.middleware.access import can_view_all_customers, customer_record, curre
 from app.services.audit import audit
 from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
+from app.customers.addresses import customer_address_view, customer_shipping_addresses, normalize_address
 from app.services.business_logic import normalize_client_type, customer_account_type, validate_customer_incentive_config
 
 
@@ -22,6 +24,7 @@ FIELDS = {
     "notes", "status", "active", "continent", "country_code", "country_name", "region",
     "tax_profile", "custom_payment_days", "payment_terms_display",
     "client_type", "account_type",
+    "billing_address_record", "shipping_addresses", "default_price_list_id", "category_price_list_ids",
     "have_to_give_incentive", "incentive_bearer_name", "incentive_designation", "customer_incentive_percentage",
     "incentive_visible_to_managers", "incentive_visible_to_salespersons",
 }
@@ -72,6 +75,7 @@ def _view(row: dict, *, include_sensitive: bool | None = None) -> dict:
     customer.setdefault("active", customer.get("status", "active") != "archived")
     customer["client_type"] = normalize_client_type(customer.get("client_type"))
     customer["account_type"] = customer_account_type(customer)
+    customer.update(customer_address_view(customer))
     if include_sensitive is None:
         include_sensitive = _customer_incentive_visible(customer)
     if not include_sensitive:
@@ -180,6 +184,10 @@ def create_customer():
     if CUSTOMER_INCENTIVE_FIELDS.intersection(raw) and str(actor.get("role_id") or "") != "superadmin":
         return failure("Only a Superadmin can configure customer incentives", status=403, error="customer_incentive_configuration_forbidden")
     payload = {key: value for key, value in raw.items() if key in FIELDS}
+    if isinstance(payload.get("billing_address_record"), dict):
+        payload["billing_address_record"] = normalize_address(payload["billing_address_record"], address_id="billing", active=True, is_default=True)
+    if isinstance(payload.get("shipping_addresses"), list):
+        payload["shipping_addresses"] = [normalize_address(item) for item in payload["shipping_addresses"] if isinstance(item, dict)]
     name = str(payload.get("name") or payload.get("company_name") or "").strip()
     if not name:
         return failure("Customer company name is required", status=422)
@@ -253,6 +261,10 @@ def update_customer(customer_id: str):
     if CUSTOMER_INCENTIVE_FIELDS.intersection(raw) and str(actor.get("role_id") or "") != "superadmin":
         return failure("Only a Superadmin can configure customer incentives", status=403, error="customer_incentive_configuration_forbidden")
     changes = {key: value for key, value in raw.items() if key in FIELDS}
+    if isinstance(changes.get("billing_address_record"), dict):
+        changes["billing_address_record"] = normalize_address(changes["billing_address_record"], address_id="billing", active=True, is_default=True)
+    if isinstance(changes.get("shipping_addresses"), list):
+        changes["shipping_addresses"] = [normalize_address(item) for item in changes["shipping_addresses"] if isinstance(item, dict)]
     if "company_name" in changes and "name" not in changes:
         changes["name"] = str(changes["company_name"]).strip()
     if "name" in changes:
@@ -297,6 +309,110 @@ def update_customer(customer_id: str):
         audit_details.update({"old_client_type": normalize_client_type(existing.get("client_type")), "new_client_type": changes.get("client_type")})
     audit("customer.update", "customer", customer_id, audit_details)
     return success(_view(row), "Customer updated")
+
+
+@bp.get("/<customer_id>/shipping-addresses")
+@permission_required("customer.shipping_address.view")
+def list_shipping_addresses(customer_id: str):
+    customer = customer_record(customer_id)
+    if not customer:
+        return failure("Customer not found", status=404)
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    rows = customer_shipping_addresses(customer)
+    return success({"items": rows, "total": len(rows)})
+
+
+@bp.post("/<customer_id>/shipping-addresses")
+@permission_required("customer.shipping_address.create")
+def create_shipping_address(customer_id: str):
+    store = current_app.extensions["store"]
+    customer = customer_record(customer_id)
+    if not customer:
+        return failure("Customer not found", status=404)
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    raw = request.get_json(silent=True) or {}
+    if not str(raw.get("address_line_1") or "").strip():
+        return failure("Shipping address line 1 is required", status=422)
+    rows = customer_shipping_addresses(customer)
+    row = normalize_address(raw, address_id=str(uuid4()), is_default=not any(item.get("active") for item in rows))
+    if row["is_default"]:
+        for item in rows:
+            item["is_default"] = False
+    rows.append(row)
+    store.update_one("customers", {"_id": customer_id}, {"shipping_addresses": rows})
+    audit("customer.shipping_address.create", "customer", customer_id, {"shipping_address_id": row["id"]})
+    return success(row, "Shipping address created", 201)
+
+
+@bp.patch("/<customer_id>/shipping-addresses/<address_id>")
+@permission_required("customer.shipping_address.update")
+def update_shipping_address(customer_id: str, address_id: str):
+    store = current_app.extensions["store"]
+    customer = customer_record(customer_id)
+    if not customer:
+        return failure("Customer not found", status=404)
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    rows = customer_shipping_addresses(customer)
+    index = next((idx for idx, item in enumerate(rows) if str(item.get("id")) == address_id), None)
+    if index is None:
+        return failure("Shipping address not found", status=404)
+    raw = request.get_json(silent=True) or {}
+    merged = {**rows[index], **raw, "id": address_id}
+    if not str(merged.get("address_line_1") or "").strip():
+        return failure("Shipping address line 1 is required", status=422)
+    rows[index] = normalize_address(merged, address_id=address_id)
+    if rows[index]["is_default"]:
+        for idx, item in enumerate(rows):
+            if idx != index:
+                item["is_default"] = False
+    store.update_one("customers", {"_id": customer_id}, {"shipping_addresses": rows})
+    audit("customer.shipping_address.update", "customer", customer_id, {"shipping_address_id": address_id})
+    return success(rows[index], "Shipping address updated")
+
+
+@bp.delete("/<customer_id>/shipping-addresses/<address_id>")
+@permission_required("customer.shipping_address.deactivate")
+def deactivate_shipping_address(customer_id: str, address_id: str):
+    store = current_app.extensions["store"]
+    customer = customer_record(customer_id)
+    if not customer:
+        return failure("Customer not found", status=404)
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    rows = customer_shipping_addresses(customer)
+    row = next((item for item in rows if str(item.get("id")) == address_id), None)
+    if not row:
+        return failure("Shipping address not found", status=404)
+    row["active"] = False
+    row["is_default"] = False
+    next_active = next((item for item in rows if item.get("active")), None)
+    if next_active and not any(item.get("active") and item.get("is_default") for item in rows):
+        next_active["is_default"] = True
+    store.update_one("customers", {"_id": customer_id}, {"shipping_addresses": rows})
+    audit("customer.shipping_address.deactivate", "customer", customer_id, {"shipping_address_id": address_id})
+    return success(row, "Shipping address deactivated")
+
+
+@bp.patch("/<customer_id>/pricing")
+@permission_required("customer.pricing.update")
+def update_customer_pricing(customer_id: str):
+    store = current_app.extensions["store"]
+    customer = customer_record(customer_id)
+    if not customer:
+        return failure("Customer not found", status=404)
+    if not enforce_customer(customer_id):
+        return failure("Customer access denied", status=403)
+    raw = request.get_json(silent=True) or {}
+    changes = {
+        "default_price_list_id": str(raw.get("default_price_list_id") or "").strip() or None,
+        "category_price_list_ids": raw.get("category_price_list_ids") if isinstance(raw.get("category_price_list_ids"), dict) else {},
+    }
+    row = store.update_one("customers", {"_id": customer_id}, changes)
+    audit("customer.pricing.update", "customer", customer_id, {"fields": sorted(changes)})
+    return success(_view(row or customer), "Customer pricing updated")
 
 
 @bp.delete("/<customer_id>")

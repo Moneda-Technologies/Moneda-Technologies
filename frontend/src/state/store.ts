@@ -8,6 +8,7 @@ import { companiesPage, usersPage, adminPage, settingsPage, profilePage, myBankD
 import { ordersPage } from "../pages/orders";
 import { cartPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "../pages/quotations";
 import { reportsPage, reportDetailPage } from "../pages/reports";
+import { accountPriceListsPage } from "../pages/account-price-lists";
 import { PageFactory } from "../router";
 import type { Company, Currency, Customer, User } from "../types/domain";
 
@@ -130,4 +131,5 @@ export const routes: Record<string, PageFactory> = {
   "/settings/security": () => settingsPage("security"),
   "/profile": profilePage,
   "/my-bank-details": myBankDetailsPage,
+  "/account/price-lists": accountPriceListsPage,
 };

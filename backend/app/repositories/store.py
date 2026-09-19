@@ -27,6 +27,73 @@ _LOGGER = logging.getLogger(__name__)
 _INDEX_INIT_MAX_ATTEMPTS = 3
 _INDEX_INIT_BACKOFF_SECONDS = 0.25
 _INDEX_TRANSIENT_ERRORS = (AutoReconnect, ConnectionFailure, NetworkTimeout, ServerSelectionTimeoutError)
+_STARTUP_MAX_ATTEMPTS = 3
+_STARTUP_BACKOFF_SECONDS = 1.0
+
+
+class MongoStartupError(RuntimeError):
+    """A safe, categorized failure raised when MongoDB cannot initialize."""
+
+    def __init__(self, message: str, *, category: str, stage: str, attempts: int) -> None:
+        super().__init__(message)
+        self.category = category
+        self.stage = stage
+        self.attempts = attempts
+
+
+def _is_dns_resolution_error(error: BaseException) -> bool:
+    """Identify PyMongo's SRV/DNS timeout without treating every config error as transient."""
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "resolution lifetime expired",
+        "dns operation timed out",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "getaddrinfo failed",
+        "no such host",
+        "cannot resolve",
+    ))
+
+
+def _classify_mongo_startup_error(error: BaseException, stage: str) -> tuple[str, str, bool]:
+    """Return ``(category, diagnostic_stage, retryable)`` for a startup error."""
+    if isinstance(error, OperationFailure):
+        message = str(error).lower()
+        code = getattr(error, "code", None)
+        if code in {11, 13, 18, 8000} or any(marker in message for marker in (
+            "authentication", "unauthorized", "not authorized", "bad auth",
+        )):
+            return "authentication", "authentication", False
+        return "database_operation", stage, False
+    if isinstance(error, ConfigurationError):
+        if _is_dns_resolution_error(error):
+            return "transient_network", "dns_resolution", True
+        return "configuration", "configuration", False
+    # Check the most specific transient errors before their PyMongo base classes.
+    if isinstance(error, ServerSelectionTimeoutError):
+        return "server_unavailable", "server_selection", True
+    if isinstance(error, NetworkTimeout):
+        return "transient_network", "network_timeout", True
+    if isinstance(error, AutoReconnect):
+        return "connection_reset", "connection_reset", True
+    if isinstance(error, ConnectionFailure):
+        return "server_unavailable", "connection", True
+    if isinstance(error, ValueError) and stage == "client_creation":
+        return "configuration", "configuration", False
+    return "driver", stage, False
+
+
+def _mongo_startup_message(category: str, stage: str, attempts: int) -> str:
+    messages = {
+        "configuration": "MongoDB connection string/configuration is invalid",
+        "transient_network": "MongoDB DNS/network connectivity failed during startup",
+        "connection_reset": "MongoDB connection was reset during startup",
+        "server_unavailable": "MongoDB server was unavailable during startup",
+        "authentication": "MongoDB authentication or authorization failed",
+        "database_operation": "MongoDB rejected a startup database operation",
+        "driver": "MongoDB startup failed",
+    }
+    return f"{messages.get(category, messages['driver'])} (category={category}, stage={stage}, attempts={attempts})"
 
 
 def _mongo_connection_metadata(uri: str, database: str) -> dict[str, str]:
@@ -216,64 +283,95 @@ class MemoryStore:
 
 
 class MongoStore:
-    def __init__(self, uri: str, database: str) -> None:
+    def __init__(
+        self,
+        uri: str,
+        database: str,
+        *,
+        startup_max_attempts: int = _STARTUP_MAX_ATTEMPTS,
+        startup_backoff_seconds: float = _STARTUP_BACKOFF_SECONDS,
+    ) -> None:
         metadata = _mongo_connection_metadata(uri, database)
-        stage = "client_creation"
+        self.client: Any | None = None
+        self.db: Any | None = None
+        max_attempts = max(1, int(startup_max_attempts))
+        backoff_seconds = max(0.0, float(startup_backoff_seconds))
         _LOGGER.info(
             "mongodb startup connection configured=%s scheme=%s host=%s database=%s tls=%s",
             metadata["configured"], metadata["scheme"], metadata["host"], metadata["database"], metadata["tls"],
         )
+        for attempt in range(1, max_attempts + 1):
+            stage = "client_creation"
+            self._startup_stage = stage
+            try:
+                self._connect_and_initialize(uri, database, metadata)
+            except (PyMongoError, ValueError) as exc:
+                stage = getattr(self, "_startup_stage", stage)
+                category, diagnostic_stage, retryable = _classify_mongo_startup_error(exc, stage)
+                if retryable and attempt < max_attempts:
+                    delay = backoff_seconds * (2 ** (attempt - 1))
+                    _LOGGER.warning(
+                        "mongodb startup retry category=%s stage=%s attempt=%s/%s backoff_seconds=%s "
+                        "host=%s database=%s error_type=%s error=%s",
+                        category, diagnostic_stage, attempt, max_attempts, delay,
+                        metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+                    )
+                    self._close_client()
+                    if delay:
+                        time.sleep(delay)
+                    continue
+                _LOGGER.error(
+                    "mongodb startup failed category=%s stage=%s retryable=%s attempts=%s host=%s database=%s "
+                    "error_type=%s error=%s",
+                    category, diagnostic_stage, retryable, attempt,
+                    metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
+                )
+                self._close_client()
+                raise MongoStartupError(
+                    _mongo_startup_message(category, diagnostic_stage, attempt),
+                    category=category, stage=diagnostic_stage, attempts=attempt,
+                ) from exc
+            except RuntimeError:
+                self._close_client()
+                raise
+            else:
+                _LOGGER.info("mongodb startup complete host=%s database=%s attempts=%s", metadata["host"], database, attempt)
+                return
+
+    def _connect_and_initialize(self, uri: str, database: str, metadata: dict[str, str]) -> None:
+        """Open a client, prove it is usable, then initialize indexes."""
+        # Keep startup bounded while allowing Atlas SRV discovery and a
+        # transient socket reset to recover. These options do not mask a
+        # failure: ping and index initialization still have to complete.
+        self._startup_stage = "client_creation"
+        self.client = MongoClient(
+            uri,
+            serverSelectionTimeoutMS=10_000,
+            connectTimeoutMS=5_000,
+            socketTimeoutMS=10_000,
+            retryWrites=True,
+            retryReads=True,
+            appname="moneda-api",
+        )
+        self._startup_stage = "server_selection_ping"
+        self.client.admin.command("ping")
+        _LOGGER.info("mongodb startup ping=ok host=%s database=%s", metadata["host"], metadata["database"])
+        self.db = self.client[database]
+        self._startup_stage = "index_initialization"
+        self._initialize_indexes_with_retry(database)
+        _LOGGER.info("mongodb startup indexes=ready database=%s", database)
+
+    def _close_client(self) -> None:
+        client = getattr(self, "client", None)
+        if client is None:
+            return
         try:
-            # Keep startup bounded while allowing Atlas SRV discovery and a
-            # transient socket reset to recover within the index retry window. These options do not
-            # mask a failure: ping and index initialization still have to
-            # complete before the application is considered healthy.
-            self.client = MongoClient(
-                uri,
-                serverSelectionTimeoutMS=10_000,
-                connectTimeoutMS=5_000,
-                socketTimeoutMS=10_000,
-                retryWrites=True,
-                retryReads=True,
-                appname="moneda-api",
-            )
-            stage = "server_selection_ping"
-            self.client.admin.command("ping")
-            _LOGGER.info("mongodb startup ping=ok host=%s database=%s", metadata["host"], metadata["database"])
-            self.db = self.client[database]
-            stage = "index_initialization"
-            self._initialize_indexes_with_retry(metadata["database"])
-            _LOGGER.info("mongodb startup indexes=ready database=%s", metadata["database"])
-        except OperationFailure as exc:
-            _LOGGER.error(
-                "mongodb startup failed category=authentication_or_authorization stage=%s host=%s database=%s error_type=%s error=%s",
-                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
-            )
-            raise RuntimeError("MongoDB authentication or authorization failed") from exc
-        except ConfigurationError as exc:
-            _LOGGER.error(
-                "mongodb startup failed category=configuration_or_dns stage=%s host=%s database=%s error_type=%s error=%s",
-                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
-            )
-            raise RuntimeError("MongoDB connection string or DNS configuration is invalid") from exc
-        except ServerSelectionTimeoutError as exc:
-            _LOGGER.error(
-                "mongodb startup failed category=server_selection_network_tls stage=%s host=%s database=%s error_type=%s error=%s",
-                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
-            )
-            raise RuntimeError("MongoDB network, DNS, TLS, or timeout failure") from exc
-        except AutoReconnect as exc:
-            _LOGGER.error(
-                "mongodb startup failed category=transient_network_reset stage=%s host=%s database=%s error_type=%s error=%s",
-                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
-            )
-            raise RuntimeError("MongoDB connection was reset during startup") from exc
-        except PyMongoError as exc:
-            _LOGGER.error(
-                "mongodb startup failed category=driver_or_index stage=%s host=%s database=%s error_type=%s error=%s",
-                stage, metadata["host"], metadata["database"], type(exc).__name__, _safe_mongo_error(exc),
-            )
-            raise RuntimeError("MongoDB connection failed") from exc
+            client.close()
+        except Exception:
+            # A failed startup must not hide the original, categorized error.
+            pass
+        self.client = None
+        self.db = None
 
     @staticmethod
     def _index_operation_label(collection: str, keys: Any) -> str:
@@ -571,5 +669,10 @@ def build_store(config: dict[str, Any]) -> Store:
     if config.get("DEMO_MODE") or config.get("TESTING"):
         return MemoryStore()
     if config.get("MONGODB_URI"):
-        return MongoStore(config["MONGODB_URI"], config["MONGODB_DATABASE"])
+        return MongoStore(
+            config["MONGODB_URI"],
+            config["MONGODB_DATABASE"],
+            startup_max_attempts=config.get("MONGODB_STARTUP_MAX_ATTEMPTS", _STARTUP_MAX_ATTEMPTS),
+            startup_backoff_seconds=config.get("MONGODB_STARTUP_BACKOFF_SECONDS", _STARTUP_BACKOFF_SECONDS),
+        )
     raise RuntimeError("MONGODB_URI is required when DEMO_MODE is disabled")

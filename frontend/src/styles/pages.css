@@ -1275,6 +1275,13 @@
 .configuration-field .field-control { display: block; min-width: 0; }
 .configuration-field .field-control input, .configuration-field .field-control select { min-height: 52px; }
 .configuration-field .field-helper { color: var(--text-muted); display: block; font-size: .56rem; font-weight: 400; line-height: 1.3; margin: 0; min-height: 1.3em; }
+.commercial-fields .discount-field { align-content: start; display: grid; gap: 7px; min-width: 0; }
+.commercial-fields .discount-field > span { color: #484a46; font-size: .73rem; font-weight: 700; line-height: 1.2; min-height: 17px; }
+.commercial-fields .discount-field select { min-height: 52px; }
+.commercial-fields .discount-limit-helper { color: var(--text-muted); display: block; font-size: .62rem; line-height: 1.3; margin: 0; min-height: 1.3em; }
+.blanket-dimension-field .field-control { display: grid; gap: 8px; }
+.blanket-dimension-diagram { align-items: center; display: flex; height: 112px; justify-content: flex-start; max-width: 320px; overflow: hidden; pointer-events: none; user-select: none; width: 100%; }
+.blanket-dimension-diagram__art { display: block; height: 100%; max-height: 100%; max-width: 100%; object-fit: contain; object-position: left center; width: 100%; }
 .mpack-dependent-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .commercial-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .inline-price-summary { margin-top: 4px; max-width: none; min-height: 280px; padding: 24px 26px; width: 100%; }
@@ -1560,6 +1567,32 @@
 .pricing-management-page .price-list-choice-grid,
 .pricing-management-page .price-list-category-grid { min-width: 0; max-width: 100%; }
 .pricing-management-page .page-body { width: 100%; }
+
+.account-price-lists-page .page-body { display: grid; gap: 16px; min-width: 0; }
+.account-price-list-selector { padding: 20px; }
+.account-price-list-selector__intro h2,
+.account-price-list-viewer__header h2 { font-size: 1.2rem; margin: 5px 0 4px; }
+.account-price-list-selector__intro p { color: var(--text-muted); font-size: .82rem; margin: 0; }
+.account-price-list-tabs { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 17px; }
+.account-price-list-tab { align-items: flex-start; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-height: 76px; padding: 13px 14px; text-align: left; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.account-price-list-tab:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.account-price-list-tab:focus-visible { outline: 3px solid rgba(225, 55, 50, .25); outline-offset: 2px; }
+.account-price-list-tab strong { font-size: .85rem; }
+.account-price-list-tab span { color: var(--text-muted); font-size: .72rem; line-height: 1.35; }
+.account-price-list-tab.is-active { background: var(--primary-black); border-color: var(--primary-black); color: #fff; }
+.account-price-list-tab.is-active span { color: #d4d4d4; }
+.account-price-list-viewer { min-width: 0; overflow: hidden; padding: 20px; }
+.account-price-list-viewer__header { align-items: flex-start; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+.account-price-list-viewer__header .form-hint { flex: 0 0 auto; margin-top: 8px; }
+.account-price-list-embed { align-items: flex-start; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); display: flex; justify-content: center; max-width: 100%; min-height: 520px; overflow-x: auto; overflow-y: hidden; width: 100%; }
+.account-price-list-embed iframe { border: 0; display: block; flex: 0 0 800px; height: 520px; max-width: none; width: 800px; }
+@media (max-width: 760px) {
+  .account-price-list-tabs { grid-template-columns: 1fr; }
+  .account-price-list-viewer__header { display: block; }
+  .account-price-list-viewer__header .form-hint { display: block; margin-top: 8px; }
+  .account-price-list-selector, .account-price-list-viewer { padding: 15px; }
+  .account-price-list-embed { justify-content: flex-start; }
+}
 .pricing-management-page .pricing-model-toolbar { align-items: end; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; margin: 18px 0 0; padding: 14px 16px; }
 .pricing-management-page .pricing-model-toolbar label { min-width: 0; }
 .pricing-management-page .pricing-model-toolbar label > span { display: block; font-size: .78rem; margin-bottom: 6px; }

@@ -78,6 +78,7 @@ const navGroups: NavGroup[] = [
   ] },
   { key: "my-account", label: "My Account", icon: "user-round", items: [
     { id: "my-account-profile", label: "My Account", path: "/profile", icon: "user-round", permission: "account.view" },
+    { id: "my-account-price-lists", label: "Price Lists", path: "/account/price-lists", icon: "files", permission: "account.view" },
     { id: "my-incentives", label: "User Incentive", path: "/incentives/user", icon: "badge-euro", permission: "incentives.view", roles: ["user", "manager", "manager_sales_admin"] },
     { id: "customer-incentive", label: "Customer Incentive", path: "/incentives/customer", icon: "building-2", permission: "incentives.view", roles: ["user", "manager", "manager_sales_admin"] },
     { id: "my-bank-details", label: "My Bank Details", path: "/my-bank-details", icon: "landmark", permission: "account.view", roles: ["user", "manager", "manager_sales_admin"] },
@@ -86,6 +87,7 @@ const navGroups: NavGroup[] = [
     { id: "account-settings", label: "Account Settings", path: "/profile", icon: "user-round", permission: "account.view" },
     { id: "account-security", label: "Security", path: "/settings/security", icon: "shield-check", permission: "account.view" },
     { id: "login-activity", label: "Login Activity", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
+    { id: "account-price-lists", label: "Price Lists", path: "/account/price-lists", icon: "files", permission: "account.view" },
   ] },
   { key: "incentives-admin", label: "Incentives", icon: "badge-euro", items: [
     { id: "incentive-overview", label: "Incentive Overview", path: "/incentives/overview", icon: "badge-euro", permission: "incentives.view" },
@@ -270,13 +272,22 @@ export function renderShell(): HTMLElement {
     };
     parent?.addEventListener("click", () => {
       const defaultPath = parent.dataset.navDefault;
-      // Navigate first used to reopen the active group and then immediately
-      // toggle it closed. Keep the parent open when it owns a default route;
-      // this makes expanded and collapsed Finance navigation use the same
-      // submenu state.
       const wasOpen = group.classList.contains("is-open");
-      openOnlyThisGroup(defaultPath ? true : !wasOpen);
-      if (defaultPath) window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: defaultPath }));
+      const shouldOpen = !wasOpen;
+      openOnlyThisGroup(shouldOpen);
+
+      // A parent with a default destination (Finance) is also a real toggle.
+      // Only navigate when opening it from outside the group.  Navigating while
+      // already on a Finance child route would call updateActiveNav and reopen
+      // the group immediately, making it impossible to close manually.
+      if (defaultPath && shouldOpen) {
+        const currentPath = window.location.pathname.replace(/\/$/, "") || "/";
+        const inFinance = currentPath === "/finance"
+          || currentPath === "/payments"
+          || currentPath.startsWith("/credit-notes")
+          || currentPath.startsWith("/customer-credits");
+        if (!inFinance) window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: defaultPath }));
+      }
     });
     group.addEventListener("mouseenter", () => {
       if (!root.classList.contains("sidebar-collapsed")) return;

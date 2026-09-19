@@ -13,6 +13,8 @@ from app.services.audit import audit
 from app.customers.metadata import resolve_customer_currency
 from app.catalog.service import get_active_catalog_product
 from app.services.business_logic import pricing_client_type
+from app.pricing.price_lists import resolve_effective_price_list
+from app.customers.addresses import customer_address_view
 
 
 bp = Blueprint("pricing", __name__, url_prefix="/api")
@@ -123,6 +125,7 @@ def get_cart():
             return failure(str(exc), status=422)
         rows = refreshed
     customer = customer_record(customer_id) or {}
+    address_view = customer_address_view(customer)
     customer_name = customer.get("name") or customer.get("company_name") or ""
     display_totals = calculate_quote_totals([row["pricing_preview"] for row in rows]) if rows else calculate_quote_totals([])
     master_totals = {
@@ -142,6 +145,7 @@ def get_cart():
             if rows else "EUR"
         ),
         "totals": display_totals, "master_totals": master_totals,
+        **address_view,
     })
 
 
@@ -161,6 +165,10 @@ def _calculate(payload: dict):
     user = current_user() or {}
     configuration = payload.get("configuration", {})
     settings = store.find_one("app_settings", {"_id": "system"}) or {}
+    effective_price_list = resolve_effective_price_list(
+        store, customer_company, str(product.get("category_id") or ""),
+        str(payload.get("shipping_address_id") or "") or None,
+    )
     if product.get("category_id") == "blankets":
         machine_rows, _ = store.list("machines", {"active": {"$ne": False}}, limit=2000, sort="name", direction=1)
         validate_blanket_machine_selection(product, configuration, machine_rows)
@@ -171,11 +179,13 @@ def _calculate(payload: dict):
         privileged_discount="pricing.discount.override" in user.get("permissions", []),
         adjustments=resolve_product_adjustments(store, product, configuration), business_rules=settings,
         apply_tax=False, tax_mode_override="no_tax",
-        client_type=pricing_client_type(customer_company),
+        client_type=str(effective_price_list.get("client_type") or pricing_client_type(customer_company)),
         client_pricing=store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {},
     )
     line["display_currency"] = currency
     line["quotation_currency"] = "EUR"
+    line["effective_price_list"] = effective_price_list
+    line["shipping_address_id"] = str(payload.get("shipping_address_id") or "") or None
     return customer_company, product, line, rate_meta
 
 
@@ -214,6 +224,8 @@ def add_cart_item():
             "quantity": merged_line["requested_quantity"], "discount_percent": merged_line["discount_percent"],
             "currency": "EUR", "display_currency": merged_line["display_currency"],
             "pricing_preview": merged_line, "exchange_rate_meta": merged_rate_meta,
+            "shipping_address_id": merged_line.get("shipping_address_id"),
+            "effective_price_list": merged_line.get("effective_price_list"),
             **_commercial_snapshot_fields(merged_line),
         })
         current_app.logger.info(
@@ -229,6 +241,8 @@ def add_cart_item():
         "discount_percent": line["discount_percent"], "currency": "EUR",
         "display_currency": line["display_currency"],
         "pricing_preview": line, "exchange_rate_meta": rate_meta,
+        "shipping_address_id": line.get("shipping_address_id"),
+        "effective_price_list": line.get("effective_price_list"),
         **_commercial_snapshot_fields(line),
     })
     current_app.logger.info(
@@ -267,6 +281,8 @@ def update_cart_item(item_id: str):
         "discount_percent": line["discount_percent"], "currency": "EUR",
         "display_currency": line["display_currency"],
         "pricing_preview": line, "exchange_rate_meta": rate_meta,
+        "shipping_address_id": line.get("shipping_address_id"),
+        "effective_price_list": line.get("effective_price_list"),
         **_commercial_snapshot_fields(line),
     })
     current_app.logger.info(

@@ -6,13 +6,24 @@ from typing import Any
 
 from flask import current_app
 
+from app.customers.addresses import customer_address_view, legacy_billing_address
 from app.pricing.engine import (
     calculate_line, calculate_quote_totals, resolve_product_adjustments,
     validate_blanket_machine_selection, with_display_currency,
 )
+from app.pricing.price_lists import resolve_effective_price_list
 from app.repositories.store import Store, utcnow
 from app.customers.codes import available_customer_code
 from app.services.business_logic import customer_client_type, manager_snapshot, pricing_client_type
+
+
+def _truthy(value: Any) -> bool:
+    """Accept JSON booleans and conventional form values without treating "false" as true."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class QuotationService:
@@ -38,6 +49,20 @@ class QuotationService:
         # may still send a contact ``customer_id``; that value is ignored when
         # a legacy company scope is supplied by the route.
         customer_id = customer_company.get("customer_id") or customer_company["_id"]
+        address_view = customer_address_view(customer_company)
+        billing_address = address_view["billing_address_record"]
+        shipping_addresses = [row for row in address_view["shipping_addresses"] if row.get("active", True)]
+        requested_shipping_id = str(payload.get("shipping_address_id") or "").strip()
+        if requested_shipping_id:
+            shipping_address = next(
+                (row for row in shipping_addresses if str(row.get("id")) == requested_shipping_id), None,
+            )
+            if not shipping_address:
+                raise ValueError("Selected shipping address is unavailable")
+        else:
+            shipping_address = next((row for row in shipping_addresses if row.get("is_default")), None)
+            shipping_address = shipping_address or (shipping_addresses[0] if shipping_addresses else billing_address)
+        shipping_address_id = str(shipping_address.get("id") or "") or None
 
         settings = self.store.find_one("app_settings", {"_id": "system"}) or {}
         payment_terms = str(payload.get("payment_terms") or "Advance").strip()
@@ -73,10 +98,15 @@ class QuotationService:
         if transport_mode == "by_consignee":
             transport_charges = Decimal("0")
 
-        # New customer-facing quotations are always authored from EUR master
-        # prices. A submitted currency is a display preference only.
-        currency = "EUR"
+        # EUR remains the immutable commercial master. A final converted
+        # quotation is an explicit, snapshotted presentation choice.
+        make_converted = _truthy(payload.get("make_final_quotation_in_converted_currency", False))
+        requested_currency = str(payload.get("final_quote_currency") or "EUR").strip().upper()
+        if make_converted and requested_currency not in {"USD", "INR"}:
+            raise ValueError("Final Quote Currency must be USD or INR when conversion is enabled")
+        currency = requested_currency if make_converted else "EUR"
         rate, rate_meta = self.exchange_rate_service.rate_for(currency)
+        eur_rate = 1.0
         cart = self.store.find_one("carts", {"user_id": user["_id"], "customer_id": customer_id})
         if not cart:
             cart = self.store.insert_one("carts", {"user_id": user["_id"], "customer_id": customer_id, "active": True})
@@ -109,7 +139,7 @@ class QuotationService:
                 # Cart pricing is a trusted server-created snapshot. Preserve
                 # its EUR commercial amount even if a product price or the
                 # user's display currency changes before quotation creation.
-                line = with_display_currency(saved, "EUR", 1)
+                line = with_display_currency(saved, "EUR", eur_rate)
                 pricing_source = "saved_cart_eur"
             else:
                 # Compatibility path for historical carts without explicit EUR
@@ -119,17 +149,28 @@ class QuotationService:
                     validate_blanket_machine_selection(product, configuration, machine_rows)
                 line = calculate_line(
                     product, configuration, quantity=int(cart_item.get("quantity", 1)),
-                    discount_percent=cart_item.get("discount_percent", 0), currency=currency, exchange_rate=rate,
+                    discount_percent=cart_item.get("discount_percent", 0), currency="EUR", exchange_rate=eur_rate,
                     company_tax_rate=0, company_tax_mode="no_tax",
                     privileged_discount="pricing.discount.override" in user.get("permissions", []),
                     adjustments=resolve_product_adjustments(self.store, product, configuration), business_rules=settings,
                     apply_tax=False, tax_mode_override="no_tax",
-                    client_type=pricing_client_type(customer_company),
+                    client_type=str(resolve_effective_price_list(
+                        self.store, customer_company, str(product.get("category_id") or ""), shipping_address_id,
+                    ).get("client_type") or pricing_client_type(customer_company)),
                     client_pricing=self.store.find_one("pricing_configurations", {"_id": "client-pricing"}) or {},
                 )
                 pricing_source = "legacy_cart_recalculated_eur"
             line["discount_source"] = "saved_cart_item"
             line["category_id"] = product.get("category_id")
+            effective_price_list = resolve_effective_price_list(
+                self.store, customer_company, str(product.get("category_id") or ""), shipping_address_id,
+            )
+            line["effective_price_list"] = effective_price_list
+            line["shipping_address_id"] = shipping_address_id
+            line["final_currency"] = currency
+            line["final_exchange_rate"] = float(rate)
+            line["final_unit_price"] = round(float(line.get("unit_price", 0)) * float(rate), 2)
+            line["final_line_total"] = round(float(line.get("line_total", line.get("subtotal", 0))) * float(rate), 2)
             # Commercial amounts remain the immutable cart snapshot, while
             # descriptive catalogue copy comes from the current canonical
             # product record when the quotation itself is created.
@@ -157,6 +198,10 @@ class QuotationService:
             lines.append(line)
 
         totals = calculate_quote_totals(lines, transport_charges)
+        final_totals = {
+            key: round(float(value) * float(rate), 2) if isinstance(value, (int, float, Decimal)) else value
+            for key, value in totals.items()
+        }
         created_at = utcnow()
         quotation_number = "PREVIEW"
         if persist:
@@ -197,6 +242,9 @@ class QuotationService:
             "issuer": issuer, "issuer_snapshot": issuer,
             "cart_id": cart["_id"],
             "customer_id": customer_id, "customer_snapshot": customer_snapshot,
+            "billing_address_snapshot": billing_address,
+            "shipping_address_id": shipping_address_id,
+            "shipping_address_snapshot": shipping_address,
             # Deprecated aliases retained as read-only compatibility bridges.
             "customer_company_id": customer_id, "customer_company_snapshot": customer_snapshot,
             "company_id": customer_id, "company_snapshot": customer_snapshot,
@@ -217,8 +265,15 @@ class QuotationService:
             "exchange_rate_expires_at": rate_meta.get("expires_at"),
             "exchange_rate_source": rate_meta.get("source", "live"),
             "master_price_eur": float(sum(Decimal(str(line.get("master_price_eur", 0))) * int(line.get("quantity", 0)) for line in lines)),
-            "converted_price": float(sum(Decimal(str(line.get("converted_price", 0))) * int(line.get("quantity", 0)) for line in lines)),
-            "lines": lines, "totals": totals, "payment_terms": payment_terms,
+            "converted_price": float(final_totals.get("grand_total", 0)),
+            "make_final_quotation_in_converted_currency": make_converted,
+            "final_quote": {
+                "enabled": make_converted, "currency": currency, "exchange_rate": float(rate),
+                "exchange_rate_meta": rate_meta, "eur_totals": totals, "converted_totals": final_totals,
+            },
+            "effective_price_lists": [line.get("effective_price_list") for line in lines],
+            "lines": lines, "totals": final_totals, "eur_totals": totals, "final_totals": final_totals,
+            "payment_terms": payment_terms,
             "transport": transport, "notes": commercial_notes,
             "customer_notes": customer_notes,
             "terms": payload.get("terms", []), "commercial_conditions": commercial_conditions,

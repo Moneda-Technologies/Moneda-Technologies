@@ -19,6 +19,9 @@ PERMISSIONS = [
     "pricing.discount.override", "taxes.view", "taxes.manage", "currency.view", "currency.manage",
     "cart.view", "cart.manage", "customers.view", "customers.create", "customers.update",
     "customers.delete", "customers.archive", "customers.restore", "customers.view_all", "quotations.view", "quotations.view_all", "quotations.create", "quotations.edit",
+    "customer.shipping_address.view", "customer.shipping_address.create", "customer.shipping_address.update", "customer.shipping_address.deactivate",
+    "customer.pricing.view", "customer.pricing.update", "customer.shipping_pricing_override.view", "customer.shipping_pricing_override.update",
+    "price_list.view", "price_list.send", "price_list.manage", "quotation.final_currency.select", "quotation.final_currency.convert",
     "quotations.delete", "quotations.archive", "quotations.restore", "quotations.send", "quotations.download", "orders.view", "orders.create", "orders.delete",
     "orders.update", "crm.view", "crm.manage", "leads.view", "leads.manage",
     "payments.view", "payments.create", "payments.confirm", "payments.manage",
@@ -73,12 +76,15 @@ def _seed_default_incentive_rules(store: Store) -> int:
 
 ROLE_PERMISSIONS = {
     "superadmin": PERMISSIONS,
-    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage", "payments.confirm", "quotations.delete"}],
+    "admin": [permission for permission in PERMISSIONS if permission not in {"roles.manage", "payments.confirm", "quotations.delete", "price_list.manage", "customer.pricing.update", "customer.shipping_pricing_override.update"}],
     "manager_sales_admin": [
         permission for permission in PERMISSIONS
         if (permission.split(".")[0] in {"dashboard", "calculator", "products", "pricing", "currency", "cart", "companies", "customers", "quotations", "orders", "crm", "leads", "reminders", "reports"}
             and permission not in {"products.delete", "customers.delete", "quotations.delete", "orders.delete", "quotations.view_all", "pricing.edit", "pricing.update"})
-        or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update"}
+        or permission in {"payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update",
+                          "customer.shipping_address.view", "customer.shipping_address.create", "customer.shipping_address.update", "customer.shipping_address.deactivate",
+                          "customer.pricing.view", "customer.pricing.update", "customer.shipping_pricing_override.view", "customer.shipping_pricing_override.update",
+                          "price_list.view", "price_list.send", "price_list.manage", "quotation.final_currency.select", "quotation.final_currency.convert"}
     ],
     "user": [
         "dashboard.view", "calculator.view", "products.view", "pricing.view", "currency.view",
@@ -86,6 +92,8 @@ ROLE_PERMISSIONS = {
         "customers.update", "quotations.view", "quotations.create", "quotations.edit",
         "quotations.download", "quotations.send", "quotations.archive", "orders.view", "crm.view", "reminders.view",
         "payments.view", "payments.create", "incentives.view", "credit_notes.view", "bank_details.view", "bank_details.update",
+        "customer.shipping_address.view", "customer.pricing.view", "customer.shipping_pricing_override.view",
+        "price_list.view", "price_list.send", "quotation.final_currency.select", "quotation.final_currency.convert",
     ],
 }
 

@@ -294,7 +294,7 @@ def send_quotation(quotation_id: str):
     if not recipient:
         return failure("A valid customer email is required before sending", status=422, error="CUSTOMER_EMAIL_REQUIRED")
     subject = str(payload.get("subject") or f"Quotation {row['quotation_number']} - Moneda Technologies")[:200]
-    message = str(payload.get("message") or f"<p>Please find quotation <strong>{row['quotation_number']}</strong> attached.</p><p>Total: {row['currency']} {row['totals']['grand_total']:,.2f}</p>")
+    message = str(payload.get("message") or f"<p>Please find quotation <strong>{row['quotation_number']}</strong> attached.</p><p>Total: {row.get('quotation_currency') or row.get('currency') or 'EUR'} {row['totals']['grand_total']:,.2f}</p>")
     user = current_user() or {}
     sent_by = user.get("_id")
     sender_email = str(user.get("email") or "").strip()

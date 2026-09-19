@@ -11,6 +11,7 @@ from app.services.business_logic import normalize_client_type, normalize_price_l
 
 MASTER_CURRENCY = "EUR"
 SHEET_PRICE_PRECISION = Decimal("0.001")
+BLANKET_MAX_DISCOUNT_PERCENT = Decimal("2.5")
 
 
 def sheet_money(value: Decimal | str | int | float) -> Decimal:
@@ -436,6 +437,8 @@ def calculate_line(
         raise ValueError("Quantity must be between 1 and 100000")
     rules = product.get("discount_rules", {})
     requested_discount = decimal_value(discount_percent, "discount_percent")
+    if product.get("category_id") == "blankets" and requested_discount > BLANKET_MAX_DISCOUNT_PERCENT:
+        raise ValueError("Maximum discount for Blankets is 2.5%.")
     if not rules.get("enabled", True) and requested_discount:
         raise ValueError("Discount is not available for this product")
     discount_step = Decimal(str(rules.get("step", 0.5)))

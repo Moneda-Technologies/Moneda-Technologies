@@ -7,6 +7,9 @@ export const PRICE_LIST_ACCOUNT_TYPES = [
 
 export type PriceListAccountType = typeof PRICE_LIST_ACCOUNT_TYPES[number]["code"];
 
+/** Blankets have a hard business cap, enforced again by the backend. */
+export const BLANKET_MAX_DISCOUNT_PERCENT = 2.5;
+
 /** Static business vocabulary shared by customer, pricing and incentive UIs. */
 export const CUSTOMER_TYPES: ReadonlyArray<{ code: ClientType; label: string }> = [
   // WHOLESALER is the persisted/legacy enum.  Distributor is the business

@@ -78,6 +78,22 @@ def test_discount_permission_limit():
     assert line["discount_percent"] == 10
 
 
+def test_blanket_discount_cap_is_enforced_for_all_roles():
+    blanket = base_product("fixed", 100, "blankets")
+    accepted = calculate_line(blanket, {}, quantity=1, discount_percent=2.5, currency="EUR", exchange_rate=1,
+                              company_tax_rate=0, company_tax_mode="no_tax", privileged_discount=True)
+    assert accepted["discount_percent"] == 2.5
+    with pytest.raises(ValueError, match="Maximum discount for Blankets is 2.5%"):
+        calculate_line(blanket, {}, quantity=1, discount_percent=3, currency="EUR", exchange_rate=1,
+                       company_tax_rate=0, company_tax_mode="no_tax", privileged_discount=True)
+
+
+def test_non_blanket_discount_rules_are_unchanged():
+    line = calculate_line(base_product(), {}, quantity=1, discount_percent=3, currency="EUR", exchange_rate=1,
+                          company_tax_rate=0, company_tax_mode="no_tax")
+    assert line["discount_percent"] == 3
+
+
 def test_pending_pricing_is_explicit():
     with pytest.raises(PricingUnavailable):
         calculate_master_unit_price(base_product(price=None), {})

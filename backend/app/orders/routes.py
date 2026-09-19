@@ -681,6 +681,20 @@ def convert_quotation(quotation_id: str):
         "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
+        "billing_address_snapshot": quotation.get("billing_address_snapshot"),
+        "shipping_address_id": quotation.get("shipping_address_id"),
+        "shipping_address_snapshot": quotation.get("shipping_address_snapshot"),
+        "effective_price_lists": quotation.get("effective_price_lists") or [],
+        "eur_totals": quotation.get("eur_totals") or quotation.get("totals"),
+        "final_totals": quotation.get("final_totals") or quotation.get("totals"),
+        "final_quote": quotation.get("final_quote") or {
+            "enabled": False,
+            "currency": quotation.get("currency", "EUR"),
+            "exchange_rate": quotation.get("exchange_rate", 1),
+            "eur_totals": quotation.get("totals"),
+            "converted_totals": quotation.get("totals"),
+        },
+        "quotation_currency": quotation.get("quotation_currency") or quotation.get("currency", "EUR"),
         # The quotation's server-calculated grand total is authoritative for
         # the Order Confirmation and incentive base.  Never trust a client
         # supplied amount from the conversion form.

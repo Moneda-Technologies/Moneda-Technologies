@@ -4,6 +4,8 @@ import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
 import { pageScaffold } from "../components/page";
 import { toast } from "../components/toast";
+import { BLANKET_DIMENSION_ASSETS } from "../config/blanketDimensionAssets";
+import { BLANKET_MAX_DISCOUNT_PERCENT } from "../config/businessConfig";
 import { appStore } from "../state/store";
 import type { CartItem, CatalogOption, Currency, PriceLine, Product } from "../types/domain";
 import { emptyState, escapeHtml, formatMoney, skeleton } from "../utils/dom";
@@ -90,8 +92,28 @@ function familyCards(families: CatalogOption[]): string {
   }).join("")}</div>`;
 }
 
-function configurationField(label: string, control: string, helper = "", attrs = ""): string {
-  return `<label class="configuration-field"${attrs ? ` ${attrs}` : ""}><span class="field-label">${label}</span><span class="field-control">${control}</span><small class="field-helper">${helper}</small></label>`;
+function configurationField(label: string, control: string, helper = "", attrs = "", className = ""): string {
+  return `<label class="configuration-field${className ? ` ${className}` : ""}"${attrs ? ` ${attrs}` : ""}><span class="field-label">${label}</span><span class="field-control">${control}</span><small class="field-helper">${helper}</small></label>`;
+}
+
+/**
+ * Number inputs step when a focused control receives a wheel event.  That is
+ * surprising in a long calculator form because a user scrolling the page can
+ * silently change a dimension.  Blur the control for the duration of the
+ * wheel interaction and restore the value on the next frame; the page itself
+ * remains free to scroll and keyboard/preset input is unaffected.
+ */
+function protectNumberInputFromWheel(input: HTMLInputElement): () => void {
+  const handleWheel = () => {
+    if (document.activeElement !== input) return;
+    const valueBeforeWheel = input.value;
+    input.blur();
+    window.requestAnimationFrame(() => {
+      if (input.isConnected && input.value !== valueBeforeWheel) input.value = valueBeforeWheel;
+    });
+  };
+  input.addEventListener("wheel", handleWheel, { passive: true });
+  return () => input.removeEventListener("wheel", handleWheel);
 }
 
 function barOptionLabel(bar: BlanketBarOption): string {
@@ -152,6 +174,11 @@ function machineField(initial: Config): string {
   return configurationField(`Machine Name <small data-machine-required-copy>(Optional for Cut Format)</small>`, control, "Required when Format is Bar Format.", "data-machine-name-field");
 }
 
+function blanketDimensionVisual(kind: "across" | "around"): string {
+  const asset = BLANKET_DIMENSION_ASSETS[kind];
+  return `<span class="blanket-dimension-diagram" role="img" aria-label="${escapeHtml(asset.alt)}"><img class="blanket-dimension-diagram__art" src="${escapeHtml(asset.src)}" alt="" aria-hidden="true" loading="lazy" draggable="false"></span>`;
+}
+
 function blanketFields(product: Product, initial: Config): string {
   const thicknesses = (product.configuration.thicknesses_mm as number[] | undefined) ?? [];
   const widths = (product.configuration.standard_widths_mm as number[] | undefined) ?? [];
@@ -166,11 +193,14 @@ function blanketFields(product: Product, initial: Config): string {
   const initialUseSecondBar = initial.use_second_bar === true || Boolean(initial.bar_2_id && initial.bar_1_id && initial.bar_2_id !== initial.bar_1_id);
   const dimensionUnit = configurationField("Dimension Unit", `<select name="dimension_unit"><option value="mm" ${selected(initial.dimension_unit ?? "mm", "mm")}>Millimetres</option><option value="inch" ${selected(initial.dimension_unit, "inch")}>Inches</option><option value="m" ${selected(initial.dimension_unit, "m")}>Metres</option></select>`);
   const thickness = configurationField("Thickness", `<select name="thickness_mm" required>${thicknesses.map((value) => `<option value="${value}" ${selected(initial.thickness_mm ?? thicknesses[0], value)}>${value.toFixed(2)} mm</option>`).join("")}</select>`);
-  const length = configurationField("Length", `<input name="length" type="number" min="0.001" step="any" value="${valueAttr(initial.length)}" placeholder="Enter length" required>`);
-  const width = configurationField("Width", `<input name="width" type="number" min="0.001" step="any" value="${valueAttr(initial.width)}" placeholder="Enter or select width" list="standard-widths" required><datalist id="standard-widths">${widths.map((value) => `<option value="${value}"></option>`).join("")}</datalist>`, widths.length ? `Standard: ${widths.join(", ")} mm` : "Custom width");
+  // Keep the API's existing width/length field names (width = across,
+  // length = around) while presenting the physical dimensions in the order
+  // operators use them: across first, then around.
+  const width = configurationField("Across / Width (mm)", `<input name="width" data-no-wheel-step type="number" min="0.001" step="any" value="${valueAttr(initial.width)}" placeholder="Enter across / width" list="standard-widths" required>${blanketDimensionVisual("across")}<datalist id="standard-widths">${widths.map((value) => `<option value="${value}"></option>`).join("")}</datalist>`, widths.length ? `Standard: ${widths.join(", ")} mm` : "Custom width", "", "blanket-dimension-field");
+  const length = configurationField("Around / Length (mm)", `<input name="length" data-no-wheel-step type="number" min="0.001" step="any" value="${valueAttr(initial.length)}" placeholder="Enter around / length" required>${blanketDimensionVisual("around")}`, "Roll circumference / travel length", "", "blanket-dimension-field");
   const format = configurationField("Format", `<select name="format_type" required>${formats.map((value) => `<option value="${value}" ${selected(initialFormat, value)}>${value === "bar_format" ? "Bar Format" : "Cut Format"}</option>`).join("")}</select>`);
   const barFields = `<div class="form-grid bar-fields" ${initialFormat === "bar_format" ? "" : "hidden"}><label class="bar-selection-field"><span class="field-label">Bar 1</span><span class="field-control">${barSelectionControl("bar_1_id", initial.bar_1_id, defaults[0], bars)}</span></label><label class="check-row different-second-bar"><input name="use_second_bar" type="checkbox" ${initialUseSecondBar ? "checked" : ""}><span>Different second bar</span></label><label class="bar-selection-field second-bar-field" ${initialUseSecondBar ? "" : "hidden"}><span class="field-label">Bar 2</span><span class="field-control">${barSelectionControl("bar_2_id", initial.bar_2_id, defaults[1], bars)}</span></label></div>`;
-  return `<div class="configuration-grid">${machineField(initial)}${dimensionUnit}${thickness}${length}${width}${format}</div>${barFields}`;
+  return `<div class="configuration-grid">${machineField(initial)}${dimensionUnit}${thickness}${width}${length}${format}</div>${barFields}`;
 }
 
 function mpackFields(product: Product, initial: Config): string {
@@ -359,11 +389,18 @@ function pricingMarkup(line: PriceLine, _rate: { provider: string; provider_sour
 
 function discountOptions(product: Product, initialDiscount = 0): string {
   const rules = product.discount_rules;
-  const maximum = appStore.can("pricing.discount.override") ? rules.privileged_max_percent : rules.default_max_percent;
+  const configuredMaximum = appStore.can("pricing.discount.override") ? rules.privileged_max_percent : rules.default_max_percent;
+  const maximum = product.category_id === "blankets"
+    ? Math.min(configuredMaximum, BLANKET_MAX_DISCOUNT_PERCENT)
+    : configuredMaximum;
   const step = Number(rules.step) > 0 ? Number(rules.step) : 0.5;
   const allowed = rules.enabled ? Array.from({ length: Math.floor(maximum / step) + 1 }, (_, index) => Number((index * step).toFixed(4))) : [0];
-  if (!allowed.includes(initialDiscount)) allowed.push(initialDiscount);
-  return allowed.sort((a, b) => a - b).map((discount) => `<option value="${discount}" ${selected(initialDiscount, discount)}>${discount.toFixed(1)}%</option>`).join("");
+  const invalidBlanketInitial = product.category_id === "blankets" && initialDiscount > BLANKET_MAX_DISCOUNT_PERCENT;
+  if (!invalidBlanketInitial && !allowed.includes(initialDiscount)) allowed.push(initialDiscount);
+  const invalidOption = invalidBlanketInitial
+    ? `<option value="${initialDiscount}" selected>${initialDiscount.toFixed(1)}% (maximum ${BLANKET_MAX_DISCOUNT_PERCENT.toFixed(1)}%)</option>`
+    : "";
+  return `${invalidOption}${allowed.sort((a, b) => a - b).map((discount) => `<option value="${discount}" ${selected(initialDiscount, discount)}>${discount.toFixed(1)}%</option>`).join("")}`;
 }
 
 interface ConfiguratorOptions {
@@ -440,7 +477,10 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   const configured = product.pricing_status === "configured" || structuredMpack;
   const commercialUnit = String(product.commercial_unit ?? (structuredMpack ? "box" : product.category_id === "blankets" ? "pc" : ""));
   const quantityLabel = commercialUnit ? `Quantity (${commercialUnit === "box" ? "Box" : commercialUnit === "pc" ? "Pc" : commercialUnit})` : "Quantity";
-  host.innerHTML = `<section class="inline-configurator ${structuredMpack ? "structured-machine-configurator" : ""}"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount is applied to the EUR master price; USD/INR are display references only.</p></div></div><div class="form-grid commercial-fields"><label>${quantityLabel}<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label>Discount<select name="discount_percent">${discountOptions(product, initialDiscount)}</select></label></div><aside class="live-price inline-price-summary panel" aria-live="polite">${structuredMpack ? mpackSummaryPlaceholder(product) : `<div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div>`}</aside><div class="configurator-actions"><button class="button button-primary button-full" type="submit" disabled><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button><a class="button button-secondary button-full" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>View Cart</a></div></form></section>`;
+  const blanketDiscountHint = product.category_id === "blankets"
+    ? `<small class="discount-limit-helper">Maximum discount: ${BLANKET_MAX_DISCOUNT_PERCENT.toFixed(1)}%</small>`
+    : "";
+  host.innerHTML = `<section class="inline-configurator ${structuredMpack ? "structured-machine-configurator" : ""}"><div class="selected-product"><span class="product-dialog-icon"><i data-lucide="${familyCopy[product.category_id]?.icon ?? "package"}"></i></span><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p></div></div>${configured ? "" : `<div class="notice warning"><i data-lucide="clock-3"></i><div><strong>EUR price ${product.pricing_status === "on_request" ? "is on request" : "is pending"}</strong><p>An administrator must configure the master price before this product can be calculated.</p></div></div>`}<form class="stack-form configure-form"><div class="form-section"><div class="section-number">01</div><div><h4>Product Configuration</h4><p>Required fields are checked and priced by the Moneda API.</p></div></div>${configurationFields(product, initial)}<div class="form-section"><div class="section-number">02</div><div><h4>Commercial Details</h4><p>Discount is applied to the EUR master price; USD/INR are display references only.</p></div></div><div class="form-grid commercial-fields"><label>${quantityLabel}<input name="quantity" type="number" min="1" max="100000" value="${valueAttr(options.initial?.quantity ?? 1)}" required></label><label class="discount-field"><span>Discount</span><select name="discount_percent">${discountOptions(product, initialDiscount)}</select>${blanketDiscountHint}</label></div><aside class="live-price inline-price-summary panel" aria-live="polite">${structuredMpack ? mpackSummaryPlaceholder(product) : `<div class="live-price-placeholder"><i data-lucide="calculator"></i><h4>Pricing Summary</h4><p>Complete the required configuration to see the server-calculated amount.</p></div>`}</aside><div class="configurator-actions"><button class="button button-primary button-full" type="submit" disabled><i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}</button><a class="button button-secondary button-full" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>View Cart</a></div></form></section>`;
   const form = host.querySelector<HTMLFormElement>(".configure-form")!;
   const blanketMachine = product.category_id === "blankets" ? form.querySelector<HTMLInputElement>("[data-blanket-machine]") : null;
   const machineIdInput = form.querySelector<HTMLInputElement>("[name=machine_id]");
@@ -533,6 +573,9 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   if (commercialNote) commercialNote.textContent = "Discount is applied to the EUR master price; USD/INR are display references only.";
   const preview = host.querySelector<HTMLElement>(".live-price")!;
   const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  const dimensionWheelCleanups = product.category_id === "blankets"
+    ? [...form.querySelectorAll<HTMLInputElement>("input[data-no-wheel-step]")].map(protectNumberInputFromWheel)
+    : [];
   let latestPreviewLine: PriceLine | null = null;
   let addSucceeded = false;
   const resetSubmitLabel = () => {
@@ -540,7 +583,21 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     submitButton.innerHTML = `<i data-lucide="${options.mode === "edit" ? "save" : "shopping-cart"}"></i>${options.mode === "edit" ? "Save Changes" : "Add Configured Item to Cart"}`;
     refreshIcons(submitButton);
   };
+  const blanketDiscountError = (): string => {
+    if (product.category_id !== "blankets") return "";
+    const value = Number(form.querySelector<HTMLSelectElement>("[name=discount_percent]")?.value ?? 0);
+    return Number.isFinite(value) && value > BLANKET_MAX_DISCOUNT_PERCENT
+      ? `Maximum discount for Blankets is ${BLANKET_MAX_DISCOUNT_PERCENT.toFixed(1)}%.`
+      : "";
+  };
+  const updateDiscountValidity = (): string => {
+    const select = form.querySelector<HTMLSelectElement>("[name=discount_percent]");
+    const error = blanketDiscountError();
+    select?.setCustomValidity(error);
+    return error;
+  };
   const syncSubmitAvailability = () => {
+    updateDiscountValidity();
     submitButton.disabled = addSucceeded || !configured || !form.checkValidity() || !latestPreviewLine;
   };
   const clearAddedState = () => {
@@ -606,6 +663,11 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     }
     timer = window.setTimeout(async () => {
       if (sequence !== previewSequence) return;
+      const discountError = updateDiscountValidity();
+      if (discountError) {
+        preview.innerHTML = `<div class="notice warning"><i data-lucide="circle-alert"></i><div><strong>Discount not available</strong><p>${escapeHtml(discountError)}</p></div></div>`;
+        refreshIcons(preview); syncSubmitAvailability(); return;
+      }
       if (!configured || !form.checkValidity()) {
         preview.innerHTML = structuredMpack
           ? mpackSummaryPlaceholder(product, form)
@@ -751,6 +813,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   });
   configuratorSubscriptions.set(host, () => {
     unsubscribeCurrency();
+    dimensionWheelCleanups.forEach((cleanup) => cleanup());
     document.removeEventListener("pointerdown", closeMachineDropdown);
     document.removeEventListener("pointerdown", closeBarDropdowns);
   });
@@ -763,6 +826,12 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   form.addEventListener("change", () => { clearAddedState(); calculatePreview(); });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const discountError = updateDiscountValidity();
+    if (discountError) {
+      toast(discountError, "error");
+      syncSubmitAvailability();
+      return;
+    }
     const data = new FormData(form); const button = submitButton;
     button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Adding to Cart…";
     console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });

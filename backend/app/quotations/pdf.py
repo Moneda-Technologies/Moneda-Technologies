@@ -217,6 +217,7 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     creator = quotation.get("creator_snapshot") or quotation.get("salesperson_snapshot") or {}
     customer_company = quotation.get("customer_company_snapshot") or quotation.get("company_snapshot") or {}
     customer = quotation.get("customer_snapshot") or customer_company
+    shipping_address = quotation.get("shipping_address_snapshot") or {}
     customer_code = customer.get("customer_code") or customer_company.get("customer_code")
     issued_by = [
         Paragraph("FROM", yellow_label),
@@ -233,7 +234,13 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         Paragraph(lines(
             f"Customer code: {customer_code}" if customer_code else None,
             f"Attention: {customer['contact_name']}" if customer.get("contact_name") else None,
-            customer.get("address"), customer.get("email"), customer.get("phone"),
+            shipping_address.get("recipient_name"),
+            shipping_address.get("company_name"),
+            shipping_address.get("address_line_1"), shipping_address.get("address_line_2"),
+            shipping_address.get("city"), shipping_address.get("state"), shipping_address.get("postal_code"),
+            shipping_address.get("country_name") or shipping_address.get("country_code"),
+            customer.get("address") if not shipping_address else None,
+            customer.get("email"), customer.get("phone"),
         ), party_body),
     ]
     parties = Table([[issued_by, prepared_for]], colWidths=[86 * mm, 86 * mm], rowHeights=[34 * mm], splitByRow=0)
@@ -249,7 +256,9 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
 
     story.append(Paragraph("PRODUCTS AND CONFIGURATION", ParagraphStyle("Section", parent=heading, fontSize=8, leading=10, spaceAfter=5)))
     totals = quotation.get("totals") or {}
-    currency = "EUR"
+    currency = str(quotation.get("quotation_currency") or quotation.get("currency") or "EUR").upper()
+    final_quote = quotation.get("final_quote") or {}
+    converted = bool(final_quote.get("enabled")) and currency != "EUR"
     header_row = [
         Paragraph("PRODUCT AND DESCRIPTION", white), Paragraph("QTY", white_center),
         Paragraph("UNIT PRICE", white_right), Paragraph("TOTAL", white_right),
@@ -266,8 +275,8 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         discount = float(line.get("discount_percent", 0))
         net_subtotal = float(line.get("subtotal", line.get("line_total", 0)))
         quantity = float(line.get("quantity", 1)) or 1
-        display_unit_price = float(line.get("unit_price", net_subtotal / quantity))
-        display_line_total = float(line.get("line_total", net_subtotal))
+        display_unit_price = float(line.get("final_unit_price") if converted else line.get("unit_price", net_subtotal / quantity))
+        display_line_total = float(line.get("final_line_total") if converted else line.get("line_total", net_subtotal))
         discount_label = f"{discount:g}% discount"
         is_mpack = _is_mpack_line(line)
         raw_unit = str(line.get("commercial_unit") or "pc").lower()
@@ -302,12 +311,22 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
         total_rows.append(("Transport / freight", totals["transport_cost"]))
     net_grand_total = float(totals.get("grand_total", 0) or 0)
     total_rows.append(("Grand total", net_grand_total))
+    if converted:
+        eur_grand_total = float((quotation.get("eur_totals") or {}).get("grand_total", 0) or 0)
+        total_rows.insert(0, ("EUR master total", eur_grand_total))
+        total_rows.insert(1, (f"1 EUR = {float(final_quote.get('exchange_rate') or quotation.get('exchange_rate') or 0):g} {currency}", 0))
     last = len(total_rows) - 1
     totals_data = []
     for index, (name, value) in enumerate(total_rows):
         name_style = white if index == last else normal
         value_style = white_right if index == last else right
-        totals_data.append([Paragraph(safe(name), name_style), Paragraph(f"{safe(currency)} {float(value):,.2f}", value_style)])
+        if converted and name == "EUR master total":
+            amount_text = f"EUR {float(value):,.2f}"
+        elif converted and name.startswith("1 EUR ="):
+            amount_text = ""
+        else:
+            amount_text = f"{safe(currency)} {float(value):,.2f}"
+        totals_data.append([Paragraph(safe(name), name_style), Paragraph(amount_text, value_style)])
     totals_table = Table(totals_data, colWidths=[36 * mm, 35 * mm], hAlign="RIGHT")
     totals_table.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("BACKGROUND", (0, last), (-1, last), palette["black"]), ("TEXTCOLOR", (0, last), (-1, last), colors.white), ("FONTNAME", (0, last), (-1, last), "Helvetica-Bold"), ("TOPPADDING", (0, last), (-1, last), 7), ("BOTTOMPADDING", (0, last), (-1, last), 7)]))
     story.extend([totals_table, Spacer(1, 6 * mm)])

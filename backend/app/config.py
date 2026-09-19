@@ -35,6 +35,10 @@ class Config:
     TESTING = False
     MONGODB_URI = os.getenv("MONGODB_URI", "")
     MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "moneda")
+    # Startup retries are bounded and only used for transient DNS/network
+    # failures. Permanent URI and authentication errors fail immediately.
+    MONGODB_STARTUP_MAX_ATTEMPTS = max(1, int(os.getenv("MONGODB_STARTUP_MAX_ATTEMPTS", "3")))
+    MONGODB_STARTUP_BACKOFF_SECONDS = max(0.0, float(os.getenv("MONGODB_STARTUP_BACKOFF_SECONDS", "1.0")))
     # Memory storage is an explicit demo-only choice. Missing MongoDB
     # configuration must never silently turn a normal environment into demo.
     DEMO_MODE = env_bool("DEMO_MODE", False)
