@@ -8,6 +8,7 @@ ADDRESS_FIELDS = (
     "label", "recipient_name", "company_name", "address_line_1", "address_line_2",
     "city", "state", "postal_code", "country_code", "country_name",
 )
+ADDRESS_PRICING_FIELDS = ("default_price_list_id", "category_price_list_ids")
 
 
 def normalize_address(value: Any, *, address_id: str | None = None, active: bool = True,
@@ -17,6 +18,14 @@ def normalize_address(value: Any, *, address_id: str | None = None, active: bool
     row["id"] = str(raw.get("id") or address_id or uuid4())
     row["active"] = bool(raw.get("active", active))
     row["is_default"] = bool(raw.get("is_default", is_default))
+    if "default_price_list_id" in raw:
+        row["default_price_list_id"] = str(raw.get("default_price_list_id") or "").strip() or None
+    if isinstance(raw.get("category_price_list_ids"), dict):
+        row["category_price_list_ids"] = {
+            str(category): str(price_list_id).strip()
+            for category, price_list_id in raw["category_price_list_ids"].items()
+            if str(price_list_id or "").strip()
+        }
     return row
 
 
@@ -61,4 +70,3 @@ def customer_address_view(customer: dict[str, Any]) -> dict[str, Any]:
         "billing_address_record": legacy_billing_address(customer),
         "shipping_addresses": customer_shipping_addresses(customer),
     }
-

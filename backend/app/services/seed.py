@@ -51,27 +51,35 @@ DEFAULT_INCENTIVE_RULES = (
     ("creator", "CUSTOMER", "manager_sales_admin", 5.0),
 )
 
+# These are validation ceilings, not allocations.  They are the business
+# maximums supplied for the current product families; employee-specific rates
+# remain optional and are stored separately in ``incentive_configurations``.
+# Keep this list explicit so a seed cannot silently invent a percentage for a
+# new family or role.
+DEFAULT_INCENTIVE_MAXIMUMS = tuple(
+    (allocation_type, client_type, recipient_role, category_id, rate)
+    for client_type in CLIENT_TYPES
+    for allocation_type, recipient_role, category_id, rate in (
+        ("creator", "user", "blankets", 5.0),
+        ("manager_override", "manager_sales_admin", "blankets", 2.5),
+        ("creator", "manager_sales_admin", "blankets", 2.5),
+        ("manager_override", "user", "blankets", 5.0),
+        ("creator", "user", "mpacks", 3.0),
+        ("manager_override", "manager_sales_admin", "mpacks", 3.0),
+        ("creator", "manager_sales_admin", "mpacks", 3.0),
+        ("manager_override", "user", "mpacks", 3.0),
+    )
+)
+
 
 def _seed_default_incentive_rules(store: Store) -> int:
-    """Create missing defaults without overwriting administrator changes."""
-    created = 0
-    for allocation_type, client_type, recipient_role, rate in DEFAULT_INCENTIVE_RULES:
-        key = {
-            "allocation_type": allocation_type,
-            "client_type": client_type,
-            "recipient_role": recipient_role,
-            "category_id": "*",
-        }
-        before = store.find_one("incentive_rules", key)
-        store.upsert_one("incentive_rules", key, {
-            "scope": "default",
-            "rate": rate,
-            "base": "OC_NET_AMOUNT",
-            "active": True,
-        })
-        if before is None:
-            created += 1
-    return created
+    """Do not invent employee incentive eligibility during startup.
+
+    Rates and ceilings are administrator-owned configuration. The constants
+    above are retained only so the migration can identify historical automatic
+    seed rows; fresh installations intentionally start with no incentive.
+    """
+    return 0
 
 
 ROLE_PERMISSIONS = {
@@ -550,6 +558,68 @@ def ensure_business_logic_schema(store: Store, data_directory: Path) -> dict[str
                 store.update_one("roles", {"_id": role_id}, {"permissions": permissions})
         store.insert_one("system_migrations", {"_id": order_delete_schema_migration, "applied_at": utcnow()})
 
+    # ``business-logic-role-policy-v1`` predates the address, price-list and
+    # final-currency workflow permissions. Existing production databases have
+    # already recorded that migration, so merely extending ROLE_PERMISSIONS
+    # leaves their standard roles stale forever. Backfill only the capabilities
+    # introduced by this workflow and preserve all installation-specific role
+    # edits outside this narrow set.
+    workflow_permission_migration = "end-to-end-workflow-permissions-v2"
+    if not store.find_one("system_migrations", {"_id": workflow_permission_migration}):
+        workflow_permissions = {
+            "customer.shipping_address.view", "customer.shipping_address.create",
+            "customer.shipping_address.update", "customer.shipping_address.deactivate",
+            "customer.pricing.view", "customer.pricing.update",
+            "customer.shipping_pricing_override.view", "customer.shipping_pricing_override.update",
+            "price_list.view", "price_list.send", "price_list.manage",
+            "quotation.final_currency.select", "quotation.final_currency.convert",
+        }
+        for permission in workflow_permissions:
+            if not store.find_one("permissions", {"_id": permission}):
+                store.insert_one("permissions", {"_id": permission, "name": permission})
+        for role_id, canonical_permissions in ROLE_PERMISSIONS.items():
+            role = store.find_one("roles", {"_id": role_id}) or {}
+            if not role:
+                continue
+            allowed = workflow_permissions.intersection(canonical_permissions)
+            permissions = sorted(set(role.get("permissions") or []).union(allowed))
+            store.update_one("roles", {"_id": role_id}, {"permissions": permissions})
+        store.insert_one("system_migrations", {"_id": workflow_permission_migration, "applied_at": utcnow()})
+
+    incentive_defaults_migration = "retire-automatic-incentive-defaults-v1"
+    if not store.find_one("system_migrations", {"_id": incentive_defaults_migration}):
+        retired = 0
+        for allocation_type, client_type, recipient_role, rate in DEFAULT_INCENTIVE_RULES:
+            row = store.find_one("incentive_rules", {
+                "allocation_type": allocation_type,
+                "client_type": client_type,
+                "recipient_role": recipient_role,
+                "category_id": "*",
+            })
+            if not row or row.get("created_by_user_id") or row.get("updated_by_user_id"):
+                continue
+            try:
+                unchanged_seed_rate = float(row.get("rate")) == float(rate)
+            except (TypeError, ValueError):
+                unchanged_seed_rate = False
+            if unchanged_seed_rate:
+                store.update_one("incentive_rules", {"_id": row.get("_id")}, {
+                    "active": False, "status": "DISABLED",
+                    "retired_reason": "automatic_role_default_removed",
+                })
+                retired += 1
+        for row in store.list("incentive_rules", {"seed_source": "business_default"}, limit=100_000)[0]:
+            if row.get("created_by_user_id") or row.get("updated_by_user_id"):
+                continue
+            store.update_one("incentive_rules", {"_id": row.get("_id")}, {
+                "active": False, "status": "DISABLED",
+                "retired_reason": "automatic_maximum_removed",
+            })
+            retired += 1
+        store.insert_one("system_migrations", {
+            "_id": incentive_defaults_migration, "applied_at": utcnow(), "retired": retired,
+        })
+
     rules_added = _seed_default_incentive_rules(store)
 
     # The JSON file defines supported dealer dimensions and null placeholders;
@@ -791,7 +861,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
                 configured = float(raw_configured)
             except (TypeError, ValueError):
                 configured = -1.0
-            if configured not in {index / 2 for index in range(0, 13)}:
+            if configured not in {index / 2 for index in range(0, 201)}:
                 store.update_one("users", {"_id": user["_id"]}, {"incentive_percentage": 0.0})
         store.insert_one("system_migrations", {"_id": incentive_percentage_migration, "applied_at": utcnow()})
 

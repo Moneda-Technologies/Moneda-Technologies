@@ -1,4 +1,4 @@
-import { customerApi, customerCompanyApi } from "../api";
+import { customerApi, customerCompanyApi, priceListApi } from "../api";
 import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
@@ -6,7 +6,7 @@ import { toast } from "../components/toast";
 import { PAYMENT_TERMS } from "../config/customer-metadata";
 import { accountTypeLabel, accountTypeOptions, PRICE_LIST_ACCOUNT_TYPES } from "../config/businessConfig";
 import type { CountryMeta } from "../config/customer-metadata";
-import type { Company, Customer } from "../types/domain";
+import type { Company, Customer, PriceListDefinition } from "../types/domain";
 import { emptyState, escapeHtml, skeleton } from "../utils/dom";
 import { appStore } from "../state/store";
 import { beginCustomerContextChange, customerContextSignal, isCurrentCustomerContextRevision } from "../state/customer-context";
@@ -22,7 +22,7 @@ async function loadCountryCatalogue(): Promise<CountryMeta[]> {
   return countryCataloguePromise;
 }
 
-function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivElement {
+function customerForm(countries: CountryMeta[], existing?: Customer, priceLists: PriceListDefinition[] = []): HTMLDivElement {
   const region = existing?.region ?? {};
   const countryCode = existing?.country_code ?? region.country_code ?? "";
   const countryName = existing?.country_name ?? region.country_name ?? existing?.country ?? "";
@@ -40,6 +40,10 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
   const incentivePercentages = Array.from({ length: 40 }, (_, index) => (index + 1) / 2);
   const incentiveVisibleToManagers = existing?.incentive_visible_to_managers === true;
   const incentiveVisibleToSalespersons = existing?.incentive_visible_to_salespersons === true;
+  const billing = existing?.billing_address_record ?? {};
+  const shippingRows = existing?.shipping_addresses?.length ? existing.shipping_addresses : [{ id: "", label: "Primary shipping", address_line_1: "", city: "", state: "", postal_code: "", country_code: countryCode, country_name: countryName, active: true, is_default: true }];
+  const shippingPriceListOptions = (selectedId?: string | null) => `<option value="">Use customer default</option>${priceLists.map((list) => `<option value="${escapeHtml(list._id)}" ${selectedId === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}`;
+  const shippingRowsMarkup = shippingRows.map((item, index) => `<div class="shipping-address-row" data-shipping-row data-address-id="${escapeHtml(String(item.id ?? ""))}" data-active="${item.active === false ? "false" : "true"}"><div class="shipping-address-row-head"><strong>Shipping address ${index + 1}</strong><button type="button" class="button button-quiet" data-remove-shipping>Remove</button></div><div class="customer-form-fields"><label>Label<input name="shipping_label_${index}" value="${escapeHtml(String(item.label ?? `Shipping address ${index + 1}`))}" placeholder="e.g. Mumbai warehouse"></label><label>Recipient / company<input name="shipping_recipient_${index}" value="${escapeHtml(String(item.recipient_name ?? item.company_name ?? ""))}" placeholder="Recipient or company"></label><label class="customer-form-field-wide">Address line 1<input name="shipping_line_1_${index}" value="${escapeHtml(String(item.address_line_1 ?? ""))}" placeholder="Address line 1"></label><label>Address line 2<input name="shipping_line_2_${index}" value="${escapeHtml(String(item.address_line_2 ?? ""))}" placeholder="Apartment, suite, etc."></label><label>City<input name="shipping_city_${index}" value="${escapeHtml(String(item.city ?? ""))}" placeholder="City"></label><label>State / region<input name="shipping_state_${index}" value="${escapeHtml(String(item.state ?? ""))}" placeholder="State"></label><label>Postal code<input name="shipping_postal_${index}" value="${escapeHtml(String(item.postal_code ?? ""))}" placeholder="Postal code"></label>${appStore.can("customer.pricing.update") ? `<label>Default price list override<select name="shipping_default_price_list_${index}">${shippingPriceListOptions(item.default_price_list_id)}</select></label><label>Blankets override<select name="shipping_blankets_price_list_${index}"><option value="">Use customer default</option>${priceLists.filter((list) => list.category === "blankets" || list._id === "blankets").map((list) => `<option value="${escapeHtml(list._id)}" ${item.category_price_list_ids?.blankets === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}</select></label><label>Underpacking override<select name="shipping_underpacking_price_list_${index}"><option value="">Use customer default</option>${priceLists.filter((list) => list.category === "mpacks" || list.category === "underpacking" || list._id.includes("underpacking")).map((list) => `<option value="${escapeHtml(list._id)}" ${item.category_price_list_ids?.underpacking === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}</select></label>` : ""}<label class="check-row"><input name="shipping_default" type="radio" value="${index}" ${item.is_default !== false && item.active !== false ? "checked" : ""}><span>Use as default shipping address</span></label></div></div>`).join("");
   const countryResultsId = `customer-country-results-${crypto.randomUUID()}`;
   const content = document.createElement("div");
   content.innerHTML = `<form class="stack-form customer-form customer-editor-form" id="customer-form" autocomplete="off">
@@ -64,7 +68,14 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
         </section>
         <section class="customer-form-card">
           <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="map-pin"></i></span><div><h3>Address</h3><p>Customer location and delivery details.</p></div></header>
-          <div class="customer-form-card-body"><label>Address *<textarea name="address" required rows="4" placeholder="Enter customer address">${escapeHtml(existing?.address ?? "")}</textarea><small class="field-error" data-error-for="address"></small></label></div>
+          <div class="customer-form-card-body customer-form-fields">
+            <label class="customer-form-field-wide">Address *<textarea name="address" required rows="3" placeholder="Enter customer address">${escapeHtml(existing?.address ?? billing.address_line_1 ?? "")}</textarea><small class="field-error" data-error-for="address"></small></label>
+            <div class="customer-address-subgrid customer-form-field-wide"><label>Billing line 2<input name="billing_address_line_2" value="${escapeHtml(String(billing.address_line_2 ?? ""))}" placeholder="Apartment, suite, etc."></label><label>City<input name="billing_city" value="${escapeHtml(String(billing.city ?? ""))}" placeholder="City"></label><label>State / region<input name="billing_state" value="${escapeHtml(String(billing.state ?? ""))}" placeholder="State"></label><label>Postal code<input name="billing_postal_code" value="${escapeHtml(String(billing.postal_code ?? ""))}" placeholder="Postal code"></label></div>
+          </div>
+        </section>
+        <section class="customer-form-card">
+          <header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="truck"></i></span><div><h3>Shipping Addresses</h3><p>Add delivery destinations and choose the default address for new quotations.</p></div></header>
+          <div class="customer-form-card-body shipping-address-list" data-shipping-address-list>${shippingRowsMarkup}<button type="button" class="button button-secondary" data-add-shipping><i data-lucide="plus"></i>Add shipping address</button></div>
         </section>
       </div>
       <div class="customer-editor-column">
@@ -74,6 +85,7 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
             <label>Display currency *<select name="preferred_currency" required><option value="">Select display currency</option><option ${currency === "EUR" ? "selected" : ""}>EUR</option><option ${currency === "USD" ? "selected" : ""}>USD</option><option ${currency === "INR" ? "selected" : ""}>INR</option></select><small>Reference display only; quotations are always EUR.</small><small class="field-error" data-error-for="preferred_currency"></small></label>
             <label>Payment terms *<select name="payment_terms" required><option value="">Select payment terms</option>${PAYMENT_TERMS.map((item) => `<option value="${item}" ${item === payment ? "selected" : ""}>${item}</option>`).join("")}</select><small>Determines the Distributor or Dealer price list.</small><small class="field-error" data-error-for="payment_terms"></small></label>
             <label class="custom-payment-days customer-form-field-wide" ${payment === "Custom" ? "" : "hidden"}>Custom days *<input name="custom_payment_days" type="number" min="1" step="1" inputmode="numeric" placeholder="Days" value="${customDays}"><small class="field-error" data-error-for="custom_payment_days"></small></label>
+            ${appStore.can("customer.pricing.update") ? `<label class="customer-form-field-wide">Default price list<select name="default_price_list_id"><option value="">Use customer type default</option>${priceLists.map((list) => `<option value="${escapeHtml(list._id)}" ${existing?.default_price_list_id === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}</select><small>Overrides the default list for this customer only.</small></label><label class="customer-form-field-wide">Blankets price list<select name="category_price_list_blankets"><option value="">Use default</option>${priceLists.filter((list) => list.category === "blankets" || list._id === "blankets").map((list) => `<option value="${escapeHtml(list._id)}" ${existing?.category_price_list_ids?.blankets === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}</select></label><label class="customer-form-field-wide">Underpacking price list<select name="category_price_list_underpacking"><option value="">Use default</option>${priceLists.filter((list) => list.category === "underpacking" || list._id.includes("underpacking")).map((list) => `<option value="${escapeHtml(list._id)}" ${existing?.category_price_list_ids?.underpacking === list._id ? "selected" : ""}>${escapeHtml(list.display_name)}</option>`).join("")}</select></label>` : ""}
           </div>
         </section>
         ${isSuperadmin ? `<section class="customer-form-card customer-incentive-card">
@@ -103,6 +115,7 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
   const customField = content.querySelector<HTMLElement>(".custom-payment-days")!;
   const incentiveToggle = form.elements.namedItem("have_to_give_incentive") as HTMLSelectElement | null;
   const incentiveFields = content.querySelector<HTMLElement>(".customer-incentive-fields");
+  const shippingList = content.querySelector<HTMLElement>("[data-shipping-address-list]");
   let visibleCountries: CountryMeta[] = [];
   let highlightedIndex = -1;
   const selectedCountry = () => countries.find((country) => country.code === countryCodeField.value) ?? null;
@@ -194,16 +207,73 @@ function customerForm(countries: CountryMeta[], existing?: Customer): HTMLDivEle
     }
     if (incentiveFields) incentiveFields.hidden = incentiveToggle.value !== "true";
   });
+  shippingList?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const removeButton = target.closest<HTMLButtonElement>("[data-remove-shipping]");
+    if (removeButton) {
+      event.preventDefault();
+      const row = removeButton.closest<HTMLElement>("[data-shipping-row]");
+      if (!row) return;
+      if (row.dataset.addressId) {
+        row.dataset.active = "false";
+        row.hidden = true;
+      } else {
+        row.remove();
+      }
+      const activeDefault = shippingList.querySelector<HTMLInputElement>('[data-shipping-row]:not([hidden]) input[name="shipping_default"]:checked');
+      if (!activeDefault) shippingList.querySelector<HTMLInputElement>('[data-shipping-row]:not([hidden]) input[name="shipping_default"]')?.click();
+      return;
+    }
+    const addButton = target.closest<HTMLButtonElement>("[data-add-shipping]");
+    if (!addButton) return;
+    event.preventDefault();
+    const source = shippingList.querySelector<HTMLElement>('[data-shipping-row]:not([hidden])');
+    if (!source) return;
+    const row = source.cloneNode(true) as HTMLElement;
+    const nextIndex = shippingList.querySelectorAll("[data-shipping-row]").length;
+    row.dataset.addressId = "";
+    row.dataset.active = "true";
+    row.hidden = false;
+    row.querySelector("strong")!.textContent = `Shipping address ${nextIndex + 1}`;
+    row.querySelectorAll<HTMLInputElement | HTMLSelectElement>("input, select").forEach((field) => {
+      if (field instanceof HTMLInputElement && field.type === "radio") {
+        field.checked = false;
+        field.value = String(nextIndex);
+        field.name = "shipping_default";
+      } else if (field instanceof HTMLInputElement) {
+        field.value = field.name.startsWith("shipping_label_") ? `Shipping address ${nextIndex + 1}` : "";
+        field.name = field.name.replace(/_\d+$/, `_${nextIndex}`);
+      } else {
+        field.value = "";
+        field.name = field.name.replace(/_\d+$/, `_${nextIndex}`);
+      }
+    });
+    shippingList.insertBefore(row, addButton);
+  });
   return content;
 }
 
-async function openCustomerEditor(existing: Customer | undefined, onSaved: () => Promise<void> | void): Promise<void> {
+export interface CustomerEditorOptions {
+  onCreated?: (customer: Customer) => Promise<void> | void;
+  suppressSuccessDialog?: boolean;
+  title?: string;
+}
+
+export async function openCustomerEditor(
+  existing: Customer | undefined,
+  onSaved: () => Promise<void> | void,
+  options: CustomerEditorOptions = {},
+): Promise<void> {
   let countries: CountryMeta[];
   try { countries = await loadCountryCatalogue(); }
   catch (error) { toast(error instanceof Error ? error.message : "Country list could not be loaded", "error"); return; }
-  const content = customerForm(countries, existing);
+  let priceLists: PriceListDefinition[] = [];
+  if (appStore.can("customer.pricing.update")) {
+    try { priceLists = (await priceListApi.list()).items ?? []; } catch { priceLists = []; }
+  }
+  const content = customerForm(countries, existing, priceLists);
   const isSuperadmin = appStore.state.user?.role_id === "superadmin";
-  const dialog = openModal(existing ? "Edit Customer" : "Add Customer", content, "wide");
+  const dialog = openModal(options.title ?? (existing ? "Edit Customer" : "Add Customer"), content, "wide");
   dialog.classList.add("customer-editor-dialog");
   const modalHead = dialog.querySelector<HTMLElement>(".modal-head > div");
   if (modalHead) modalHead.insertAdjacentHTML("beforeend", '<p class="customer-editor-subtitle">Create a new customer to manage their quotations and pricing.</p>');
@@ -212,7 +282,7 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
   content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
-    const value = Object.fromEntries(new FormData(form).entries());
+    const value = Object.fromEntries(new FormData(form).entries()) as Record<string, any>;
     delete value.country_search;
     if (isSuperadmin) {
       value.incentive_visible_to_managers = (form.elements.namedItem("incentive_visible_to_managers") as HTMLInputElement | null)?.checked ? "true" : "false";
@@ -241,11 +311,77 @@ async function openCustomerEditor(existing: Customer | undefined, onSaved: () =>
     if (isSuperadmin && String(value.have_to_give_incentive) !== "true") { value.incentive_bearer_name = ""; value.incentive_designation = ""; value.customer_incentive_percentage = ""; value.incentive_visible_to_managers = "false"; value.incentive_visible_to_salespersons = "false"; }
     content.querySelectorAll<HTMLElement>("[data-error-for]").forEach((node) => { node.textContent = errors[node.dataset.errorFor ?? ""] ?? ""; });
     if (Object.keys(errors).length) return;
+    const billingLine1 = String(value.address ?? "").trim();
+    value.billing_address_record = {
+      id: existing?.billing_address_record?.id ?? "billing",
+      label: "Billing",
+      recipient_name: String(value.contact_name ?? "").trim(),
+      company_name: String(value.company_name ?? "").trim(),
+      address_line_1: billingLine1,
+      address_line_2: String(value.billing_address_line_2 ?? "").trim(),
+      city: String(value.billing_city ?? "").trim(),
+      state: String(value.billing_state ?? "").trim(),
+      postal_code: String(value.billing_postal_code ?? "").trim(),
+      country_code: String(value.country_code ?? "").trim(),
+      country_name: String(value.country_name ?? "").trim(),
+      active: true,
+      is_default: true,
+    };
+    const defaultShippingIndex = Number(content.querySelector<HTMLInputElement>('input[name="shipping_default"]:checked')?.value ?? -1);
+    const shippingRowsPayload = [...content.querySelectorAll<HTMLElement>("[data-shipping-row]")].map((row, index) => {
+      const field = (prefix: string) => row.querySelector<HTMLInputElement | HTMLSelectElement>(`[name^="${prefix}_"]`)?.value?.trim() ?? "";
+      const addressLine1 = field("shipping_line_1");
+      const existingId = row.dataset.addressId ?? "";
+      const active = row.dataset.active !== "false";
+      const isExisting = Boolean(existingId);
+      if (!addressLine1 && !isExisting) return null;
+      const categoryPriceListIds: Record<string, string> = {};
+      const blanketsPriceList = field("shipping_blankets_price_list");
+      const underpackingPriceList = field("shipping_underpacking_price_list");
+      if (blanketsPriceList) categoryPriceListIds.blankets = blanketsPriceList;
+      if (underpackingPriceList) categoryPriceListIds.underpacking = underpackingPriceList;
+      return {
+        id: existingId || crypto.randomUUID(),
+        label: field("shipping_label") || `Shipping address ${index + 1}`,
+        recipient_name: field("shipping_recipient"),
+        company_name: String(value.company_name ?? "").trim(),
+        address_line_1: addressLine1,
+        address_line_2: field("shipping_line_2"),
+        city: field("shipping_city"),
+        state: field("shipping_state"),
+        postal_code: field("shipping_postal"),
+        country_code: String(value.country_code ?? "").trim(),
+        country_name: String(value.country_name ?? "").trim(),
+        active,
+        is_default: active && index === defaultShippingIndex,
+        ...(appStore.can("customer.pricing.update") ? {
+          default_price_list_id: field("shipping_default_price_list") || null,
+          category_price_list_ids: categoryPriceListIds,
+        } : {}),
+      };
+    }).filter((row) => row !== null) as Array<Record<string, any>>;
+    value.shipping_addresses = shippingRowsPayload;
+    value.default_shipping_address_id = shippingRowsPayload.find((row) => row.active && row.is_default)?.id
+      ?? shippingRowsPayload.find((row) => row.active)?.id
+      ?? null;
+    delete value.billing_address_line_2; delete value.billing_city; delete value.billing_state; delete value.billing_postal_code;
+    if (appStore.can("customer.pricing.update")) {
+      const categoryPriceLists: Record<string, string> = { ...(existing?.category_price_list_ids ?? {}) };
+      if (String(value.category_price_list_blankets ?? "").trim()) categoryPriceLists.blankets = String(value.category_price_list_blankets);
+      else delete categoryPriceLists.blankets;
+      if (String(value.category_price_list_underpacking ?? "").trim()) categoryPriceLists.underpacking = String(value.category_price_list_underpacking);
+      else delete categoryPriceLists.underpacking;
+      value.category_price_list_ids = categoryPriceLists;
+      if (!String(value.default_price_list_id ?? "").trim()) value.default_price_list_id = null;
+    }
+    delete value.category_price_list_blankets; delete value.category_price_list_underpacking;
     try {
       if (existing) { await customerApi.update(existing._id, value); dialog.close(); toast("Customer updated"); await onSaved(); return; }
       const created = await customerApi.create(value);
       dialog.close(); await onSaved();
       toast("Customer created successfully");
+      if (options.onCreated) await options.onCreated(created);
+      if (options.suppressSuccessDialog) return;
       if (created._id) {
         const next = document.createElement("div");
         next.innerHTML = '<p>Customer created successfully.</p><div class="modal-actions"><button type="button" class="button button-quiet" data-close-success>Stay here</button><button type="button" class="button button-primary" data-select-success>Select this customer</button></div>';

@@ -77,6 +77,49 @@ export interface SessionPayload {
 
 export type ClientType = "WHOLESALER" | "DEALER" | "CUSTOMER";
 
+export interface AddressRecord {
+  _id?: string;
+  id?: string;
+  label?: string;
+  recipient_name?: string;
+  company_name?: string;
+  name?: string;
+  company?: string;
+  address_line_1?: string;
+  address_line_2?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country_name?: string;
+  country?: string;
+  country_code?: string;
+  active?: boolean;
+  is_default?: boolean;
+  default_price_list_id?: string | null;
+  category_price_list_ids?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+export interface PriceListDefinition {
+  _id: string;
+  display_name: string;
+  description?: string;
+  category?: string;
+  classification?: string | null;
+  client_type?: ClientType | null;
+  document_url: string;
+  pdf_path?: string;
+  pdf_filename?: string;
+  version?: string | null;
+  valid_from?: string | null;
+  valid_until?: string | null;
+  active: boolean;
+  sort_order?: number;
+  metadata?: Record<string, unknown>;
+}
+
 export interface Issuer {
   name: string;
   email?: string;
@@ -191,6 +234,11 @@ export interface Customer {
   region?: { continent?: string; country_code?: string; country_name?: string };
   billing_address?: string;
   shipping_address?: string;
+  billing_address_record?: AddressRecord;
+  shipping_addresses?: AddressRecord[];
+  default_shipping_address_id?: string | null;
+  default_price_list_id?: string | null;
+  category_price_list_ids?: Record<string, string>;
   gst_vat_number?: string;
   tax_number?: string;
   preferred_currency?: Currency;
@@ -223,7 +271,7 @@ export interface PriceLine {
   quantity: number;
   currency: Currency;
   display_currency?: Currency;
-  quotation_currency?: "EUR";
+  quotation_currency?: Currency;
   master_currency: "EUR";
   exchange_rate: number;
   master_price_eur?: number;
@@ -248,6 +296,8 @@ export interface PriceLine {
   discounted_price_per_box_eur?: number;
   sheets_per_box?: number;
   price_list?: { id?: string; valid_from?: string; valid_until?: string };
+  effective_price_list?: { id?: string; display_name?: string; source?: string; category?: string; classification?: string; master_currency?: "EUR" };
+  shipping_address_id?: string | null;
   unit_price: number;
   subtotal: number;
   discount_percent: number;
@@ -284,6 +334,11 @@ export interface CartItem {
   tax_enabled?: boolean;
   tax_mode?: "exclusive" | "inclusive" | "no_tax";
   pricing_preview: PriceLine;
+  effective_price_list?: PriceLine["effective_price_list"];
+  shipping_address_id?: string | null;
+  billing_address?: AddressRecord;
+  billing_address_record?: AddressRecord;
+  shipping_address?: AddressRecord;
 }
 
 export interface Quotation {
@@ -299,6 +354,10 @@ export interface Quotation {
   creator_snapshot?: Pick<User, "name" | "email" | "phone">;
   salesperson_snapshot?: User;
   customer_snapshot: Customer;
+  billing_address_snapshot?: AddressRecord;
+  shipping_address_snapshot?: AddressRecord;
+  shipping_address_id?: string | null;
+  effective_price_lists?: Array<Record<string, unknown>>;
   company_snapshot?: Company;
   currency: Currency;
   master_currency: "EUR";
@@ -312,6 +371,10 @@ export interface Quotation {
   exchange_rate_expires_at?: string | null;
   exchange_rate_source?: "live" | "cached" | "master";
   status: string;
+  converted_order_id?: string | null;
+  converted_order_number?: string | null;
+  converted_oc_id?: string | null;
+  converted_oc_number?: string | null;
   lines: PriceLine[];
   totals: { subtotal: number; discount_amount: number; taxable_amount?: number; product_tax_amount?: number; tax_amount?: number; transport_cost: number; transport_tax_amount?: number; transport_total?: number; grand_total: number };
   payment_terms?: string;
@@ -324,6 +387,9 @@ export interface Quotation {
   preview_pdf_base64?: string;
   created_at: string;
   expiry_date: string;
+  eur_totals?: Quotation["totals"];
+  final_totals?: Quotation["totals"];
+  final_quote?: { enabled?: boolean; currency?: Currency; exchange_rate?: number; exchange_rate_source?: string; exchange_rate_timestamp?: string | null };
 }
 
 export interface PageResult<T> {

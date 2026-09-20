@@ -20,9 +20,7 @@ export async function companiesPage(): Promise<HTMLElement> {
 
 export async function usersPage(): Promise<HTMLElement> {
   const canInviteUsers = appStore.state.user?.role_id === "superadmin";
-  const section = new URLSearchParams(window.location.search).get("section");
-  const pageTitle = section === "assignments" ? "Customer Assignments" : section === "roles" ? "Roles & Permissions" : section === "devices" ? "Activity / Login Devices" : "Users & access";
-  const page = pageScaffold("Management", pageTitle, "Assign customer scope and permission-backed roles without email-based exceptions.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
+  const page = pageScaffold("Management", "Users", "Manage user accounts, roles, reporting relationships and account status.", canInviteUsers ? '<button class="button button-primary" id="invite-user" type="button"><i data-lucide="user-plus"></i>Invite user</button>' : "");
   page.classList.add("users-access-page");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   const actorRole = appStore.state.user?.role_id;
@@ -132,6 +130,9 @@ export async function usersPage(): Promise<HTMLElement> {
     render();
     refreshIcons(content);
   };
+  // Retained as the assignment editor used by older deep links; the Users
+  // table now routes to the dedicated Customer Assignments workspace.
+  void openCustomerAccess;
   const editUser = (user: Record<string, unknown>, roles: Record<string, unknown>[], customers: Record<string, unknown>[], managers: Record<string, unknown>[], reload: () => Promise<void>) => {
     const content = document.createElement("div");
     const assigned = new Set((user.assigned_customer_ids as unknown[] ?? []).map(String));
@@ -308,21 +309,36 @@ export async function usersPage(): Promise<HTMLElement> {
     refreshIcons(content);
   };
   const load = async () => {
-    const [users, roles, customerResult] = await Promise.all([adminApi.users(), adminApi.roles(), customerCompanyApi.list()]);
+    const [users, roles, customerResult] = await Promise.all([adminApi.users(), adminApi.userRoleOptions(), customerCompanyApi.list()]);
     availableRoles = roles.items;
     availableManagers = (users.manager_options ?? users.items.filter((user) => ["manager", "manager_sales_admin"].includes(String(user.role_id))));
     const customers = customerResult.items as unknown as Record<string, unknown>[];
      body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Record<string, unknown> | null)?.name ?? "—"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
-    body.querySelectorAll<HTMLButtonElement>(".edit-user, .customer-count-button, .device-count-button").forEach((button) => {
+    const accessSummary = body.querySelector<HTMLElement>(".access-summary");
+    if (accessSummary) accessSummary.innerHTML = `<div><span class="eyebrow">User accounts</span><h2>${users.total} active and inactive users</h2><p>Create users here. Role policy, customer scope, activity and trusted devices each have their own workspace.</p></div>`;
+    body.querySelectorAll<HTMLButtonElement>(".customer-count-button").forEach((button) => {
+      const link = document.createElement("a");
+      link.className = "text-button";
+      link.href = `/customer-assignments?user=${encodeURIComponent(String(button.dataset.id ?? ""))}`;
+      link.dataset.link = "true";
+      link.textContent = button.textContent;
+      link.setAttribute("aria-label", "Open customer assignments");
+      button.replaceWith(link);
+    });
+    body.querySelectorAll<HTMLButtonElement>(".device-count-button").forEach((button) => {
+      const link = document.createElement("a");
+      link.className = "text-button";
+      link.href = `/login-devices?user=${encodeURIComponent(String(button.dataset.id ?? ""))}`;
+      link.dataset.link = "true";
+      link.textContent = button.textContent;
+      link.setAttribute("aria-label", "Open login devices");
+      button.replaceWith(link);
+    });
+    body.querySelectorAll<HTMLButtonElement>(".edit-user").forEach((button) => {
       const user = users.items.find((item) => String(item._id) === button.dataset.id);
       if (!user) return;
       button.type = "button";
-      if (button.classList.contains("device-count-button")) button.addEventListener("click", () => void openDevices(user));
-      else if (button.classList.contains("customer-count-button")) {
-        button.setAttribute("aria-label", `View customer access for ${String(user.name ?? "user")}`);
-        button.title = "View customer access";
-        button.addEventListener("click", () => openCustomerAccess(user, customers, load));
-      } else button.addEventListener("click", () => editUser(user, roles.items, customers, availableManagers, load));
+      button.addEventListener("click", () => editUser(user, roles.items, customers, availableManagers, load));
     });
     refreshIcons(body);
   };
@@ -383,7 +399,7 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
     const settings = await adminApi.settings();
     const watermarkEnabled = settings.watermark_enabled !== false;
     let zohoMarkup = "";
-    let routingPolicy: { cc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null }>; bcc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null }> } | null = null;
+    let routingPolicy: { cc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null; price_list_ids?: string[] }>; bcc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null; price_list_ids?: string[] }> } | null = null;
     const securityMarkup = appStore.state.user?.role_id === "superadmin"
       ? `<section class="panel settings-panel watermark-settings"><span class="eyebrow">Security</span><h2>Protected workspace view</h2><p>Show a light, non-interactive watermark on authenticated workspace pages. It never appears in quotation PDFs or emails.</p><label class="setting-toggle"><input type="checkbox" data-watermark-toggle ${watermarkEnabled ? "checked" : ""}><span><strong>Workspace watermark</strong><small>Include the current user and local date/time.</small></span></label><button type="button" class="button button-secondary" data-watermark-save>Save watermark setting</button></section>`
       : `<section class="panel settings-panel watermark-settings"><span class="eyebrow">Security</span><h2>Protected workspace view</h2><p>Workspace watermark is managed by a Superadmin.</p><div class="setting-toggle is-readonly"><span><strong>Workspace watermark</strong><small>${watermarkEnabled ? "Enabled" : "Disabled"}</small></span></div></section>`;
@@ -460,13 +476,13 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
       routingPanel.querySelectorAll<HTMLButtonElement>("[data-routing-add]").forEach((button) => button.addEventListener("click", () => {
         const group = button.dataset.routingAdd as "cc" | "bcc";
         const content = document.createElement("div");
-        content.innerHTML = `<form class="stack-form"><label>Email address<input name="email" type="email" required autocomplete="email"></label><label>Display name (optional)<input name="display_name" autocomplete="organization"></label><small class="field-error" data-routing-form-error></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Add recipient</button></div></form>`;
+        content.innerHTML = `<form class="stack-form"><label>Email address<input name="email" type="email" required autocomplete="email"></label><label>Display name (optional)<input name="display_name" autocomplete="organization"></label><label>Price list IDs (optional)<input name="price_list_ids" placeholder="underpacking-dealer, blankets"><span class="form-hint">Leave blank for all price lists.</span></label><small class="field-error" data-routing-form-error></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Add recipient</button></div></form>`;
         const dialog = openModal(`Add ${group.toUpperCase()} recipient`, content);
         content.querySelector("[data-cancel]")?.addEventListener("click", () => dialog.close());
         content.querySelector<HTMLFormElement>("form")?.addEventListener("submit", async (event) => {
           event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const data = new FormData(form); const submit = form.querySelector<HTMLButtonElement>("[type=submit]")!;
           submit.disabled = true;
-          try { await adminApi.addRouting({ group, email: data.get("email"), display_name: data.get("display_name") }); dialog.close(); toast("Recipient added"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
+          try { await adminApi.addRouting({ group, email: data.get("email"), display_name: data.get("display_name"), price_list_ids: String(data.get("price_list_ids") ?? "").split(",").map((value) => value.trim()).filter(Boolean) }); dialog.close(); toast("Recipient added"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings" })); }
           catch (error) { const node = content.querySelector<HTMLElement>("[data-routing-form-error]"); if (node) node.textContent = error instanceof Error ? error.message : "Recipient could not be added"; submit.disabled = false; }
         });
         refreshIcons(content);
@@ -550,6 +566,60 @@ export async function profilePage(): Promise<HTMLElement> {
   const passwordForm = body.querySelector<HTMLElement>(".password-form");
   if (passwordForm && String(appStore.state.user?.role_id ?? "") !== "superadmin") {
     passwordForm.innerHTML = '<span class="eyebrow">Security</span><h2>Password administration</h2><p class="muted">Please contact your Superadmin to update your password.</p><button type="button" class="button button-danger profile-signout">Sign out</button>';
+  }
+  const profileStack = body.querySelector<HTMLElement>(".profile-stack");
+  const accountPanel = body.querySelector<HTMLElement>(".profile-account");
+  if (profileStack && accountPanel) {
+    const signaturePanel = document.createElement("section");
+    signaturePanel.className = "panel settings-panel profile-signature-panel";
+    signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select>Replace image</button><button type="button" class="button button-quiet" data-signature-remove>Remove image</button></div></div><span class="form-hint">PNG, JPG or WEBP, maximum 2 MB.</span><small class="field-error" data-signature-error></small>';
+    profileStack.insertBefore(signaturePanel, accountPanel.nextElementSibling);
+    const preview = signaturePanel.querySelector<HTMLElement>("[data-signature-preview]");
+    const signatureInput = signaturePanel.querySelector<HTMLInputElement>("#profile-signature-file");
+    const signatureError = signaturePanel.querySelector<HTMLElement>("[data-signature-error]");
+    const removeButton = signaturePanel.querySelector<HTMLButtonElement>("[data-signature-remove]");
+    const selectButton = signaturePanel.querySelector<HTMLButtonElement>("[data-signature-select]");
+    const controls = signaturePanel.querySelector<HTMLElement>("[data-signature-controls]");
+    const renderSignature = (metadata: { updated_at?: string | null; filename?: string } | null) => {
+      if (!preview || !removeButton || !controls) return;
+      if (!metadata) {
+        preview.innerHTML = '<button type="button" class="profile-signature-add" data-signature-add><i data-lucide="image-plus"></i><strong>Add image</strong><span>Place your email signature artwork inside this editor</span></button>';
+        controls.hidden = true;
+        preview.querySelector<HTMLButtonElement>("[data-signature-add]")?.addEventListener("click", () => signatureInput?.click());
+        refreshIcons(preview);
+        return;
+      }
+      const cacheKey = encodeURIComponent(String(metadata.updated_at ?? Date.now()));
+      preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span>${escapeHtml(String(metadata.filename ?? "Signature image"))}</span>`;
+      controls.hidden = false;
+    };
+    void profileApi.signature().then((result) => renderSignature(result.metadata)).catch(() => renderSignature(null));
+    selectButton?.addEventListener("click", () => signatureInput?.click());
+    signatureInput?.addEventListener("change", async () => {
+      const file = signatureInput?.files?.[0];
+      if (!file) { if (signatureError) signatureError.textContent = "Choose a signature image first."; return; }
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+        if (signatureError) signatureError.textContent = "Use a PNG, JPG or WEBP image no larger than 2 MB.";
+        return;
+      }
+      if (selectButton) selectButton.disabled = true;
+      if (signatureError) signatureError.textContent = "";
+      try {
+        const result = await profileApi.uploadSignature(file);
+        renderSignature(result.metadata);
+        signatureInput.value = "";
+        toast("Email signature updated");
+      } catch (error) {
+        if (signatureError) signatureError.textContent = error instanceof Error ? error.message : "Signature could not be uploaded";
+      } finally { if (selectButton) selectButton.disabled = false; }
+    });
+    removeButton?.addEventListener("click", async () => {
+      removeButton.disabled = true;
+      if (signatureError) signatureError.textContent = "";
+      try { await profileApi.removeSignature(); renderSignature(null); if (signatureInput) signatureInput.value = ""; toast("Email signature removed", "info"); }
+      catch (error) { if (signatureError) signatureError.textContent = error instanceof Error ? error.message : "Signature could not be removed"; }
+      finally { removeButton.disabled = false; }
+    });
   }
   enhancePasswordFields(body);
   const emailField = body.querySelector<HTMLInputElement>('[name="email"]');

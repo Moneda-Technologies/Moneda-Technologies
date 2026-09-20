@@ -1,4 +1,4 @@
-import { cartApi, catalogApi, machineApi, rateApi } from "../api";
+import { cartApi, catalogApi, machineApi, orderApi, rateApi } from "../api";
 import { ApiError } from "../api/client";
 import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
@@ -85,10 +85,12 @@ function valueAttr(value: unknown): string {
   return escapeHtml(value === undefined || value === null ? "" : String(value));
 }
 
-function familyCards(families: CatalogOption[]): string {
+function familyCards(families: CatalogOption[], orderId?: string): string {
+  const query = orderId ? `?order_id=${encodeURIComponent(orderId)}` : "";
   return `<div class="calculator-category-grid">${families.map((family, index) => {
     const copy = familyCopy[family.id];
-    return `<a class="calculator-category-card category-${escapeHtml(family.id)}" href="/products/${escapeHtml(family.id)}" data-route="/products/${escapeHtml(family.id)}"><span class="category-index">0${index + 1}</span><span class="category-card-icon"><i data-lucide="${copy?.icon ?? "package"}"></i></span><div><span class="eyebrow">${escapeHtml(copy?.label ?? family.name)}</span><h2>${escapeHtml(family.name)}</h2><p>${escapeHtml(copy?.detail ?? "Open calculator")}</p></div><span class="category-open">Open calculator<i data-lucide="arrow-up-right"></i></span></a>`;
+    const href = `/products/${escapeHtml(family.id)}${query}`;
+    return `<a class="calculator-category-card category-${escapeHtml(family.id)}" href="${href}" data-route="${href}"><span class="category-index">0${index + 1}</span><span class="category-card-icon"><i data-lucide="${copy?.icon ?? "package"}"></i></span><div><span class="eyebrow">${escapeHtml(copy?.label ?? family.name)}</span><h2>${escapeHtml(family.name)}</h2><p>${escapeHtml(copy?.detail ?? "Open calculator")}</p></div><span class="category-open">Open calculator<i data-lucide="arrow-up-right"></i></span></a>`;
   }).join("")}</div>`;
 }
 
@@ -406,6 +408,8 @@ function discountOptions(product: Product, initialDiscount = 0): string {
 interface ConfiguratorOptions {
   mode: "add" | "edit";
   initial?: CartItem;
+  orderId?: string;
+  orderCustomerId?: string;
   onSaved?: (item: CartItem) => void | Promise<void>;
 }
 
@@ -469,6 +473,8 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
   configuratorSubscriptions.get(host)?.();
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
   if (!customerCompany) return;
+  const configuredCustomerId = options.orderCustomerId ?? customerCompany._id;
+  const inWorkingOrder = Boolean(options.orderId);
   const initial = options.initial?.configuration ?? {};
   const initialDiscount = Number(options.initial?.discount_percent ?? 0);
   const structuredMpack = ((product.configuration.machine_sizes as MpackMachineSize[] | undefined) ?? []).length > 0;
@@ -680,7 +686,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
         const selectedDiscount = Number(data.get("discount_percent"));
         console.debug("discount_debug", { item_id: options.initial?._id ?? "new", ui_selected_discount: selectedDiscount, price_preview_requested_discount: selectedDiscount });
         const result = await catalogApi.preview(product._id, {
-          item_id: options.initial?._id, customer_id: customerCompany._id, display_currency: appStore.state.currency,
+          item_id: options.initial?._id, customer_id: configuredCustomerId, display_currency: appStore.state.currency,
           configuration: configurationFromForm(product, form),
           quantity: Number(data.get("quantity")), discount_percent: selectedDiscount,
         });
@@ -833,14 +839,17 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
       return;
     }
     const data = new FormData(form); const button = submitButton;
-    button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : "Adding to Cart…";
+    button.disabled = true; button.textContent = options.mode === "edit" ? "Saving…" : inWorkingOrder ? "Adding to Order…" : "Adding to Cart…";
     console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });
-    const payload = { customer_id: customerCompany._id, product_id: product._id, display_currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")) };
+    const payload = { customer_id: configuredCustomerId, product_id: product._id, display_currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")) };
     try {
-      const item = options.mode === "edit" && options.initial ? await cartApi.update(options.initial._id, payload) : await cartApi.add(payload);
-      console.debug("add_to_cart_ui", { step: "CART_POST_COMPLETE", status: 201, item_id: item._id });
-      if (options.mode === "add") appStore.set({ cartCount: appStore.state.cartCount + 1 });
-      toast(options.mode === "edit" ? "Cart item updated." : `${product.name} added · ${formatMoney(item.pricing_preview.master_final_total ?? 0, "EUR")}`);
+      const result = inWorkingOrder
+        ? (options.mode === "edit" && options.initial ? await orderApi.updateItem(options.orderId!, options.initial._id, payload) : await orderApi.addItem(options.orderId!, payload))
+        : (options.mode === "edit" && options.initial ? await cartApi.update(options.initial._id, payload) : await cartApi.add(payload));
+      const item = (inWorkingOrder ? (result as { item?: CartItem }).item : result) as CartItem;
+      console.debug("add_to_cart_ui", { step: inWorkingOrder ? "ORDER_ITEM_POST_COMPLETE" : "CART_POST_COMPLETE", status: 201, item_id: item?._id });
+      if (options.mode === "add" && !inWorkingOrder) appStore.set({ cartCount: appStore.state.cartCount + 1 });
+      toast(inWorkingOrder ? "Working Order updated." : options.mode === "edit" ? "Cart item updated." : `${product.name} added · ${formatMoney(item.pricing_preview.master_final_total ?? 0, "EUR")}`);
       try {
         console.debug("add_to_cart_ui", { step: "CART_REFRESH_START", item_id: item._id });
         await options.onSaved?.(item);
@@ -850,7 +859,7 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
         // not turn a successful add into a stuck or misleading error state.
         toast(refreshError instanceof ApiError ? `Item saved, but cart refresh failed: ${refreshError.message}` : "Item saved, but the cart could not be refreshed.", "error");
       }
-      if (options.mode === "add") {
+        if (options.mode === "add" && !inWorkingOrder) {
         addSucceeded = true;
         button.classList.add("is-added");
         button.innerHTML = '<i data-lucide="check"></i>Added to Cart';
@@ -956,10 +965,21 @@ export async function openCartItemEditor(item: CartItem, onSaved: () => void | P
   refreshIcons(wrapper);
 }
 
-export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
-  const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
+export async function catalogPage(selectedFamily = "", orderId?: string): Promise<HTMLElement> {
+  const activeCustomer = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
+  let orderContext: Record<string, unknown> | null = null;
+  if (orderId) { try { orderContext = await orderApi.get(orderId); } catch { orderContext = null; } }
+  const orderCustomerId = String(orderContext?.customer_id ?? orderContext?.customer_company_id ?? orderContext?.company_id ?? activeCustomer?._id ?? "");
+  const knownOrderCustomer = orderId
+    ? appStore.state.customers.find((customer) => String(customer._id) === orderCustomerId)
+    : undefined;
+  const snapshot = orderContext?.customer_snapshot;
+  const snapshotCustomer = snapshot && typeof snapshot === "object"
+    ? ({ _id: orderCustomerId, ...(snapshot as Record<string, unknown>) } as typeof activeCustomer)
+    : undefined;
+  const customerCompany = knownOrderCustomer ?? snapshotCustomer ?? activeCustomer;
   const copy = familyCopy[selectedFamily];
-  const page = pageScaffold("Calculator", copy?.label ?? "Calculator", customerCompany ? `Quotation For: ${customerCompany.name}` : "Select a customer before configuring products.", '<a class="button button-primary" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>Quotation Cart</a>');
+  const page = pageScaffold("Calculator", copy?.label ?? "Calculator", orderId ? `Editing Working Order ${String(orderContext?.order_number ?? orderId)} for ${customerCompany?.name ?? "customer"}.` : customerCompany ? `Quotation For: ${customerCompany.name}` : "Select a customer before configuring products.", orderId ? '<a class="button button-secondary" href="/orders" data-route="/orders"><i data-lucide="arrow-left"></i>Back to Orders</a>' : '<a class="button button-primary" href="/cart" data-route="/cart"><i data-lucide="shopping-cart"></i>Quotation Cart</a>');
   page.classList.add("calculator-page");
   const body = page.querySelector<HTMLElement>(".page-body")!;
   if (!customerCompany) { body.innerHTML = emptyState("building-2", "Customer selection required", "Choose a customer to establish pricing and currency context."); refreshIcons(page); return page; }
@@ -967,7 +987,7 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
   try {
     if (!selectedFamily) {
       const families = await catalogApi.families();
-      body.innerHTML = `<section class="calculator-welcome"><div class="calculator-customer-back"><a class="button button-secondary" href="/calculator" data-route="/calculator"><i data-lucide="arrow-left"></i>Back to Customer Selection</a></div><div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="active"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="calculator-context"><div><span class="eyebrow">Quotation For</span><h2>${escapeHtml(customerCompany.name)}</h2><p>Choose one of the three active Moneda product families.</p></div><div class="context-pills"><span><i data-lucide="building-2"></i>Customer: ${escapeHtml(customerCompany.name)}</span></div></div></section>${familyCards(families)}`;
+      body.innerHTML = `<section class="calculator-welcome"><div class="calculator-customer-back"><a class="button button-secondary" href="/calculator" data-route="/calculator"><i data-lucide="arrow-left"></i>Back to Customer Selection</a></div><div class="workspace-steps"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="active"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><div class="calculator-context"><div><span class="eyebrow">${orderId ? "Working Order" : "Quotation For"}</span><h2>${escapeHtml(customerCompany.name)}</h2><p>${orderId ? "Add or edit products in this working order." : "Choose one of the three active Moneda product families."}</p></div><div class="context-pills"><span><i data-lucide="building-2"></i>Customer: ${escapeHtml(customerCompany.name)}</span></div></div></section>${familyCards(families, orderId)}`;
       refreshIcons(page); return page;
     }
     let products = await loadFamilyProducts(selectedFamily);
@@ -984,13 +1004,13 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
     // Returning to the same family route would render this view again, making
     // the Back to Products control appear unresponsive.  Navigate to the
     // canonical catalogue route so the user can choose a product family.
-    const productsRoute = "/products";
+     const productsRoute = orderId ? `/products?order_id=${encodeURIComponent(orderId)}` : "/products";
     body.innerHTML = `<div class="calculator-toolbar"><a href="${escapeHtml(productsRoute)}" data-route="${escapeHtml(productsRoute)}" class="back-link button back-to-products"><i data-lucide="arrow-left"></i>Back to Products</a><span><strong class="product-count">${products.length}</strong> products available</span></div><div class="workspace-steps compact"><span class="done"><b>1</b>Customer</span><i data-lucide="chevron-right"></i><span class="done"><b>2</b>Products</span><i data-lucide="chevron-right"></i><span class="active"><b>3</b>Configure</span><i data-lucide="chevron-right"></i><span><b>4</b>Quotation</span></div><section class="family-selector panel"><div class="section-title"><div><span class="eyebrow">${escapeHtml(copy?.label ?? selectedFamily)}</span><h2>${mpackOnly ? "Mtech Mpack" : "Choose a category and product"}</h2><p>${mpackOnly ? "Art. MTECH-MPACK · Configure the machine, size and thickness." : escapeHtml(copy?.detail ?? "Select a product to continue.")}</p></div><i data-lucide="${mpackOnly ? "layers-3" : "list-filter"}"></i></div>${mpackOnly ? `<div class="selected-product-fixed"><strong>Mtech Mpack</strong><span>Art. MTECH-MPACK</span></div>` : `<div class="category-product-grid">${subcategories.length ? `<label>Category<select class="subcategory-select" required><option value="">Select category</option>${subcategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("")}</select></label>` : ""}<label>Product<input class="product-combobox" autocomplete="off" placeholder="Search products by name or article" ${subcategories.length ? "disabled" : ""}></label></div>`}</section><div class="configurator-host"><div class="selection-summary"><i data-lucide="mouse-pointer-2"></i><span>${mpackOnly ? "Loading Mtech Mpack configuration…" : subcategories.length ? "Select a category, then choose a product." : "Choose a product to continue."}</span></div></div>`;
     const input = body.querySelector<HTMLInputElement>(".product-combobox")!;
     const host = body.querySelector<HTMLElement>(".configurator-host")!;
     if (mpackOnly) {
       const product = products.find((item) => item._id === "mtech-mpack") ?? products[0];
-      if (product) renderConfigurator(host, product, { mode: "add" });
+       if (product) renderConfigurator(host, product, { mode: "add", orderId, orderCustomerId });
       else host.innerHTML = '<div class="notice error"><strong>Mtech Mpack is not available</strong><p>The Underpacking catalog returned no canonical MPack product.</p></div>';
       refreshIcons(page);
       return page;
@@ -1007,7 +1027,7 @@ export async function catalogPage(selectedFamily = ""): Promise<HTMLElement> {
     const renderSelection = (product: Product) => {
       const hydratedProduct = withBlanketBars(product, blanketBars);
       host.innerHTML = `<article class="selected-product-card"><div><span class="eyebrow">Art. ${escapeHtml(product.article_no ?? product.sku)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p><small>${escapeHtml(String(product.configuration.thickness_mm ?? product.configuration.thickness ?? ""))}${product.configuration.thickness_mm ? " mm" : ""} · EUR master pricing</small></div><button type="button" class="button button-dark" data-configure-product><i data-lucide="settings-2"></i>Configure Product</button></article>`;
-      host.querySelector<HTMLButtonElement>("[data-configure-product]")?.addEventListener("click", () => renderConfigurator(host, hydratedProduct, { mode: "add" }));
+       host.querySelector<HTMLButtonElement>("[data-configure-product]")?.addEventListener("click", () => renderConfigurator(host, hydratedProduct, { mode: "add", orderId, orderCustomerId }));
       refreshIcons(host);
     };
     bindProductCombobox(input, () => available, renderSelection, () => {

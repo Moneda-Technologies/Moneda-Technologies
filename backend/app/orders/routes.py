@@ -5,6 +5,7 @@ from datetime import timedelta
 from html import escape
 import re
 from threading import Lock
+from uuid import uuid4
 
 from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, Response, current_app, request
@@ -13,17 +14,109 @@ from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError, email_diagnostic_id
 from app.customers.codes import available_customer_code
 from app.finance.service import IncentiveConfigurationError, cancel_unpaid_incentives_for_order, create_incentive_for_order, has_payout_link, is_voided_or_deleted_payment, linked_records_for_order, money, payment_rollup, validate_incentive_configuration
-from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required
+from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required, superadmin_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.services.business_logic import customer_client_type, manager_snapshot
 from app.quotations.pdf import render_order_confirmation_pdf
+from app.pricing.engine import PricingUnavailable
 
 
 bp = Blueprint("orders", __name__, url_prefix="/api")
 STATUSES = {"Pending", "Confirmed", "Processing", "Completed", "Cancelled"}
 _CONVERSION_LOCK = Lock()
 PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
+WORKING_STATES = {"WORKING", "AWAITING_PAYMENT", "PAYMENT_RECORDED", "PAYMENT_CONFIRMED", "READY_FOR_DISPATCH", "READY_TO_FINALIZE", "CANCELLED"}
+
+
+def _working_order_lines(order: dict) -> list[dict]:
+    """Return editable working-order lines with stable item identifiers."""
+    source = order.get("lines") or order.get("products_snapshot") or []
+    lines: list[dict] = []
+    for raw in source if isinstance(source, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        line = dict(raw)
+        line["item_id"] = str(line.get("item_id") or line.get("line_id") or line.get("_id") or uuid4().hex)
+        lines.append(line)
+    return lines
+
+
+def _recalculate_working_order(store, order: dict, lines: list[dict]) -> dict:
+    """Persist totals after an order line mutation using server pricing data."""
+    from app.pricing.engine import calculate_quote_totals
+
+    totals = calculate_quote_totals(lines)
+    eur_lines = [
+        {
+            "subtotal": line.get("master_subtotal", line.get("subtotal", 0)),
+            "discount_amount": line.get("master_discount_amount", line.get("discount_amount", 0)),
+            "line_total": line.get("master_final_total", line.get("line_total", 0)),
+        }
+        for line in lines
+    ]
+    eur_totals = calculate_quote_totals(eur_lines)
+    changes = {
+        "lines": lines,
+        "products_snapshot": lines,
+        "totals": totals,
+        "final_totals": totals,
+        "eur_totals": eur_totals,
+        "order_amount": totals.get("grand_total", 0),
+        # Any line mutation invalidates a previously recorded materials gate.
+        # Payment is then re-evaluated below, so the working Order can never
+        # remain finalization-ready on stale totals.
+        "materials_ready_for_dispatch": False,
+        "materials_ready_at": None,
+        "materials_ready_by": None,
+        "lifecycle_state": "WORKING",
+        "order_status": "WORKING",
+    }
+    updated = store.update_one("orders", {"_id": order.get("_id")}, changes) or {**order, **changes}
+    from app.finance.service import sync_order_payment_state
+    return sync_order_payment_state(store, str(order.get("_id"))) or updated
+
+
+def _reprice_working_order(store, order: dict) -> dict:
+    """Re-resolve every line from the current server catalogue and prices."""
+    from app.pricing.routes import _calculate
+
+    repriced: list[dict] = []
+    for source in _working_order_lines(order):
+        payload = {
+            "product_id": source.get("product_id"),
+            "configuration": source.get("configuration") or {},
+            "quantity": source.get("requested_quantity", source.get("quantity", 1)),
+            "discount_percent": source.get("requested_discount_percent", source.get("discount_percent", 0)),
+            "display_currency": source.get("display_currency") or source.get("currency") or order.get("currency") or "EUR",
+            "shipping_address_id": source.get("shipping_address_id") or order.get("shipping_address_id"),
+        }
+        _, _, line, rate_meta = _calculate(
+            payload, customer_id_override=_order_customer_id(order), require_active_context=False,
+        )
+        item_id = str(source.get("item_id") or source.get("line_id") or uuid4().hex)
+        repriced.append({**line, "item_id": item_id, "line_id": item_id, "exchange_rate_meta": rate_meta})
+    if not repriced:
+        raise ValueError("A working Order must contain at least one item")
+    return _recalculate_totals_without_reset(store, order, repriced)
+
+
+def _recalculate_totals_without_reset(store, order: dict, lines: list[dict]) -> dict:
+    """Persist server totals during finalization without reopening a gate."""
+    from app.pricing.engine import calculate_quote_totals
+
+    totals = calculate_quote_totals(lines)
+    eur_lines = [{
+        "subtotal": line.get("master_subtotal", line.get("subtotal", 0)),
+        "discount_amount": line.get("master_discount_amount", line.get("discount_amount", 0)),
+        "line_total": line.get("master_final_total", line.get("line_total", 0)),
+    } for line in lines]
+    changes = {
+        "lines": lines, "products_snapshot": lines, "totals": totals,
+        "final_totals": totals, "eur_totals": calculate_quote_totals(eur_lines),
+        "order_amount": totals.get("grand_total", 0),
+    }
+    return store.update_one("orders", {"_id": order.get("_id")}, changes) or {**order, **changes}
 
 
 def _normalise_recipients(values) -> list[str]:
@@ -199,6 +292,43 @@ def _can_convert_quotation(user: dict, quotation: dict) -> bool:
     return bool(user_id and user_id in owner_ids)
 
 
+def _working_order_for_quotation(store, quotation_id: str) -> dict | None:
+    """Return the one current working Order linked to a quotation.
+
+    Historical deployments stored final MT-OC records in ``orders`` with a
+    ``quotation_id``.  Those records are deliberately not treated as working
+    Orders and must never be reopened or returned as an idempotent conversion.
+    """
+    record = store.find_one("orders", {"quotation_id": quotation_id})
+    return record if record and not _is_final_confirmation_record(record) else None
+
+
+def _link_quotation_to_working_order(store, quotation: dict, order: dict) -> dict | None:
+    """Persist the forward conversion link only after the Order exists."""
+    persisted = store.find_one("orders", {"_id": order.get("_id"), "quotation_id": quotation.get("_id")})
+    if not persisted or _is_final_confirmation_record(persisted):
+        return None
+    now = utcnow()
+    history = list(quotation.get("history") or [])
+    already_linked = str(quotation.get("converted_order_id") or "") == str(persisted.get("_id") or "")
+    if not already_linked:
+        history.append({
+            "status": "Converted to Order", "at": now,
+            "by": (current_user() or {}).get("_id"),
+            "order_id": persisted.get("_id"),
+            "order_number": persisted.get("order_number"),
+        })
+    return store.update_one("quotations", {"_id": quotation.get("_id")}, {
+        "status": "Converted to Order",
+        "converted_order_id": persisted.get("_id"),
+        "converted_order_number": persisted.get("order_number"),
+        "converted_oc_id": None,
+        "converted_oc_number": None,
+        "converted_at": quotation.get("converted_at") or now,
+        "history": history,
+    })
+
+
 def _customer_oc_code(store, customer_id: str) -> str:
     customer = store.find_one("customers", {"_id": customer_id}) or store.find_one("companies", {"_id": customer_id}) or {}
     code = str(customer.get("customer_code") or "").strip().upper()
@@ -211,11 +341,44 @@ def _customer_oc_code(store, customer_id: str) -> str:
 
 def _oc_sequence_state(store, code: str) -> tuple[str, int]:
     pattern = rf"^MT-OC-{re.escape(code)}-(\d+)$"
-    rows, _ = store.list("orders", {"order_number": {"$regex": pattern}}, limit=100_000)
+    # Final confirmations live in their own collection, while older records
+    # may still be in ``orders``.  Scan both so a migration or a restart can
+    # never allocate an OC number that already exists in the final archive.
+    rows = []
+    for collection in ("orders", "order_confirmations"):
+        collection_rows, _ = store.list(collection, {"order_number": {"$regex": pattern}}, limit=100_000)
+        rows.extend(collection_rows)
     highest_existing = max((int(match.group(1)) for row in rows if (match := re.match(pattern, str(row.get("order_number") or "")))), default=0)
     counter_name = f"order_oc:{code}"
     counter = store.find_one("quotation_counters", {"_id": counter_name}) or {}
     return counter_name, max(highest_existing, int(counter.get("sequence") or 0))
+
+
+def _order_sequence_state(store, code: str) -> tuple[str, int]:
+    pattern = rf"^MT-ORD-{re.escape(code)}-(\d+)$"
+    rows, _ = store.list("orders", {"order_number": {"$regex": pattern}}, limit=100_000)
+    confirmations, _ = store.list("order_confirmations", {"source_order_number": {"$regex": pattern}}, limit=100_000)
+    rows.extend(confirmations)
+    highest_existing = max(
+        (int(match.group(1)) for row in rows if (match := re.match(pattern, str(row.get("order_number") or row.get("source_order_number") or "")))),
+        default=0,
+    )
+    counter_name = f"order:{code}"
+    counter = store.find_one("quotation_counters", {"_id": counter_name}) or {}
+    return counter_name, max(highest_existing, int(counter.get("sequence") or 0))
+
+
+def _next_order_number(store, customer_id: str) -> str:
+    code = _customer_oc_code(store, customer_id)
+    counter_name, current = _order_sequence_state(store, code)
+    store.ensure_counter_at_least(counter_name, current)
+    return f"MT-ORD-{code}-{store.next_counter(counter_name):03d}"
+
+
+def _preview_order_number(store, customer_id: str) -> str:
+    code = _customer_oc_code(store, customer_id)
+    _, current = _order_sequence_state(store, code)
+    return f"MT-ORD-{code}-{current + 1:03d}"
 
 
 def _next_oc_number(store, customer_id: str) -> str:
@@ -249,6 +412,144 @@ def _order_pdf_id(order_id: str) -> str:
     return f"order-confirmation-pdf-{order_id}"
 
 
+def _record_collection(record: dict) -> str:
+    """Return the authoritative collection for a working order or final OC."""
+    storage_collection = record.get("_storage_collection")
+    if storage_collection in {"orders", "order_confirmations"}:
+        return storage_collection
+    return "order_confirmations" if _is_final_confirmation_record(record) else "orders"
+
+
+def _is_final_confirmation_record(record: dict) -> bool:
+    """Recognize final OCs, including pre-lifecycle legacy records.
+
+    New records always carry explicit lifecycle metadata.  Older deployments
+    stored final confirmations in ``orders`` with only an MT-OC number, so a
+    metadata-free legacy row is treated as final for authorization/listing
+    purposes.  Working orders created by the current workflow always include
+    ``record_type=ORDER`` and ``order_kind=WORKING`` and therefore remain
+    editable.
+    """
+    record_type = str(record.get("record_type") or "").upper()
+    order_kind = str(record.get("order_kind") or "").upper()
+    # Explicit entity identity is authoritative. A working Order remains the
+    # source record after finalization and must never be reclassified as its OC.
+    if record_type == "ORDER" or order_kind == "WORKING":
+        return False
+    if record_type == "ORDER_CONFIRMATION":
+        return True
+    if bool(record.get("finalized")):
+        return True
+    if str(record.get("document_type") or "").casefold() == "order_confirmation":
+        return True
+    if str(record.get("lifecycle_state") or "").upper() in {"FINAL", "FINALIZED"}:
+        return True
+    metadata_fields = ("record_type", "order_kind", "lifecycle_state", "document_type")
+    return (
+        not any(record.get(field) for field in metadata_fields)
+        and str(record.get("order_number") or "").upper().startswith("MT-OC-")
+    )
+
+
+def _is_order_locked(record: dict) -> bool:
+    """Keep finalized source Orders immutable without reclassifying them as OCs."""
+    return (
+        _is_final_confirmation_record(record)
+        or bool(record.get("locked"))
+        or bool(record.get("finalized"))
+        or bool(record.get("final_oc_id"))
+        or str(record.get("lifecycle_state") or "").upper() in {"FINAL", "FINALIZED"}
+    )
+
+
+def _find_order_record(store, record_id: str) -> dict | None:
+    """Read either a working Order or its immutable Order Confirmation."""
+    order = store.find_one("orders", {"_id": record_id})
+    if order:
+        order["_storage_collection"] = "orders"
+        return order
+    confirmation = store.find_one("order_confirmations", {"_id": record_id})
+    if confirmation:
+        confirmation["_storage_collection"] = "order_confirmations"
+    return confirmation
+
+
+def _payment_rows_for_record(store, record_id: str) -> list[dict]:
+    record = _find_order_record(store, record_id) or {}
+    ids = {str(record_id)}
+    source_order_id = str(record.get("source_order_id") or "")
+    if source_order_id:
+        ids.add(source_order_id)
+    rows, _ = store.list(
+        "payments",
+        {"$or": [{"order_id": value} for value in ids] + [{"oc_id": value} for value in ids]},
+        limit=100_000,
+    )
+    return rows
+
+
+def _order_scope_query(user: dict, customer_id: str | None = None) -> dict:
+    """Build the shared customer-scope query for working Orders and final OCs."""
+    not_deleted = {"status": {"$ne": "Deleted"}}
+    if customer_id:
+        if str(user.get("role_id") or "") != "superadmin" and not _customer_access(user, str(customer_id)):
+            raise PermissionError("Customer access denied")
+        return {**not_deleted, "$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
+    if str(user.get("role_id") or "") == "superadmin":
+        return not_deleted
+    customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
+    return ({**not_deleted, "$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
+
+
+def _enrich_order_rows(store, rows: list[dict]) -> list[dict]:
+    """Attach payment/incentive summaries without exposing payment proof data."""
+    enriched = []
+    for row in rows:
+        payments = _payment_rows_for_record(store, str(row.get("_id") or ""))
+        latest_payment = payments[-1] if payments else None
+        rollup = payment_rollup(row, payments)
+        if latest_payment:
+            row["payment_snapshot"] = {key: value for key, value in latest_payment.items() if key != "attachment"}
+        row.update({
+            "payment_status": rollup["payment_status"],
+            "confirmed_received": rollup["confirmed_received"],
+            "remaining_balance": rollup["remaining_balance"],
+            "customer_credit": rollup["customer_credit"],
+            "pending_payment_count": rollup["pending_payment_count"],
+        })
+        incentive = store.find_one("incentives", {"order_id": row.get("_id")})
+        if not incentive and row.get("source_order_id"):
+            incentive = store.find_one("incentives", {"order_id": row.get("source_order_id")})
+        if incentive:
+            row["incentive_id"] = incentive.get("_id")
+            row["incentive_status"] = incentive.get("status", "PENDING PAYMENT")
+            row["incentive_amount"] = incentive.get("gross_incentive_amount", row.get("incentive_amount", 0))
+        enriched.append(row)
+    return enriched
+
+
+def _confirmation_origin(store, confirmation: dict) -> dict:
+    """Describe whether a final OC came from the current working-order flow."""
+    source_order_id = str(confirmation.get("source_order_id") or "").strip()
+    source_order = store.find_one("orders", {"_id": source_order_id}) if source_order_id else None
+    linked = bool(source_order_id and source_order)
+    return {
+        "confirmation_type": "LINKED_FINAL_OC" if linked else "HISTORICAL_OC",
+        "is_legacy_confirmation": not linked,
+        "source_order_id": source_order_id or None,
+        "source_order_number": (
+            confirmation.get("source_order_number")
+            or (source_order or {}).get("order_number")
+            or None
+        ),
+        "confirmation_origin_explanation": (
+            "Final Order Confirmation created from a linked working order."
+            if linked
+            else "Historical Order Confirmation created before the current Working Order to Final OC workflow, or without a source working-order link."
+        ),
+    }
+
+
 def _ensure_order_pdf(order: dict) -> tuple[bytes, dict]:
     """Generate and persist the canonical OC PDF, reusing an existing copy."""
     store = current_app.extensions["store"]
@@ -259,7 +560,7 @@ def _ensure_order_pdf(order: dict) -> tuple[bytes, dict]:
         try:
             content = base64.b64decode(str(existing["content_base64"]))
             if order.get("oc_pdf_status") != "Generated" or order.get("oc_pdf_document_id") != document_id:
-                order = store.update_one("orders", {"_id": order_id}, {
+                order = store.update_one(_record_collection(order), {"_id": order_id}, {
                     "oc_pdf_document_id": document_id, "oc_pdf_filename": existing.get("filename") or f"{order.get('order_number') or order_id}.pdf",
                     "oc_pdf_status": "Generated", "document_status": "Generated",
                 }) or order
@@ -279,7 +580,7 @@ def _ensure_order_pdf(order: dict) -> tuple[bytes, dict]:
         document = store.update_one("order_documents", {"_id": document_id}, document) or document
     else:
         document = store.insert_one("order_documents", document)
-    updated = store.update_one("orders", {"_id": order_id}, {
+    updated = store.update_one(_record_collection(order), {"_id": order_id}, {
         "oc_pdf_document_id": document_id, "oc_pdf_filename": filename,
         "oc_pdf_status": "Generated", "document_status": "Generated", "oc_pdf_generated_at": now,
     }) or order
@@ -344,7 +645,7 @@ def _mark_order_email_failed(order: dict, exc: Exception) -> None:
         "email_status": "Failed", "email_error": error_code,
         "email_failed_at": utcnow(),
     }
-    current_app.extensions["store"].update_one("orders", {"_id": order.get("_id")}, details)
+    current_app.extensions["store"].update_one(_record_collection(order), {"_id": order.get("_id")}, details)
     if isinstance(exc, EmailDeliveryError):
         _log_order_email_failure(order, "order_confirmation", exc)
         audit("order.email_failed", "order", str(order.get("_id")), {"error_code": exc.error_code, "diagnostic_id": exc.diagnostic_id})
@@ -363,66 +664,67 @@ def list_orders():
     customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
     store = current_app.extensions["store"]
     user = current_user() or {}
-    # Deleted OCs remain in storage for audit/history, but are not part of the
-    # normal operational list.
-    not_deleted = {"status": {"$ne": "Deleted"}}
-    if customer_id:
-        if str(user.get("role_id") or "") != "superadmin" and not _customer_access(user, str(customer_id)):
-            return failure("Customer access denied", status=403)
-        query: dict = {**not_deleted, "$or": [{"customer_id": customer_id}, {"customer_company_id": customer_id}, {"company_id": customer_id}]}
-    else:
-        if str(user.get("role_id") or "") == "superadmin":
-            query = not_deleted
-        else:
-            customer_ids = customer_access_ids_for_user(str(user.get("_id") or ""))
-            query = ({**not_deleted, "$or": [{"customer_id": {"$in": customer_ids}}, {"customer_company_id": {"$in": customer_ids}}, {"company_id": {"$in": customer_ids}}]} if customer_ids else {"_id": "__no_customer_access__"})
+    try:
+        query = _order_scope_query(user, customer_id)
+    except PermissionError:
+        return failure("Customer access denied", status=403)
     if request.args.get("status"):
         query["status"] = request.args["status"]
-    rows, total = store.list("orders", query, page=max(int(request.args.get("page", 1)), 1), limit=min(int(request.args.get("limit", 25)), 100))
-    # Add lightweight payment/incentive state for the operational OC table.
-    # Payment proofs are intentionally omitted from the list payload.
-    enriched = []
-    for row in rows:
-        payments, _ = store.list(
-            "payments",
-            {"$or": [{"order_id": row.get("_id")}, {"oc_id": row.get("_id")}]},
-            limit=100,
-        )
-        latest_payment = payments[-1] if payments else None
-        rollup = payment_rollup(row, payments)
-        if latest_payment:
-            payment_snapshot = {key: value for key, value in latest_payment.items() if key != "attachment"}
-            row["payment_snapshot"] = payment_snapshot
-        row.update({
-            "payment_status": rollup["payment_status"],
-            "confirmed_received": rollup["confirmed_received"],
-            "remaining_balance": rollup["remaining_balance"],
-            "customer_credit": rollup["customer_credit"],
-            "pending_payment_count": rollup["pending_payment_count"],
-        })
-        incentive = store.find_one("incentives", {"order_id": row.get("_id")})
-        if incentive:
-            row["incentive_id"] = incentive.get("_id")
-            row["incentive_status"] = incentive.get("status", "PENDING PAYMENT")
-            row["incentive_amount"] = incentive.get("gross_incentive_amount", row.get("incentive_amount", 0))
-        enriched.append(row)
-    return success({"items": enriched, "total": total})
+    all_rows, _ = store.list("orders", query, limit=100_000)
+    # New records in this collection are working Orders. Legacy rows without
+    # lifecycle metadata are retained here for backwards-compatible access,
+    # while finalized records are exposed through /order-confirmations.
+    rows = [
+        row for row in all_rows
+        if not _is_final_confirmation_record(row)
+        and not row.get("final_oc_id")
+        and not row.get("finalized")
+        and str(row.get("lifecycle_state") or "").upper() != "FINALIZED"
+    ]
+    page = max(int(request.args.get("page", 1)), 1)
+    limit = min(int(request.args.get("limit", 25)), 100)
+    start = (page - 1) * limit
+    return success({"items": _enrich_order_rows(store, rows[start:start + limit]), "total": len(rows)})
+
+
+@bp.get("/order-confirmations")
+@permission_required("orders.view")
+def list_order_confirmations():
+    """List immutable final OCs, while retaining visibility of legacy rows."""
+    customer_id = request.args.get("customer_id") or request.args.get("customer_company_id") or request.args.get("company_id")
+    store = current_app.extensions["store"]
+    try:
+        query = _order_scope_query(current_user() or {}, customer_id)
+    except PermissionError:
+        return failure("Customer access denied", status=403)
+    if request.args.get("status"):
+        query["status"] = request.args["status"]
+    final_rows, _ = store.list("order_confirmations", query, limit=100_000)
+    legacy_rows, _ = store.list("orders", query, limit=100_000)
+    legacy_rows = [
+        row for row in legacy_rows
+        if _is_final_confirmation_record(row)
+        and not (str(row.get("record_type") or "").upper() == "ORDER" and row.get("final_oc_id"))
+    ]
+    rows_by_id = {str(row.get("_id")): row for row in [*legacy_rows, *final_rows] if row.get("_id")}
+    rows = sorted(rows_by_id.values(), key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    rows = [{**row, **_confirmation_origin(store, row)} for row in rows]
+    page = max(int(request.args.get("page", 1)), 1)
+    limit = min(int(request.args.get("limit", 25)), 100)
+    start = (page - 1) * limit
+    return success({"items": _enrich_order_rows(store, rows[start:start + limit]), "total": len(rows)})
 
 
 @bp.get("/orders/<order_id>")
 @permission_required("orders.view")
 def get_order(order_id: str):
     store = current_app.extensions["store"]
-    order = store.find_one("orders", {"_id": order_id})
+    order = _find_order_record(store, order_id)
     if not order or order.get("status") == "Deleted":
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
-    payments, _ = store.list(
-        "payments",
-        {"$or": [{"order_id": order_id}, {"oc_id": order_id}]},
-        limit=100_000,
-    )
+    payments = _payment_rows_for_record(store, order_id)
     rollup = payment_rollup(order, payments)
     order.update({
         "payment_status": rollup["payment_status"],
@@ -431,19 +733,37 @@ def get_order(order_id: str):
         "customer_credit": rollup["customer_credit"],
         "pending_payment_count": rollup["pending_payment_count"],
     })
+    if _is_final_confirmation_record(order):
+        order.update(_confirmation_origin(store, order))
+    # Internal storage routing is only needed while persisting legacy rows;
+    # never expose it as part of the public order contract.
+    order.pop("_storage_collection", None)
     return success(order)
 
 
 @bp.delete("/orders/<order_id>")
-@permission_required("orders.delete")
+@superadmin_required
 def delete_order(order_id: str):
-    """Hide an OC from operations without destroying financial history."""
+    """Safely archive a working Order or OC without destroying history."""
     store = current_app.extensions["store"]
-    order = store.find_one("orders", {"_id": order_id})
+    order = _find_order_record(store, order_id)
     if not order or order.get("status") == "Deleted":
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
+    is_final_confirmation = _is_final_confirmation_record(order)
+    if not is_final_confirmation:
+        linked_confirmation = (
+            store.find_one("order_confirmations", {"source_order_id": order_id})
+            or (store.find_one("order_confirmations", {"_id": order.get("final_oc_id")}) if order.get("final_oc_id") else None)
+        )
+        if linked_confirmation:
+            return failure(
+                "This working Order has a finalized Order Confirmation and cannot be deleted.",
+                status=409,
+                error="ORDER_HAS_FINAL_CONFIRMATION",
+                details={"order_confirmation_id": str(linked_confirmation.get("_id") or "")},
+            )
     linked_payments, _ = store.list("payments", {"$or": [{"order_id": order_id}, {"oc_id": order_id}]}, limit=100_000)
     active_payments = [payment for payment in linked_payments if not is_voided_or_deleted_payment(payment)]
     if active_payments:
@@ -458,6 +778,18 @@ def delete_order(order_id: str):
     paid_allocations = [row for row in linked_allocations if str(row.get("status") or "").upper() == "PAID" or money(row.get("paid_amount")) > 0 or has_payout_link(row)]
     if paid_incentives or paid_allocations:
         return failure("This Order Confirmation has a paid incentive and cannot be deleted.", status=409, error="ORDER_HAS_PAID_INCENTIVE")
+    linked_credit_notes, _ = store.list(
+        "credit_notes",
+        {"$or": [{"order_id": order_id}, {"oc_id": order_id}], "status": {"$ne": "VOID"}},
+        limit=100_000,
+    )
+    if linked_credit_notes:
+        return failure(
+            "This record has an active Credit Note and cannot be deleted.",
+            status=409,
+            error="ORDER_HAS_CREDIT_NOTE",
+            details={"credit_note_ids": [str(row.get("_id") or "") for row in linked_credit_notes]},
+        )
     payload = request.get_json(silent=True) or {}
     reason = str(payload.get("reason") or request.args.get("reason") or "Deleted from Order Confirmations")[:500].strip()
     now = utcnow()
@@ -472,7 +804,7 @@ def delete_order(order_id: str):
     now = utcnow()
     actor_id = (current_user() or {}).get("_id")
     incentive_result = cancel_unpaid_incentives_for_order(store, order_id, actor_id=actor_id, reason=reason)
-    updated = store.update_one("orders", {"_id": order_id}, {
+    updated = store.update_one(_record_collection(order), {"_id": order_id}, {
         "status": "Deleted",
         "document_status": "Deleted",
         "deleted_at": now,
@@ -480,14 +812,18 @@ def delete_order(order_id: str):
         "deletion_reason": reason,
         "incentive_cancellation": incentive_result,
     }) or {**order, "status": "Deleted"}
-    audit("ORDER_CONFIRMATION_DELETED", "order", order_id, {
+    audit("ORDER_CONFIRMATION_DELETED" if is_final_confirmation else "WORKING_ORDER_DELETED", "order", order_id, {
         "reason": reason,
         "previous_state": order.get("status", "Pending"),
         "linked_records": linked_counts, "incentives": incentive_result,
     })
+    # Deleting a working Order must not reopen or otherwise mutate its source
+    # quotation.  The quotation remains the immutable commercial source while
+    # the working Order is the editable fulfilment record.  Only legacy/final
+    # Order Confirmation deletes retain the historical restoration behaviour.
     quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "")
     quotation_restored = False
-    if quotation_id:
+    if quotation_id and is_final_confirmation:
         quotation = store.find_one("quotations", {"_id": quotation_id})
         if quotation and str(quotation.get("status") or "").casefold() == "converted to order":
             quotation_history = [*(quotation.get("history") or []), {"status": "Sent", "at": now, "by": actor_id, "reason": "Order Confirmation deleted", "order_id": order_id}]
@@ -504,22 +840,25 @@ def delete_order(order_id: str):
             store.update_one("quotations", {"_id": quotation_id}, relationship_reset)
             quotation_restored = True
             audit("quotation.restored_after_order_delete", "quotation", quotation_id, {"order_id": order_id, "status": "Sent"})
-    return success({"_id": updated.get("_id"), "status": "Deleted", "incentives": incentive_result, "quotation_restored": quotation_restored}, "Order Confirmation deleted")
+    record_label = "Order Confirmation" if is_final_confirmation else "Working Order"
+    return success({"_id": updated.get("_id"), "status": "Deleted", "record_type": "order_confirmation" if is_final_confirmation else "working_order", "incentives": incentive_result, "quotation_restored": quotation_restored}, f"{record_label} archived")
 
 
 @bp.post("/orders/<order_id>/send-confirmation")
 @permission_required("orders.update")
 def send_order_confirmation(order_id: str):
     store = current_app.extensions["store"]
-    order = store.find_one("orders", {"_id": order_id})
+    order = _find_order_record(store, order_id)
     if not order:
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
+    if not _is_final_confirmation_record(order):
+        return failure("A final Order Confirmation PDF is created only after Superadmin finalization", status=409, error="ORDER_CONFIRMATION_NOT_FINAL")
     try:
         pdf, order = _ensure_order_pdf(order)
         result = _send_order_email(order, "order_confirmation", pdf)
-        store.update_one("orders", {"_id": order_id}, {
+        store.update_one(_record_collection(order), {"_id": order_id}, {
             "email_status": "Sent", "email_last_sent_at": utcnow(),
             "email_diagnostic_id": result.get("diagnostic_id"),
         })
@@ -541,11 +880,13 @@ def send_order_confirmation(order_id: str):
 @permission_required("orders.view")
 def order_confirmation_pdf(order_id: str):
     store = current_app.extensions["store"]
-    order = store.find_one("orders", {"_id": order_id})
+    order = _find_order_record(store, order_id)
     if not order:
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
+    if not _is_final_confirmation_record(order):
+        return failure("Only a finalized Order Confirmation can be sent with its PDF", status=409, error="ORDER_CONFIRMATION_NOT_FINAL")
     try:
         content, order = _ensure_order_pdf(order)
     except Exception:
@@ -561,15 +902,17 @@ def order_confirmation_pdf(order_id: str):
 @permission_required("orders.update")
 def resend_order_confirmation(order_id: str):
     store = current_app.extensions["store"]
-    order = store.find_one("orders", {"_id": order_id})
+    order = _find_order_record(store, order_id)
     if not order:
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
+    if not _is_final_confirmation_record(order):
+        return failure("Only a finalized Order Confirmation can be sent with its PDF", status=409, error="ORDER_CONFIRMATION_NOT_FINAL")
     try:
         pdf, order = _ensure_order_pdf(order)
         result = _send_order_email(order, "order_confirmation", pdf)
-        store.update_one("orders", {"_id": order_id}, {
+        store.update_one(_record_collection(order), {"_id": order_id}, {
             "email_status": "Sent", "email_last_sent_at": utcnow(),
             "email_diagnostic_id": result.get("diagnostic_id"),
         })
@@ -590,7 +933,7 @@ def resend_order_confirmation(order_id: str):
 @bp.post("/orders/<order_id>/send-status")
 @permission_required("orders.update")
 def send_order_status(order_id: str):
-    order = current_app.extensions["store"].find_one("orders", {"_id": order_id})
+    order = _find_order_record(current_app.extensions["store"], order_id)
     if not order:
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
@@ -622,7 +965,7 @@ def order_configuration(quotation_id: str):
     user = store.find_one("users", {"_id": quotation.get("salesperson_id") or quotation.get("created_by_user_id") or quotation.get("user_id")}) or {}
     return success({
         "quote": quotation,
-        "defaults": {"oc_number": _preview_oc_number(store, str(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))), "payment_terms": quotation.get("payment_terms"), "order_amount": (quotation.get("totals") or {}).get("grand_total"), "salesperson": {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email")}},
+        "defaults": {"order_number": _preview_order_number(store, str(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id"))), "payment_terms": quotation.get("payment_terms"), "order_amount": (quotation.get("totals") or {}).get("grand_total"), "salesperson": {"_id": user.get("_id"), "name": user.get("name"), "email": user.get("email")}},
     })
 
 
@@ -642,12 +985,24 @@ def convert_quotation(quotation_id: str):
     if idempotency_key:
         existing_by_key = store.find_one("orders", {"customer_id": quotation_customer_id, "idempotency_key": idempotency_key})
         if existing_by_key:
+            if _is_final_confirmation_record(existing_by_key):
+                return failure("The idempotency key is linked to a final Order Confirmation", status=409, error="IDEMPOTENCY_CONFLICT")
+            if not _link_quotation_to_working_order(store, quotation, existing_by_key):
+                return failure("The existing Working Order could not be linked to the quotation", status=503, error="QUOTATION_LINK_FAILED")
             existing_by_key["idempotent_replay"] = True
-            return success(existing_by_key, "Order Confirmation already created")
-    existing = store.find_one("orders", {"quotation_id": quotation_id})
+            return success(existing_by_key, "Working Order already created")
+    existing_record = store.find_one("orders", {"quotation_id": quotation_id})
+    if existing_record and _is_final_confirmation_record(existing_record):
+        return failure(
+            "This historical quotation is linked to a legacy final Order Confirmation and cannot be converted again.",
+            status=409, error="LEGACY_ORDER_CONFIRMATION_EXISTS",
+        )
+    existing = _working_order_for_quotation(store, quotation_id)
     if existing:
+        if not _link_quotation_to_working_order(store, quotation, existing):
+            return failure("The existing Working Order could not be linked to the quotation", status=503, error="QUOTATION_LINK_FAILED")
         existing["idempotent_replay"] = True
-        return success(existing, "Order Confirmation already created")
+        return success(existing, "Working Order already created")
     try:
         additional_recipients = _additional_recipients(payload)
         payment_terms = _validated_payment_terms(payload.get("payment_terms"), quotation.get("payment_terms"))
@@ -664,6 +1019,9 @@ def convert_quotation(quotation_id: str):
     issuer = {**(settings.get("issuer") or {}), **(quotation.get("issuer_snapshot") or {})}
     issuer["name"] = "Moneda Technologies"
     issuer["email"] = issuer.get("email") or "business@monedatechnologies.com"
+    working_lines = _working_order_lines({"lines": quotation.get("lines") or []})
+    initial_state = "AWAITING_PAYMENT" if payment_terms == "Advance" else "WORKING"
+    initial_label = "Awaiting Payment" if payment_terms == "Advance" else "Working"
     order_document = {
         "order_number": "", "quotation_id": quotation_id,
         "quotation_number": quotation.get("quotation_number"),
@@ -678,7 +1036,7 @@ def convert_quotation(quotation_id: str):
         "manager_at_creation": manager_snapshot(store, user),
         "client_type_at_creation": quotation.get("client_type_at_creation") or customer_client_type(quotation.get("customer_snapshot") or {}),
         "account_type_at_creation": quotation.get("account_type_at_creation") or ("DEALER" if quotation.get("client_type_at_creation") == "DEALER" else "DISTRIBUTOR"),
-        "quotation_snapshot": quotation, "products_snapshot": quotation["lines"], "lines": quotation["lines"],
+        "quotation_snapshot": quotation, "products_snapshot": working_lines, "lines": working_lines,
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
         "billing_address_snapshot": quotation.get("billing_address_snapshot"),
@@ -695,114 +1053,226 @@ def convert_quotation(quotation_id: str):
             "converted_totals": quotation.get("totals"),
         },
         "quotation_currency": quotation.get("quotation_currency") or quotation.get("currency", "EUR"),
-        # The quotation's server-calculated grand total is authoritative for
-        # the Order Confirmation and incentive base.  Never trust a client
-        # supplied amount from the conversion form.
+        # The quotation's server-calculated amount is the starting snapshot;
+        # working-order edits and finalization recalculate it server-side.
         "totals": quotation["totals"], "order_amount": float((quotation.get("totals") or {}).get("grand_total") or 0),
         "original_quote_payment_terms": quotation.get("payment_terms"), "payment_terms": payment_terms,
-        "oc_date": payload.get("oc_date") or now.date().isoformat(), "document_type": "order_confirmation", "status": "Pending",
-        "payment_status": "PENDING", "confirmed_received": 0.0,
+        "order_date": payload.get("order_date") or payload.get("oc_date") or now.date().isoformat(),
+        # A quotation conversion creates a working Order only.  The final OC
+        # is a separate immutable snapshot created by the Superadmin finalize
+        # endpoint below.
+        "record_type": "ORDER", "order_kind": "WORKING", "lifecycle_state": initial_state,
+        "order_status": initial_state, "finalized": False, "locked": False,
+        "document_type": "order", "status": initial_label,
+        "payment_status": "PENDING", "payment_workflow_state": "AWAITING_PAYMENT" if payment_terms == "Advance" else None, "confirmed_received": 0.0,
         "remaining_balance": float((quotation.get("totals") or {}).get("grand_total") or 0),
         "customer_credit": 0.0, "pending_payment_count": 0,
         "created_at": now, "document_status": "Pending", "email_status": "Pending",
         "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
         "additional_recipients": additional_recipients,
         "conversion_state": "PROCESSING",
-        "history": [{"status": "Pending", "at": now, "by": (current_user() or {}).get("_id")}],
+        "history": [{"status": initial_state, "at": now, "by": (current_user() or {}).get("_id")}],
     }
     if idempotency_key:
         order_document["idempotency_key"] = idempotency_key
-    try:
-        # Validate the category-wise incentive matrix before allocating an OC
-        # number or inserting any financial record.
-        validate_incentive_configuration(store, order_document, salesperson)
-    except IncentiveConfigurationError as exc:
-        return failure(str(exc), status=422, error="INCENTIVE_CONFIGURATION_REQUIRED", category_id=exc.category_id)
+    # Incentive rates are snapshotted when the final OC is created, after the
+    # working Order has been edited and its final totals are known.
     # Keep the existing preflight check for a friendly 409, then repeat it
     # while holding a process-local lock so two rapid conversion requests in
-    # this worker cannot both create an Order Confirmation.
+    # this worker cannot both create a Working Order.
     with _CONVERSION_LOCK:
-        existing = store.find_one("orders", {"quotation_id": quotation_id})
+        existing_record = store.find_one("orders", {"quotation_id": quotation_id})
+        if existing_record and _is_final_confirmation_record(existing_record):
+            return failure(
+                "This historical quotation is linked to a legacy final Order Confirmation and cannot be converted again.",
+                status=409, error="LEGACY_ORDER_CONFIRMATION_EXISTS",
+            )
+        existing = _working_order_for_quotation(store, quotation_id)
         if existing:
+            if not _link_quotation_to_working_order(store, quotation, existing):
+                return failure("The existing Working Order could not be linked to the quotation", status=503, error="QUOTATION_LINK_FAILED")
             existing["idempotent_replay"] = True
-            return success(existing, "Order Confirmation already created")
+            return success(existing, "Working Order already created")
         try:
-            # Allocate the customer-scoped OC sequence only after the
+            # Allocate the customer-scoped Order sequence only after the
             # idempotency check is held under the conversion lock.
-            order_document["order_number"] = _next_oc_number(store, str(quotation_customer_id))
+            order_document["order_number"] = _next_order_number(store, str(quotation_customer_id))
+            order_document["order_id"] = order_document["order_number"]
             order = store.insert_one("orders", order_document)
+            persisted = store.find_one("orders", {"_id": order.get("_id"), "quotation_id": quotation_id})
+            if not persisted:
+                raise RuntimeError("Working Order persistence verification failed")
+            quotation_link = _link_quotation_to_working_order(store, quotation, persisted)
+            if not quotation_link:
+                store.delete_one("orders", {"_id": persisted.get("_id")})
+                return failure(
+                    "The Working Order was not linked to the quotation; the partial Order was rolled back.",
+                    status=503, error="QUOTATION_LINK_FAILED",
+                )
+            order = store.update_one("orders", {"_id": persisted.get("_id")}, {
+                "conversion_state": "COMPLETE", "conversion_completed_at": utcnow(),
+            }) or persisted
         except Exception as exc:
             # Mongo's unique/index errors (or a concurrent worker) should be
             # reported as an idempotent conversion conflict, never retried as
             # a second order creation.
             if exc.__class__.__name__ == "DuplicateKeyError":
-                existing = store.find_one("orders", {"quotation_id": quotation_id})
+                existing = _working_order_for_quotation(store, quotation_id)
                 if existing:
+                    _link_quotation_to_working_order(store, quotation, existing)
                     existing["idempotent_replay"] = True
-                    return success(existing, "Order Confirmation already created")
+                    return success(existing, "Working Order already created")
             raise
     try:
-        order_pdf, order = _ensure_order_pdf(order)
+        open_reminders, _ = store.list("reminders", {"quotation_id": quotation_id, "$or": [{"customer_id": quotation_customer_id}, {"customer_company_id": quotation_customer_id}, {"company_id": quotation_customer_id}], "status": {"$in": ["Pending", "Due", "Overdue", "open"]}}, limit=100)
+        for reminder in open_reminders:
+            store.update_one("reminders", {"_id": reminder["_id"]}, {"status": "Cancelled", "cancelled_at": now, "cancelled_reason": "Quotation converted to working order"})
+        for interval in settings.get("post_order_follow_up_days", [15, 25]):
+            store.insert_one("reminders", {"customer_id": quotation_customer_id, "customer_company_id": quotation_customer_id, "company_id": quotation_customer_id, "order_id": order["_id"], "lead_id": lead.get("_id") if lead else None, "assigned_to": user.get("_id"), "due_date": (now + timedelta(days=int(interval))).date().isoformat(), "status": "Pending", "priority": "normal", "notes": f"Post-order follow-up ({interval} days)", "frequency": "none", "repeat_frequency": "none", "repeat_enabled": False})
+        if lead:
+            store.update_one("leads", {"_id": lead["_id"]}, {"status": "Order Received", "order_id": order["_id"], "follow_up_date": None})
+        store.insert_one("notifications", {
+            "user_id": (current_user() or {}).get("_id"), "customer_id": quotation_customer_id,
+            "type": "order_created", "title": f"Working order {order['order_number']} created",
+            "order_id": order["_id"], "read": False,
+        })
     except Exception:
-        current_app.logger.exception("order confirmation PDF generation failed order_id=%s", order.get("_id"))
-        store.update_one("orders", {"_id": order.get("_id")}, {"document_status": "Failed"})
-        order_pdf = None
-    try:
-        incentive = create_incentive_for_order(store, order, salesperson)
-    except IncentiveConfigurationError as exc:
-        # The product matrix may have changed between preflight and insert.
-        # Remove only this brand-new, unreferenced order/document so no
-        # partially-created financial record remains.
-        store.delete_one("order_documents", {"order_id": order.get("_id")})
-        store.delete_one("orders", {"_id": order.get("_id")})
-        return failure(str(exc), status=422, error="INCENTIVE_CONFIGURATION_REQUIRED", category_id=exc.category_id)
-    except Exception:
-        current_app.logger.exception("incentive creation failed order_id=%s", order.get("_id"))
-        store.delete_one("order_documents", {"order_id": order.get("_id")})
-        store.delete_one("orders", {"_id": order.get("_id")})
-        return failure("Order Confirmation could not be created because its incentive record failed.", status=503, error="INCENTIVE_CREATION_FAILED")
-    audit("incentive.created", "incentive", str(incentive.get("_id")), {
-        "order_id": order.get("_id"), "rate": incentive.get("incentive_percentage_snapshot", 0),
-        "line_count": len(incentive.get("incentive_lines") or []),
-        "rates": [line.get("incentive_rate_snapshot") for line in incentive.get("incentive_lines") or []],
-    })
-    order = store.update_one("orders", {"_id": order.get("_id")}, {
-        "incentive_id": incentive.get("_id"),
-        "incentive_status": incentive.get("status", "PENDING PAYMENT"),
-        "incentive_amount": incentive.get("gross_incentive_amount", 0),
+        current_app.logger.exception(
+            "working Order created but post-conversion follow-up failed quotation_id=%s order_id=%s",
+            quotation_id, order.get("_id"),
+        )
+        order["conversion_warnings"] = ["POST_CONVERSION_FOLLOW_UP_FAILED"]
+    audit("order.create", "order", str(order["_id"]), {"quotation_id": quotation_id, "lifecycle_state": "WORKING"})
+    return success(order, "Working Order created", 201)
+
+
+@bp.post("/orders/<order_id>/materials-ready")
+@superadmin_required
+def mark_materials_ready(order_id: str):
+    """Record the Superadmin dispatch-readiness gate for non-Advance orders."""
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    if not order:
+        return failure("Working Order not found", status=404)
+    if _is_order_locked(order):
+        return failure("Final Order Confirmations are immutable", status=423, error="order_locked")
+    if str(order.get("payment_terms") or "Advance") == "Advance":
+        return failure("Advance orders are released after confirmed payment; materials-ready is for non-advance orders", status=409, error="PAYMENT_GATE_REQUIRED")
+    now = utcnow()
+    updated = store.update_one("orders", {"_id": order_id}, {
+        "materials_ready_for_dispatch": True,
+        "materials_ready_at": now,
+        "materials_ready_by": (current_user() or {}).get("_id"),
+        "lifecycle_state": "READY_FOR_DISPATCH",
+        "order_status": "READY_FOR_DISPATCH",
+        "status": "Ready for Dispatch",
+        "history": [*order.get("history", []), {"status": "READY_FOR_DISPATCH", "at": now, "by": (current_user() or {}).get("_id")}],
     }) or order
-    quotation_history = [*quotation.get("history", []), {"status": "Converted to Order", "at": now, "by": user.get("_id")}]
-    store.update_one("quotations", {"_id": quotation_id}, {"status": "Converted to Order", "history": quotation_history})
-    open_reminders, _ = store.list("reminders", {"quotation_id": quotation_id, "$or": [{"customer_id": quotation_customer_id}, {"customer_company_id": quotation_customer_id}, {"company_id": quotation_customer_id}], "status": {"$in": ["Pending", "Due", "Overdue", "open"]}}, limit=100)
-    for reminder in open_reminders:
-        store.update_one("reminders", {"_id": reminder["_id"]}, {"status": "Cancelled", "cancelled_at": now, "cancelled_reason": "Quotation converted to order"})
-    for interval in settings.get("post_order_follow_up_days", [15, 25]):
-        store.insert_one("reminders", {"customer_id": quotation_customer_id, "customer_company_id": quotation_customer_id, "company_id": quotation_customer_id, "order_id": order["_id"], "lead_id": lead.get("_id") if lead else None, "assigned_to": user.get("_id"), "due_date": (now + timedelta(days=int(interval))).date().isoformat(), "status": "Pending", "priority": "normal", "notes": f"Post-order follow-up ({interval} days)", "frequency": "none", "repeat_frequency": "none", "repeat_enabled": False})
-    if lead:
-        store.update_one("leads", {"_id": lead["_id"]}, {"status": "Order Received", "order_id": order["_id"], "follow_up_date": None})
-    store.insert_one("notifications", {
-        "user_id": (current_user() or {}).get("_id"), "customer_id": quotation_customer_id,
-        "type": "order_created", "title": f"Order {order['order_number']} created",
-        "order_id": order["_id"], "read": False,
-    })
-    audit("order.create", "order", str(order["_id"]), {"quotation_id": quotation_id})
-    if order_pdf is not None:
+    audit("order.materials_ready", "order", order_id, {})
+    return success(updated, "Materials marked ready for dispatch")
+
+
+@bp.post("/orders/<order_id>/finalize")
+@superadmin_required
+def finalize_order(order_id: str):
+    """Create exactly one immutable Order Confirmation from a working Order."""
+    store = current_app.extensions["store"]
+    with _CONVERSION_LOCK:
+        existing = store.find_one("order_confirmations", {"source_order_id": order_id})
+        if existing:
+            return success(existing, "Order Confirmation already finalized")
+        order = store.find_one("orders", {"_id": order_id})
+        if not order:
+            existing = store.find_one("order_confirmations", {"source_order_id": order_id})
+            if existing:
+                return success(existing, "Order Confirmation already finalized")
+            return failure("Working Order not found", status=404)
+        if order.get("final_oc_id"):
+            existing = store.find_one("order_confirmations", {"_id": order.get("final_oc_id")})
+            if existing:
+                return success(existing, "Order Confirmation already finalized")
+        if order.get("finalized") or str(order.get("lifecycle_state") or "").upper() == "FINALIZED":
+            existing = store.find_one("order_confirmations", {"source_order_id": order_id})
+            if existing:
+                return success(existing, "Order Confirmation already finalized")
+            return failure("Order is already finalized", status=409, error="order_already_finalized")
+
+        # Finalization is the last pricing boundary. Re-resolve the stored
+        # configurations against current catalogue/master prices and persist
+        # those authoritative totals before validating payment and incentive.
         try:
-            email_result = _send_order_email(order, "order_confirmation", order_pdf)
-            order = store.update_one("orders", {"_id": order.get("_id")}, {
-                "email_status": "Sent", "email_last_sent_at": utcnow(),
-                "email_diagnostic_id": email_result.get("diagnostic_id"),
-            }) or {**order, "email_status": "Sent"}
-            audit("order.email_sent", "order", str(order.get("_id")), {"diagnostic_id": email_result.get("diagnostic_id")})
+            order = _reprice_working_order(store, order)
+        except PricingUnavailable as exc:
+            return failure(str(exc), status=409, error="PRICING_UNAVAILABLE")
+        except (LookupError, ValueError, TypeError) as exc:
+            return failure(str(exc), status=422, error="ORDER_REPRICE_FAILED")
+
+        payments = _payment_rows_for_record(store, order_id)
+        rollup = payment_rollup(order, payments)
+        terms = str(order.get("payment_terms") or "Advance").strip()
+        if terms == "Advance" and rollup.get("invoice_status") != "PAID":
+            return failure("Advance orders require a confirmed payment before finalization", status=409, error="PAYMENT_CONFIRMATION_REQUIRED", details=rollup)
+        if terms != "Advance" and not order.get("materials_ready_for_dispatch"):
+            return failure("Materials must be marked ready for dispatch before finalization", status=409, error="MATERIALS_READY_REQUIRED")
+
+        salesperson_id = order.get("salesperson_id") or order.get("created_by_user_id")
+        salesperson = store.find_one("users", {"_id": salesperson_id}) or {}
+        final_record = {**order}
+        final_record.pop("_id", None)
+        final_record.pop("_storage_collection", None)
+        now = utcnow()
+        oc_number = _next_oc_number(store, _order_customer_id(order))
+        final_record.update({
+            "order_number": oc_number, "oc_number": oc_number,
+            "order_id": order.get("order_number"), "source_order_number": order.get("order_number"),
+            "record_type": "ORDER_CONFIRMATION", "order_kind": "FINAL", "lifecycle_state": "FINAL",
+            "order_status": "FINALIZED", "document_type": "order_confirmation", "status": "Finalized",
+            "finalized": True, "locked": True, "financial_locked": True,
+            "source_order_id": order_id, "source_quote_id": order.get("quotation_id"),
+            "finalization_state": "FINALIZED",
+            "finalized_at": now, "finalized_by": (current_user() or {}).get("_id"),
+            "payment_status": rollup["payment_status"], "confirmed_received": rollup["confirmed_received"],
+            "total_confirmed_payments": rollup["total_confirmed_payments"], "remaining_balance": rollup["remaining_balance"],
+            "customer_credit": rollup["customer_credit"], "pending_payment_count": rollup["pending_payment_count"],
+            "history": [*order.get("history", []), {"status": "FINAL", "at": now, "by": (current_user() or {}).get("_id")}],
+        })
+        try:
+            validate_incentive_configuration(store, final_record, salesperson)
+        except IncentiveConfigurationError as exc:
+            return failure(str(exc), status=422, error="INCENTIVE_CONFIGURATION_REQUIRED", category_id=exc.category_id)
+        try:
+            final = store.insert_one("order_confirmations", final_record)
         except Exception as exc:
-            current_app.logger.exception("order confirmation email after conversion failed order_id=%s", order.get("_id"))
-            _mark_order_email_failed(order, exc)
-            order = {**order, "email_status": "Failed", "email_error": str(getattr(exc, "error_code", "MESSAGE_SUBMISSION_FAILED"))}
-    order = store.update_one("orders", {"_id": order.get("_id")}, {
-        "conversion_state": "COMPLETE", "conversion_completed_at": utcnow(),
-    }) or order
-    order["incentive_id"] = incentive.get("_id")
-    return success(order, "Order Confirmation created", 201)
+            # The unique source_order_id index is the cross-worker idempotency
+            # boundary. If another worker won the race, return its immutable
+            # snapshot rather than exposing a duplicate/500 to the caller.
+            if exc.__class__.__name__ == "DuplicateKeyError":
+                existing = store.find_one("order_confirmations", {"source_order_id": order_id})
+                if existing:
+                    return success(existing, "Order Confirmation already finalized")
+            raise
+        try:
+            incentive = create_incentive_for_order(store, final, salesperson)
+        except Exception:
+            store.delete_one("order_confirmations", {"_id": final.get("_id")})
+            current_app.logger.exception("final Order Confirmation incentive creation failed order_id=%s", order_id)
+            return failure("Order Confirmation could not be finalized because its incentive record failed.", status=503, error="INCENTIVE_CREATION_FAILED")
+        final = store.update_one("order_confirmations", {"_id": final.get("_id")}, {
+            "incentive_id": incentive.get("_id"), "incentive_status": incentive.get("status", "PENDING PAYMENT"),
+            "incentive_amount": incentive.get("gross_incentive_amount", 0),
+        }) or final
+        try:
+            _, final = _ensure_order_pdf(final)
+        except Exception:
+            current_app.logger.exception("final Order Confirmation PDF generation failed order_id=%s", order_id)
+        updated_order = store.update_one("orders", {"_id": order_id}, {
+            "final_oc_id": final.get("_id"), "finalized": True, "locked": True,
+            "lifecycle_state": "FINALIZED", "order_status": "FINALIZED", "finalized_at": now,
+            "finalized_by": (current_user() or {}).get("_id"), "finalization_id": final.get("_id"),
+        }) or order
+        final["source_order_id"] = updated_order.get("_id")
+        audit("order.finalized", "order_confirmation", str(final.get("_id")), {"source_order_id": order_id})
+        return success(final, "Order Confirmation finalized", 201)
 
 
 @bp.patch("/orders/<order_id>")
@@ -814,12 +1284,154 @@ def update_order(order_id: str):
         return failure("Order not found", status=404)
     if not _can_access_order_record(order):
         return failure("Customer access denied", status=403)
-    if order.get("financial_locked") and (current_user() or {}).get("role_id") != "superadmin":
-        return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")
+    if _is_order_locked(order):
+        return failure("Final Order Confirmations are immutable", status=423, error="order_locked")
     payload = request.get_json(silent=True) or {}
-    if payload.get("status") not in STATUSES:
-        return failure("Invalid order status", status=422)
-    history = [*order.get("history", []), {"status": payload["status"], "at": utcnow(), "by": (current_user() or {}).get("_id")}]
-    updated = store.update_one("orders", {"_id": order_id}, {"status": payload["status"], "notes": payload.get("notes", order.get("notes", "")), "history": history})
-    audit("order.update", "order", order_id, {"status": payload["status"]})
+    changes: dict = {}
+    # Pricing and line values are intentionally not accepted through this
+    # generic metadata endpoint.  They must go through the item endpoints,
+    # which resolve the product and price server-side before recalculating the
+    # order totals.  This prevents a caller from marking an order paid or
+    # changing its amount by submitting client-calculated totals.
+    pricing_fields = {
+        "lines", "products_snapshot", "totals", "eur_totals", "final_totals", "final_quote",
+        "order_amount", "currency", "master_currency", "exchange_rate", "exchange_rate_meta",
+    }
+    if pricing_fields.intersection(payload):
+        return failure(
+            "Order pricing must be changed through the working-order item endpoints.",
+            status=422, error="ORDER_PRICING_UPDATE_REQUIRED",
+        )
+    editable_fields = {
+        "payment_terms", "oc_date", "billing_address_snapshot", "shipping_address_id",
+        "shipping_address_snapshot", "notes", "to", "cc", "bcc", "additional_recipients",
+    }
+    for field in editable_fields:
+        if field in payload:
+            changes[field] = payload[field]
+    if "payment_terms" in changes:
+        try:
+            changes["payment_terms"] = _validated_payment_terms(changes["payment_terms"], order.get("payment_terms"))
+        except ValueError as exc:
+            return failure(str(exc), status=422, error="INVALID_ORDER_CONFIGURATION")
+    if "status" in payload:
+        requested_status = str(payload.get("status") or "").strip().upper().replace(" ", "_")
+        current_state = str(order.get("lifecycle_state") or "WORKING").upper().replace(" ", "_")
+        if requested_status == "CANCELLED":
+            if current_state in {"FINAL", "FINALIZED"}:
+                return failure("Final Order Confirmations are immutable", status=423, error="order_locked")
+            changes.update({"status": "Cancelled", "order_status": "CANCELLED", "lifecycle_state": "CANCELLED"})
+        elif requested_status == current_state:
+            return failure("The Order is already in that state", status=409, error="INVALID_ORDER_TRANSITION")
+        else:
+            return failure(
+                "Payment and fulfilment states are advanced by their dedicated server workflows.",
+                status=422, error="INVALID_ORDER_TRANSITION",
+                details={"current": current_state, "requested": requested_status, "allowed": sorted(WORKING_STATES)},
+            )
+    if not changes:
+        return failure("No editable order fields were supplied", status=422, error="NO_ORDER_CHANGES")
+    history = list(order.get("history", []))
+    if "status" in changes:
+        history.append({"status": changes["status"], "at": utcnow(), "by": (current_user() or {}).get("_id")})
+        changes["history"] = history
+    updated = store.update_one("orders", {"_id": order_id}, changes)
+    # Payment rollup remains authoritative after an order amount or line edit.
+    if updated:
+        from app.finance.service import sync_order_payment_state
+        updated = sync_order_payment_state(store, order_id) or updated
+    audit("order.update", "order", order_id, {"fields": sorted(changes)})
     return success(updated, "Order updated")
+
+
+def _load_editable_order(store, order_id: str):
+    order = store.find_one("orders", {"_id": order_id})
+    if not order:
+        return None, failure("Working Order not found", status=404)
+    if not _can_access_order_record(order):
+        return None, failure("Customer access denied", status=403)
+    if _is_order_locked(order):
+        return None, failure("Final Order Confirmations are immutable", status=423, error="order_locked")
+    return order, None
+
+
+def _calculate_order_line(payload: dict, order: dict):
+    """Use the central calculator resolver for every working-order line."""
+    from app.pricing.routes import _calculate
+
+    request_payload = dict(payload)
+    request_payload["customer_id"] = _order_customer_id(order)
+    return _calculate(request_payload)
+
+
+@bp.post("/orders/<order_id>/items")
+@permission_required("orders.update")
+def add_order_item(order_id: str):
+    store = current_app.extensions["store"]
+    order, error_response = _load_editable_order(store, order_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    try:
+        _customer, _product, line, rate_meta = _calculate_order_line(payload, order)
+    except PermissionError as exc:
+        return failure(str(exc), status=403)
+    except LookupError as exc:
+        return failure(str(exc), status=404)
+    except PricingUnavailable as exc:
+        return failure(str(exc), status=409)
+    except (ValueError, TypeError) as exc:
+        return failure(str(exc), status=422)
+    item_id = str(payload.get("item_id") or uuid4().hex)
+    line = {**line, "item_id": item_id, "line_id": item_id, "exchange_rate_meta": rate_meta}
+    lines = [*_working_order_lines(order), line]
+    updated = _recalculate_working_order(store, order, lines)
+    audit("order.item.create", "order", order_id, {"item_id": item_id, "product_id": line.get("product_id")})
+    return success({"item": line, "order": updated}, "Item added to working Order", 201)
+
+
+@bp.patch("/orders/<order_id>/items/<item_id>")
+@permission_required("orders.update")
+def update_order_item(order_id: str, item_id: str):
+    store = current_app.extensions["store"]
+    order, error_response = _load_editable_order(store, order_id)
+    if error_response:
+        return error_response
+    payload = request.get_json(silent=True) or {}
+    lines = _working_order_lines(order)
+    index = next((position for position, line in enumerate(lines) if str(line.get("item_id")) == str(item_id)), None)
+    if index is None:
+        return failure("Order item not found", status=404)
+    merged = {**lines[index], **payload, "item_id": str(item_id), "line_id": str(item_id)}
+    try:
+        _customer, _product, line, rate_meta = _calculate_order_line(merged, order)
+    except PermissionError as exc:
+        return failure(str(exc), status=403)
+    except LookupError as exc:
+        return failure(str(exc), status=404)
+    except PricingUnavailable as exc:
+        return failure(str(exc), status=409)
+    except (ValueError, TypeError) as exc:
+        return failure(str(exc), status=422)
+    lines[index] = {**line, "item_id": str(item_id), "line_id": str(item_id), "exchange_rate_meta": rate_meta}
+    updated = _recalculate_working_order(store, order, lines)
+    audit("order.item.update", "order", order_id, {"item_id": str(item_id), "product_id": line.get("product_id")})
+    return success({"item": lines[index], "order": updated}, "Working Order item updated")
+
+
+@bp.delete("/orders/<order_id>/items/<item_id>")
+@permission_required("orders.update")
+def delete_order_item(order_id: str, item_id: str):
+    store = current_app.extensions["store"]
+    order, error_response = _load_editable_order(store, order_id)
+    if error_response:
+        return error_response
+    lines = _working_order_lines(order)
+    remaining = [line for line in lines if str(line.get("item_id")) != str(item_id)]
+    if len(remaining) == len(lines):
+        return failure("Order item not found", status=404)
+    if not remaining:
+        return failure("A working Order must contain at least one item", status=422, error="ORDER_REQUIRES_ITEM")
+    updated = _recalculate_working_order(store, order, remaining)
+    audit("order.item.delete", "order", order_id, {"item_id": str(item_id)})
+    return success(updated, "Working Order item removed")

@@ -41,11 +41,13 @@ def test_ensure_utc_normalizes_naive_and_aware_values():
     assert ensure_utc(None) is None
 
 
-@pytest.mark.parametrize("resend_after", [
-    datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=1),
-    datetime.now(timezone.utc) + timedelta(minutes=1),
-])
-def test_active_naive_or_aware_resend_after_preserves_cooldown(resend_after):
+@pytest.mark.parametrize("timezone_aware", [False, True])
+def test_active_naive_or_aware_resend_after_preserves_cooldown(timezone_aware):
+    # Build the deadline when the test executes. Creating it at collection
+    # time makes this test expire before it runs in the full suite.
+    resend_after = datetime.now(timezone.utc) + timedelta(minutes=1)
+    if not timezone_aware:
+        resend_after = resend_after.replace(tzinfo=None)
     service, provider, store = otp_service()
     store.insert_one("otp_challenges", challenge(resend_after=resend_after))
 

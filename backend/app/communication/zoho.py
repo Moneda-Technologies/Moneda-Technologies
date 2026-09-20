@@ -808,7 +808,8 @@ class ZohoMailApiProvider(EmailProvider):
     def send(self, *, to: list[str], subject: str, html: str,
              attachments: list[dict[str, Any]] | None = None, from_address: str | None = None,
              cc: list[str] | None = None, bcc: list[str] | None = None,
-             from_name: str | None = None, request_id: str | None = None) -> dict[str, Any]:
+             from_name: str | None = None, reply_to: str | None = None,
+             request_id: str | None = None) -> dict[str, Any]:
         diagnostic_id = email_diagnostic_id()
         trace_id = request_id or "email-untracked"
         checks: list[dict[str, str]] = []
@@ -878,6 +879,8 @@ class ZohoMailApiProvider(EmailProvider):
                 payload["ccAddress"] = ",".join(cc)
             if bcc:
                 payload["bccAddress"] = ",".join(bcc)
+            if reply_to:
+                payload["replyTo"] = reply_to
             if attachments:
                 payload["attachments"] = [
                     self._upload_attachment(token, account_id, item, trace_id, diagnostic_id)
@@ -910,7 +913,7 @@ class ZohoMailApiProvider(EmailProvider):
                 "id": f"zoho-{provider_id}", "diagnostic_id": diagnostic_id,
                 "stage": "message_submission", "provider": "zoho_mail_api",
                 "from": requested_sender, "from_name": sender_name, "to": to,
-                "cc": cc or [], "bcc": bcc or [], "subject": subject, "checks": checks,
+                "cc": cc or [], "bcc": bcc or [], "reply_to": reply_to, "subject": subject, "checks": checks,
             }
         except ZohoIntegrationError as exc:
             logger.error(

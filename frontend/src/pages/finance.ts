@@ -151,7 +151,7 @@ function bankingPaymentId(value: BankingRecord, fallbackIndex = 0): string {
 }
 
 async function bankingContexts(): Promise<{ customers: BankingRecord[]; orders: BankingRecord[] }> {
-  const results = await Promise.all([customerCompanyApi.list(), orderApi.list(undefined, 100)]);
+  const results = await Promise.all([customerCompanyApi.list(), orderApi.listConfirmations(undefined, 100)]);
   return { customers: results[0].items as unknown as BankingRecord[], orders: results[1].items as BankingRecord[] };
 }
 
@@ -438,23 +438,17 @@ export async function paymentsPage(): Promise<HTMLElement> {
     if (routeQuery.get("order_id")) paymentQuery.set("order_id", String(routeQuery.get("order_id")));
     const [paymentResult, orderResult] = await Promise.all([
       financeApi.payments(paymentQuery.toString()),
-      orderApi.list(undefined, 100),
+      orderApi.listConfirmations(undefined, 100),
     ]);
     const items = paymentResult.items as BankingRecord[];
     const orders = orderResult.items as BankingRecord[];
     const contexts = { customers: (await customerCompanyApi.list()).items as unknown as BankingRecord[], orders };
-    const confirmedItems = items.filter((item) => bankingStatus(item).toUpperCase() === "CONFIRMED");
-    const awaitingItems = items.filter(isAwaitingBankReview);
-    const received = confirmedItems.reduce((sum, item) => sum + Number(item.amount || item.payment_amount || 0), 0);
-    const orderRollups = new Map<string, { invoice: number; confirmed: number }>();
-    orders.forEach((order) => orderRollups.set(String(order._id), { invoice: bankingAmount(order), confirmed: Number(order.confirmed_received || 0) }));
-    const outstanding = [...orderRollups.values()].reduce((sum, row) => sum + Math.max(row.invoice - row.confirmed, 0), 0);
-    const credits = [...orderRollups.values()].reduce((sum, row) => sum + Math.max(row.confirmed - row.invoice, 0), 0);
+    const summary = paymentResult.summary;
     const cards = [
-      ["Total payments", String(items.length), "landmark", "Payment records"],
-      ["Confirmed received", formatMoney(received, "EUR"), "circle-check", "Confirmed receipts only"],
-      ["Awaiting confirmation", String(awaitingItems.length), "clock-3", "Superadmin review queue"],
-      ["Outstanding", formatMoney(outstanding, "EUR"), "wallet-cards", `Customer credits ${formatMoney(credits, "EUR")}`],
+      ["Total payments", String(summary.total_payments), "landmark", "Payment records"],
+      ["Confirmed received", formatMoney(summary.confirmed_received, "EUR"), "circle-check", "Confirmed receipts only"],
+      ["Awaiting confirmation", String(summary.awaiting_confirmation), "clock-3", "Superadmin review queue"],
+      ["Outstanding", formatMoney(summary.outstanding, "EUR"), "wallet-cards", `Customer credits ${formatMoney(summary.customer_credit, "EUR")}`],
     ];
     const customerFilters = Array.from(new Map<string, { id: string; name: string }>(items.map((item): [string, { id: string; name: string }] => {
       const id = String(item.customer_id || "");
@@ -977,7 +971,8 @@ export async function customerIncentivesPage(): Promise<HTMLElement> {
   return page;
 }
 
-export async function legacyCreditNotesPage(): Promise<HTMLElement> {
+/* Obsolete pre-workflow Credit Note implementations retained only in history.
+Legacy implementation one:
   const page = pageScaffold("Sales", "Credit Notes", "Credit Notes linked to Order Confirmations and incentive adjustments.");
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(4);
   try {
@@ -988,7 +983,7 @@ export async function legacyCreditNotesPage(): Promise<HTMLElement> {
   refreshIcons(page); return page;
 }
 
-export async function creditNotesPage(): Promise<HTMLElement> {
+Legacy implementation two:
   const page = pageScaffold("Sales", "Credit Notes", "Credit Notes linked to Order Confirmations and incentive adjustments.");
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(4);
@@ -1021,6 +1016,66 @@ export async function creditNotesPage(): Promise<HTMLElement> {
   refreshIcons(page); return page;
 }
 
+*/
+export async function creditNotesPage(): Promise<HTMLElement> {
+  const page = pageScaffold("Finance", "Credit Notes", "Create immutable adjustments against authorized Order Confirmations using historical snapshots.");
+  const body = page.querySelector<HTMLElement>(".page-body")!;
+  body.innerHTML = skeleton(4);
+  try {
+    const [notes, confirmations, customers] = await Promise.all([financeApi.creditNotes(), orderApi.listConfirmations(undefined, 500), customerCompanyApi.list()]);
+    const today = new Date().toISOString().slice(0, 10);
+    body.innerHTML = `<form class="panel stack-form credit-note-workflow" id="credit-note-workflow"><div class="section-title"><div><span class="eyebrow">Create Credit Note</span><h2>Select the affected transaction</h2></div></div><div class="form-grid"><label>Customer<select name="customer_id" required><option value="">Select customer</option>${customers.items.map((customer) => `<option value="${escapeHtml(String(customer._id))}">${escapeHtml(String(customer.name ?? customer.company_name ?? customer._id))}</option>`).join("")}</select></label><label>Order Confirmation<select name="order_id" required disabled><option value="">Select customer first</option></select></label><label>Credit Note date<input name="credit_note_date" type="date" value="${today}" required></label><label>Reason<input name="reason" maxlength="2000" required></label></div><div data-credit-note-oc>${emptyState("file-check-2", "Select an Order Confirmation", "OC details and historical product snapshots will appear here.")}</div><div class="credit-note-lines" data-credit-note-lines></div><div class="credit-note-impact" data-credit-note-impact hidden><span>Credit total <strong data-credit-total>€0.00</strong></span><span>Historical incentive adjustment <strong data-credit-incentive>€0.00</strong></span></div><small class="field-error" data-credit-note-error></small><button class="button button-primary" type="submit" disabled>Create Credit Note</button></form>${notes.items.length ? `<div class="data-table panel"><table><thead><tr><th>Credit Note</th><th>Order Confirmation</th><th>Customer</th><th>Amount</th><th>Incentive deduction</th><th>Date</th><th>Status</th></tr></thead><tbody>${notes.items.map((item) => `<tr><td><strong>${escapeHtml(String(item.credit_note_number ?? item._id))}</strong></td><td>${escapeHtml(String(item.order_number ?? item.order_id ?? item.oc_id ?? "—"))}</td><td>${escapeHtml(String(item.customer_name ?? "—"))}</td><td class="money">${formatMoney(Number(item.amount ?? 0), "EUR")}</td><td class="money">${formatMoney(Number(item.incentive_deduction_amount ?? 0), "EUR")}</td><td>${formatDate(String(item.credit_note_date ?? item.created_at ?? ""))}</td><td>${statusBadge(String(item.status ?? ""))}</td></tr>`).join("")}</tbody></table></div>` : emptyState("file-minus", "No Credit Notes", "Approved Credit Notes will be linked to their Order Confirmation.")}`;
+    const form = body.querySelector<HTMLFormElement>("#credit-note-workflow")!;
+    const customerSelect = form.elements.namedItem("customer_id") as HTMLSelectElement;
+    const orderSelect = form.elements.namedItem("order_id") as HTMLSelectElement;
+    const detail = body.querySelector<HTMLElement>("[data-credit-note-oc]")!;
+    const lineContainer = body.querySelector<HTMLElement>("[data-credit-note-lines]")!;
+    const submit = form.querySelector<HTMLButtonElement>('[type="submit"]')!;
+    const orderCustomerId = (order: Record<string, unknown>) => String(order.customer_id ?? order.customer_company_id ?? order.company_id ?? "");
+    const orderCustomerName = (order: Record<string, unknown>) => { const snapshot = (order.customer_snapshot as Record<string, unknown> | undefined) ?? (order.customer_company_snapshot as Record<string, unknown> | undefined) ?? {}; return String(snapshot.company_name ?? snapshot.name ?? orderCustomerId(order)); };
+    customerSelect.addEventListener("change", () => {
+      const options = confirmations.items.filter((order) => orderCustomerId(order) === customerSelect.value);
+      orderSelect.innerHTML = `<option value="">Select Order Confirmation</option>${options.map((order) => `<option value="${escapeHtml(String(order._id))}">${escapeHtml(String(order.order_number ?? order.oc_number ?? order._id))} · ${formatMoney(Number(order.order_amount ?? (order.totals as Record<string, unknown> | undefined)?.grand_total ?? 0), "EUR")}</option>`).join("")}`;
+      orderSelect.disabled = !options.length;
+      detail.innerHTML = options.length ? '<p class="muted">Select an Order Confirmation to load its immutable snapshot.</p>' : '<div class="notice compact">No authorized Order Confirmations exist for this customer.</div>';
+      lineContainer.innerHTML = ""; submit.disabled = true;
+    });
+    const updateImpact = () => {
+      const inputs = [...lineContainer.querySelectorAll<HTMLInputElement>("[data-credit-line]")];
+      const total = inputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
+      const deduction = inputs.reduce((sum, input) => sum + Number(input.value || 0) * Number(input.dataset.rate || 0) / 100, 0);
+      const impact = body.querySelector<HTMLElement>("[data-credit-note-impact]"); if (impact) impact.hidden = inputs.length === 0;
+      body.querySelector<HTMLElement>("[data-credit-total]")!.textContent = formatMoney(total, "EUR");
+      body.querySelector<HTMLElement>("[data-credit-incentive]")!.textContent = formatMoney(deduction, "EUR");
+      submit.disabled = total <= 0;
+    };
+    orderSelect.addEventListener("change", async () => {
+      const orderId = orderSelect.value;
+      if (!orderId) { lineContainer.innerHTML = ""; submit.disabled = true; return; }
+      try {
+        const [order, incentiveResult] = await Promise.all([orderApi.get(orderId), financeApi.incentives(`order_id=${encodeURIComponent(orderId)}`)]);
+        const incentive = incentiveResult.items[0] ?? {};
+        const lines = Array.isArray(incentive.incentive_lines) ? incentive.incentive_lines as Record<string, unknown>[] : [];
+        detail.innerHTML = `<div class="detail-grid"><div><span>OC number</span><strong>${escapeHtml(String(order.order_number ?? order.oc_number ?? order._id))}</strong></div><div><span>Customer</span><strong>${escapeHtml(orderCustomerName(order))}</strong></div><div><span>OC date</span><strong>${formatDate(String(order.finalized_at ?? order.created_at ?? ""))}</strong></div><div><span>Total</span><strong>${formatMoney(Number(order.order_amount ?? (order.totals as Record<string, unknown> | undefined)?.grand_total ?? 0), "EUR")}</strong></div><div><span>Currency</span><strong>${escapeHtml(String(order.currency ?? "EUR"))}</strong></div><div><span>Status</span><strong>${escapeHtml(String(order.status ?? "Finalized"))}</strong></div></div>`;
+        lineContainer.innerHTML = lines.length ? `<div class="section-title"><div><span class="eyebrow">Historical product snapshots</span><h2>Select affected lines</h2></div></div>${lines.map((line, index) => `<label class="credit-note-line"><input type="checkbox" data-credit-toggle><span><strong>${escapeHtml(String(line.product_name ?? line.product_id ?? `Product ${index + 1}`))}</strong><small>${escapeHtml(String(line.category_name ?? line.category_id ?? "Category"))} · Historical incentive ${Number(line.incentive_rate_snapshot ?? 0).toFixed(2)}%</small></span><input data-credit-line="${escapeHtml(String(line.oc_line_id ?? line.product_id ?? index))}" data-rate="${Number(line.incentive_rate_snapshot ?? 0)}" type="number" min="0" step="0.01" placeholder="Credit EUR" disabled></label>`).join("")}` : '<div class="notice warning">This OC has no product-level historical incentive snapshots, so a line-level Credit Note cannot be created safely.</div>';
+        lineContainer.querySelectorAll<HTMLInputElement>("[data-credit-toggle]").forEach((toggle) => toggle.addEventListener("change", () => { const amount = toggle.closest("label")?.querySelector<HTMLInputElement>("[data-credit-line]"); if (amount) { amount.disabled = !toggle.checked; if (!toggle.checked) amount.value = ""; } updateImpact(); }));
+        lineContainer.querySelectorAll<HTMLInputElement>("[data-credit-line]").forEach((input) => input.addEventListener("input", updateImpact));
+        updateImpact();
+      } catch (error) { detail.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Order Confirmation not found or not accessible")}</div>`; lineContainer.innerHTML = ""; submit.disabled = true; }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault(); const data = new FormData(form);
+      const lines = [...body.querySelectorAll<HTMLInputElement>("[data-credit-line]:not(:disabled)")].map((input) => ({ oc_line_id: input.dataset.creditLine, amount: Number(input.value || 0) })).filter((line) => line.amount > 0);
+      const errorNode = body.querySelector<HTMLElement>("[data-credit-note-error]");
+      if (!lines.length) { if (errorNode) errorNode.textContent = "Select at least one product line and enter a positive credit amount."; return; }
+      submit.disabled = true; if (errorNode) errorNode.textContent = "";
+      try { await financeApi.createCreditNote({ order_id: data.get("order_id"), lines, credit_note_date: data.get("credit_note_date"), reason: data.get("reason") }); toast("Credit Note created", "info"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/credit-notes" })); }
+      catch (error) { if (errorNode) errorNode.textContent = error instanceof Error ? error.message : "Credit Note could not be created"; submit.disabled = false; }
+    });
+  } catch (error) { body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Credit Notes unavailable")}</div>`; }
+  refreshIcons(page); return page;
+}
+
 /**
  * Customer credit is derived from confirmed-payment rollups on authorized
  * Order Confirmations. It intentionally has no separate writable ledger.
@@ -1030,7 +1085,7 @@ export async function customerCreditsPage(): Promise<HTMLElement> {
   const body = page.querySelector<HTMLElement>(".page-body")!;
   body.innerHTML = skeleton(3);
   try {
-    const result = await orderApi.list(undefined, 500);
+    const result = await orderApi.listConfirmations(undefined, 500);
     const credits = new Map<string, { name: string; amount: number; orders: number }>();
     (result.items as Record<string, unknown>[]).forEach((order) => {
       const amount = Number(order.customer_credit ?? 0);

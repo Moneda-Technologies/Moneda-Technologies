@@ -10,19 +10,24 @@ DEFAULT_PRICE_LISTS: tuple[dict[str, Any], ...] = (
         "_id": "blankets", "display_name": "Blankets", "description": "Blanket commercial price list",
         "category": "blankets", "classification": "GLOBAL", "client_type": None,
         "document_url": "https://workdrive.zohoexternal.in/embed/dgl7a5a1296292fb94375948159d0621cc4af?toolbar=false&appearance=light&themecolor=green",
-        "active": True, "sort_order": 10, "metadata": {"title": "Blankets Price List"},
+        "active": True, "sort_order": 10,
+        "metadata": {"title": "Blankets Price List", "page_orientation": "portrait"},
     },
     {
         "_id": "underpacking-dealer", "display_name": "Underpacking — Dealer", "description": "Dealer underpacking price list",
         "category": "mpacks", "classification": "DEALER", "client_type": "DEALER",
         "document_url": "https://workdrive.zohoexternal.in/embed/dgl7a89ce96e61ed145e3a7c154116977cde4?toolbar=false&appearance=light&themecolor=green",
-        "active": True, "sort_order": 20, "metadata": {"title": "Underpacking Dealer Price List"},
+        "pdf_path": "data/price_lists/Dealer.pdf", "pdf_filename": "Moneda-Dealer-Price-List.pdf",
+        "active": True, "sort_order": 20,
+        "metadata": {"title": "Underpacking Dealer Price List", "page_orientation": "landscape"},
     },
     {
         "_id": "underpacking-distributor", "display_name": "Underpacking — Distributor", "description": "Distributor underpacking price list",
         "category": "mpacks", "classification": "DISTRIBUTOR", "client_type": "WHOLESALER",
         "document_url": "https://workdrive.zohoexternal.in/embed/dgl7a43f6bd264f9e4a5f80d8b9d2242d7d25?toolbar=false&appearance=light&themecolor=green",
-        "active": True, "sort_order": 30, "metadata": {"title": "Underpacking Distributor Price List"},
+        "pdf_path": "data/price_lists/Distributor.pdf", "pdf_filename": "Moneda-Distributor-Price-List.pdf",
+        "active": True, "sort_order": 30,
+        "metadata": {"title": "Underpacking Distributor Price List", "page_orientation": "landscape"},
     },
 )
 
@@ -32,7 +37,11 @@ def list_price_lists(store: Any, *, active_only: bool = True) -> list[dict[str, 
     merged = {row["_id"]: {**row} for row in DEFAULT_PRICE_LISTS}
     for row in persisted:
         if row.get("_id"):
-            merged[str(row["_id"])] = {**merged.get(str(row["_id"]), {}), **row}
+            base = merged.get(str(row["_id"]), {})
+            merged[str(row["_id"])] = {
+                **base, **row,
+                "metadata": {**(base.get("metadata") or {}), **(row.get("metadata") or {})},
+            }
     rows = list(merged.values())
     if active_only:
         rows = [row for row in rows if row.get("active", True)]

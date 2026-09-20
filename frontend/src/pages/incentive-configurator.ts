@@ -28,9 +28,90 @@ interface ConfiguratorData {
   users: Record<string, unknown>[];
   managers: Record<string, unknown>[];
   rule_groups?: IncentiveRuleGroup[];
+  maximum_rules?: Record<string, unknown>[];
+  individual_configurations?: Record<string, unknown>[];
 }
 
-const rateOptions = (selected: number | null | undefined) => Array.from({ length: 13 }, (_, i) => i / 2).map((rate) => `<option value="${rate}" ${Number(selected ?? 0) === rate ? "selected" : ""}>${rate}%</option>`).join("");
+const rateValue = (selected: number | null | undefined) => Number.isFinite(Number(selected)) ? String(Number(selected)) : "0";
+
+function incentiveStatusLabel(value: unknown): string {
+  return String(value || "INHERIT").trim().toUpperCase().replaceAll("_", " ");
+}
+
+function incentiveScopeLabel(row: Record<string, unknown>): string {
+  const scope = String(row.scope || "person").toLowerCase();
+  const dimensions = [
+    scope === "customer" && row.customer_id ? `Customer ${row.customer_id}` : "",
+    scope === "product" && row.product_id ? `Product ${row.product_id}` : "",
+    scope === "category" && row.category_id ? `Category ${row.category_id}` : "",
+    scope === "client_type" && row.client_type ? customerTypeLabel(String(row.client_type)) : "",
+  ].filter(Boolean);
+  return dimensions.length ? `${scope.replaceAll("_", " ")} · ${dimensions.join(" · ")}` : scope.replaceAll("_", " ");
+}
+
+function incentiveRateText(value: unknown, status: unknown): string {
+  const normalized = String(status || "").toUpperCase();
+  if (normalized !== "ENABLED" || value === null || value === undefined || value === "") return incentiveStatusLabel(status);
+  const rate = Number(value);
+  return Number.isFinite(rate) ? `${rate}%` : "Not configured";
+}
+
+function openIndividualEditor(configuration: Record<string, unknown>, onSaved: () => Promise<void>): void {
+  const userId = String(configuration.user_id || configuration.recipient_user_id || "");
+  if (!userId) {
+    toast("This incentive configuration is missing its user reference");
+    return;
+  }
+  const status = String(configuration.status || "INHERIT").toUpperCase();
+  const content = document.createElement("div");
+  const maximum = configuration.maximum_rate === null || configuration.maximum_rate === undefined ? null : Number(configuration.maximum_rate);
+  content.innerHTML = `<form class="incentive-config-form" data-individual-form>
+    <p class="form-hint">Changes apply to future Order Confirmations only. Historical incentive snapshots are preserved.</p>
+    <div class="incentive-edit-context"><label>User<span class="field-readonly">${escapeHtml(String(configuration.user_name || configuration.user_email || userId))}</span></label><label>Configuration scope<span class="field-readonly">${escapeHtml(incentiveScopeLabel(configuration))}</span></label></div>
+    <label>Status<select id="individual-incentive-status" name="status"><option value="INHERIT" ${status === "INHERIT" ? "selected" : ""}>Inherit default</option><option value="ENABLED" ${status === "ENABLED" ? "selected" : ""}>Enabled</option><option value="DISABLED" ${status === "DISABLED" ? "selected" : ""}>Disabled</option><option value="NOT_CONFIGURED" ${status === "NOT_CONFIGURED" ? "selected" : ""}>Not configured</option></select></label>
+    <label>Individual rate (%)<input id="individual-incentive-rate" name="rate" type="number" min="0" max="100" step="0.5" value="${rateValue(configuration.rate as number | null | undefined)}" ${status !== "ENABLED" ? "disabled" : ""}></label>
+    <small class="form-hint">Maximum allowed for this configuration: ${maximum === null || !Number.isFinite(maximum) ? "No ceiling configured" : `${maximum}%`}. The server validates the ceiling.</small>
+    <small class="field-error" data-individual-error aria-live="polite"></small><div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary">Save Changes</button></div>
+  </form>`;
+  const dialog = openModal("Edit Individual Incentive", content, "wide");
+  const form = content.querySelector<HTMLFormElement>("[data-individual-form]");
+  const statusField = content.querySelector<HTMLSelectElement>('[name="status"]');
+  const rateField = content.querySelector<HTMLInputElement>('[name="rate"]');
+  statusField?.addEventListener("change", () => {
+    if (rateField) rateField.disabled = statusField.value !== "ENABLED";
+  });
+  content.querySelector<HTMLButtonElement>("[data-cancel]")?.addEventListener("click", () => dialog.close());
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const error = content.querySelector<HTMLElement>("[data-individual-error]");
+    if (submit) submit.disabled = true;
+    try {
+      const nextStatus = statusField?.value || "INHERIT";
+      const payload = {
+        configurations: [{
+          scope: configuration.scope || "person",
+          allocation_type: configuration.allocation_type || "creator",
+          customer_id: configuration.customer_id || null,
+          product_id: configuration.product_id || null,
+          category_id: configuration.category_id || null,
+          client_type: configuration.client_type || "*",
+          status: nextStatus,
+          rate: nextStatus === "ENABLED" ? Number(rateField?.value || 0) : null,
+        }],
+        replace: false,
+      };
+      await adminApi.updateUserIncentiveConfiguration(userId, payload);
+      dialog.close();
+      toast("Individual incentive saved");
+      await onSaved();
+    } catch (reason) {
+      if (error) error.textContent = reason instanceof Error ? reason.message : "Individual incentive could not be saved";
+      if (submit) submit.disabled = false;
+    }
+  });
+  refreshIcons(dialog);
+}
 
 function groupFor(data: ConfiguratorData, type: BusinessRuleType, customerType: string): IncentiveRuleGroup | undefined {
   const allocation = type === "manager_team" ? "manager_override" : "creator";
@@ -76,7 +157,7 @@ function openGroupEditor(data: ConfiguratorData, group: IncentiveRuleGroup): voi
   const renderSelectedGroup = (next: IncentiveRuleGroup) => {
     selectedGroup = next;
     const fields = content.querySelector<HTMLElement>(".incentive-product-rate-fields");
-    if (fields) fields.innerHTML = next.product_rates.map((product) => `<label>${escapeHtml(product.product_type_name)}<select name="rate:${escapeHtml(product.product_type_id)}">${rateOptions(product.rate)}</select></label>`).join("");
+    if (fields) fields.innerHTML = next.product_rates.map((product) => `<label>${escapeHtml(product.product_type_name)} (%)<input type="number" min="0" max="100" step="0.5" name="rate:${escapeHtml(product.product_type_id)}" value="${rateValue(product.rate)}"></label>`).join("");
     const empty = content.querySelector<HTMLElement>("[data-incentive-empty]");
     if (empty) empty.hidden = !next.id.startsWith("default:");
     const status = content.querySelector<HTMLSelectElement>('select[name="status"]');
@@ -85,7 +166,7 @@ function openGroupEditor(data: ConfiguratorData, group: IncentiveRuleGroup): voi
   const form = content.querySelector<HTMLFormElement>("[data-incentive-group-form]");
   const saveButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
   let baseline = "";
-  const formState = () => JSON.stringify(Array.from(form?.querySelectorAll<HTMLSelectElement>("select") ?? []).map((field) => [field.name, field.value]));
+  const formState = () => JSON.stringify(Array.from(form?.querySelectorAll<HTMLInputElement | HTMLSelectElement>("select, input") ?? []).map((field) => [field.name, field.value]));
   const resetBaseline = () => {
     baseline = formState();
     if (saveButton) saveButton.disabled = true;
@@ -131,22 +212,122 @@ function openGroupEditor(data: ConfiguratorData, group: IncentiveRuleGroup): voi
   refreshIcons(dialog);
 }
 
+function openAddIncentiveRule(data: ConfiguratorData, onSaved: () => Promise<void>): void {
+  const content = document.createElement("div");
+  const people = [...data.users, ...data.managers];
+  const personOptions = people.map((person) => `<option value="${escapeHtml(String(person._id ?? ""))}" data-role="${escapeHtml(String(person.role_id ?? ""))}">${escapeHtml(String(person.name ?? person.email ?? person._id ?? "Employee"))} · ${escapeHtml(String(person.role_id ?? "user").replaceAll("_", " "))}</option>`).join("");
+  content.innerHTML = `<form class="stack-form incentive-rule-create-form" data-add-incentive-rule>
+    <p class="form-hint">Rules apply only to future Order Confirmations. No matching rule means a 0% incentive.</p>
+    <div class="form-grid">
+      <label>Recipient type<select name="recipient_type"><option value="person">Specific employee</option><option value="role">Role / default</option></select></label>
+      <label data-person-field>Specific employee<select name="user_id"><option value="">Select employee</option>${personOptions}</select></label>
+      <label data-role-field hidden>Recipient role<select name="recipient_role"><option value="user">User</option><option value="manager_sales_admin">Manager</option><option value="admin">Admin</option><option value="*">All eligible roles</option></select></label>
+      <label>Allocation<select name="allocation_type"><option value="creator">OC creator</option><option value="manager_override">Creator's manager</option></select></label>
+      <label>Client type<select name="client_type"><option value="*">All client types</option>${data.customer_types.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(customerTypeLabel(type))}</option>`).join("")}</select></label>
+      <label>Category<select name="category_id"><option value="*">All categories</option>${data.product_types.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
+      <label>Eligible<select name="eligible"><option value="true">Yes</option><option value="false">No (0%)</option></select></label>
+      <label>Rate type<select name="rate_type"><option value="percentage">Percentage</option></select></label>
+      <label>Rate (%)<input name="rate" type="number" min="0" max="100" step="0.5" value="0" required></label>
+      <label>Effective from<input name="effective_from" type="date"></label>
+      <label>Effective until<input name="effective_to" type="date"></label>
+      <label>Status<select name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label>
+    </div>
+    <small class="field-error" data-add-rule-error aria-live="polite"></small>
+    <div class="modal-actions"><button type="button" class="button button-quiet" data-cancel>Cancel</button><button type="submit" class="button button-primary"><i data-lucide="plus"></i>Add Incentive Rule</button></div>
+  </form>`;
+  const dialog = openModal("Add Incentive Rule", content, "wide");
+  const form = content.querySelector<HTMLFormElement>("[data-add-incentive-rule]")!;
+  const recipientType = form.elements.namedItem("recipient_type") as HTMLSelectElement;
+  const eligible = form.elements.namedItem("eligible") as HTMLSelectElement;
+  const rate = form.elements.namedItem("rate") as HTMLInputElement;
+  const syncFields = () => {
+    const roleRule = recipientType.value === "role";
+    const personField = content.querySelector<HTMLElement>("[data-person-field]");
+    const roleField = content.querySelector<HTMLElement>("[data-role-field]");
+    if (personField) personField.hidden = roleRule;
+    if (roleField) roleField.hidden = !roleRule;
+    rate.disabled = eligible.value === "false";
+    if (rate.disabled) rate.value = "0";
+  };
+  recipientType.addEventListener("change", syncFields);
+  eligible.addEventListener("change", syncFields);
+  syncFields();
+  content.querySelector<HTMLButtonElement>("[data-cancel]")?.addEventListener("click", () => dialog.close());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const error = content.querySelector<HTMLElement>("[data-add-rule-error]");
+    const values = new FormData(form);
+    const isEligible = values.get("eligible") === "true";
+    const isActive = values.get("active") === "true";
+    const numericRate = isEligible ? Number(values.get("rate")) : 0;
+    if (!Number.isFinite(numericRate) || numericRate < 0 || numericRate > 100 || Math.round(numericRate * 2) !== numericRate * 2) {
+      if (error) error.textContent = "Rate must be between 0% and 100% in 0.5% steps.";
+      return;
+    }
+    submit.disabled = true;
+    try {
+      const clientType = String(values.get("client_type") || "*");
+      const categoryId = String(values.get("category_id") || "*");
+      const allocationType = String(values.get("allocation_type") || "creator");
+      const effectiveFrom = values.get("effective_from") || null;
+      const effectiveTo = values.get("effective_to") || null;
+      if (recipientType.value === "person") {
+        const userId = String(values.get("user_id") || "");
+        if (!userId) throw new Error("Select a specific employee");
+        const scope = categoryId !== "*" ? "category" : clientType !== "*" ? "client_type" : "person";
+        await adminApi.updateUserIncentiveConfiguration(userId, {
+          configurations: [{
+            scope, allocation_type: allocationType,
+            category_id: categoryId === "*" ? null : categoryId,
+            client_type: clientType,
+            status: isActive && isEligible ? "ENABLED" : "DISABLED",
+            rate: isActive && isEligible ? numericRate : null,
+            effective_from: effectiveFrom, effective_to: effectiveTo,
+          }],
+          replace: false,
+        });
+      } else {
+        await adminApi.createIncentiveRule({
+          allocation_type: allocationType,
+          recipient_role: values.get("recipient_role"),
+          client_type: clientType,
+          category_id: categoryId,
+          rate: numericRate,
+          active: isActive && isEligible,
+          effective_from: effectiveFrom,
+          effective_to: effectiveTo,
+        });
+      }
+      dialog.close();
+      toast("Incentive rule added");
+      await onSaved();
+    } catch (reason) {
+      if (error) error.textContent = reason instanceof Error ? reason.message : "Incentive rule could not be added";
+      submit.disabled = false;
+    }
+  });
+  refreshIcons(dialog);
+}
+
 export async function renderIncentiveConfigurator(_page: HTMLElement, body: HTMLElement): Promise<void> {
-  const data = await adminApi.incentiveConfigurator() as unknown as ConfiguratorData;
+  let data = await adminApi.incentiveConfigurator() as unknown as ConfiguratorData;
+  let reload: (() => Promise<void>) | undefined;
   const query = new URLSearchParams(window.location.search);
   const requestedType = String(query.get("client_type") || "WHOLESALER").toUpperCase();
   const initialType = data.customer_types.includes(requestedType) ? requestedType : (data.customer_types[0] || "WHOLESALER");
   let activeView: "users" | "managers" = query.get("tab") === "managers" ? "managers" : "users";
   body.innerHTML = `<section class="panel incentive-configurator">
-    <div class="incentive-configurator-head"><div><span class="eyebrow">Incentives / Incentive Rules</span><h2>Incentive Rules</h2><p>Configure incentive rates for users and managers based on customer type and product type.</p></div></div>
+    <div class="incentive-configurator-head"><div><span class="eyebrow">Incentives / Incentive Rules</span><h2>Incentive Rules</h2><p>Configure optional incentive eligibility and rates for users, managers, or role defaults.</p></div><button type="button" class="button button-primary" data-add-incentive-rule><i data-lucide="plus"></i>Add Incentive Rule</button></div>
     <div class="incentive-rule-tabs" role="tablist" aria-label="Incentive configuration view"><button type="button" class="button button-dark" data-rule-view="users" role="tab" aria-selected="true">User Incentives</button><button type="button" class="button button-quiet" data-rule-view="managers" role="tab" aria-selected="false">Manager Incentives</button></div>
     <div class="incentive-configurator-filters">
       <label>Customer Type<select data-rule-client>${data.customer_types.map((type) => `<option value="${escapeHtml(type)}" ${type === initialType ? "selected" : ""}>${escapeHtml(customerTypeLabel(type))}</option>`).join("")}</select></label>
       <label>Incentive Type<select data-rule-type><option value="">All Types</option><option value="user">User Incentive</option><option value="manager_team">Manager Team Incentive</option><option value="manager_creator">Manager Creator Incentive</option></select></label>
-      <label>Status<select data-rule-status><option value="active" selected>Active</option><option value="">All statuses</option><option value="inactive">Inactive</option></select></label>
+      <label>Status<select data-rule-status><option value="" selected>All statuses</option><option value="active">Enabled</option><option value="inactive">Disabled / inherited</option></select></label>
       <label>Product Type<select data-rule-product><option value="">All Product Types</option>${data.product_types.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
       <label class="incentive-filter-search">Search<input type="search" data-rule-search placeholder="Search incentive configurations"></label>
     </div>
+    <section class="incentive-configuration-panels" aria-label="Incentive ceilings and individual configurations"><div data-maximum-list></div><div data-individual-list></div></section>
     <section class="incentive-product-configurations" aria-labelledby="incentive-rules-heading"><div data-product-rule-list></div></section>
   </section>`;
   const filterPanel = body.querySelector<HTMLElement>(".incentive-configurator-filters");
@@ -203,9 +384,38 @@ export async function renderIncentiveConfigurator(_page: HTMLElement, body: HTML
       const group = groupById.get(decodeURIComponent(button.dataset.groupEdit || ""));
       if (group) openGroupEditor(data, group);
     }));
-    refreshIcons(host);
+    const maximumHost = body.querySelector<HTMLElement>("[data-maximum-list]");
+    const maximumRows = (data.maximum_rules || []).filter((row) => {
+      const rowType = String(row.client_type || "*").toUpperCase();
+      const role = String(row.recipient_role || "*").toLowerCase();
+      const allocation = String(row.allocation_type || "creator").toLowerCase();
+      return (rowType === "*" || rowType === filter.customerType) && (!filter.incentiveType || (filter.incentiveType === "user" && role === "user" && allocation === "creator") || (filter.incentiveType === "manager_team" && allocation === "manager_override") || (filter.incentiveType === "manager_creator" && role === "manager_sales_admin" && allocation === "creator"));
+    });
+    if (maximumHost) {
+      maximumHost.innerHTML = `<section class="incentive-config-subpanel"><div class="incentive-product-rule-heading"><div><span class="eyebrow">Maximum incentive rules</span><h3>Maximum allowed rates</h3><p>Ceilings are enforced by the server. Individual rates cannot exceed these values.</p></div><span class="incentive-rule-count">${maximumRows.length} ${maximumRows.length === 1 ? "ceiling" : "ceilings"}</span></div>${maximumRows.length ? `<div class="data-table incentive-configuration-table"><table><thead><tr><th>Allocation</th><th>Customer Type</th><th>Role</th><th>Maximum</th></tr></thead><tbody>${maximumRows.map((row) => `<tr><td>${escapeHtml(String(row.allocation_type || "creator").replaceAll("_", " "))}</td><td>${escapeHtml(row.client_type && row.client_type !== "*" ? customerTypeLabel(String(row.client_type)) : "All customer types")}</td><td>${escapeHtml(String(row.recipient_role || "All roles").replaceAll("_", " "))}</td><td><strong>${escapeHtml(String(row.maximum_rate ?? row.rate ?? "—"))}%</strong></td></tr>`).join("")}</tbody></table></div>` : emptyState("shield-check", "No maximum rules", "No incentive ceilings match the current filters.")}</section>`;
+    }
+    const individualRows = (data.individual_configurations || []).filter((row) => {
+      const rowType = String(row.client_type || "*").toUpperCase();
+      const rowStatus = String(row.status || "INHERIT").toUpperCase();
+      const searchValues = `${row.user_name || ""} ${row.user_email || ""} ${row.user_id || ""} ${row.scope || ""} ${row.category_id || ""} ${row.product_id || ""}`.toLowerCase();
+      return (rowType === "*" || rowType === filter.customerType) && (!filter.status || (filter.status === "active" ? rowStatus === "ENABLED" : rowStatus !== "ENABLED")) && (!filter.search || searchValues.includes(filter.search));
+    });
+    const individualHost = body.querySelector<HTMLElement>("[data-individual-list]");
+    if (individualHost) {
+      individualHost.innerHTML = `<section class="incentive-config-subpanel"><div class="incentive-product-rule-heading"><div><span class="eyebrow">Individual configurations</span><h3>Optional employee incentives</h3><p>Configure an individual override, inherit the applicable default, or disable the allocation.</p></div><span class="incentive-rule-count">${individualRows.length} ${individualRows.length === 1 ? "configuration" : "configurations"}</span></div>${individualRows.length ? `<div class="data-table incentive-configuration-table"><table><thead><tr><th>User</th><th>Role</th><th>Allocation</th><th>Scope</th><th>Rate</th><th>Maximum</th><th>Status</th><th>Actions</th></tr></thead><tbody>${individualRows.map((row, index) => `<tr><td><strong>${escapeHtml(String(row.user_name || row.user_email || row.user_id || "Unknown user"))}</strong><small>${escapeHtml(String(row.user_email || row.user_id || ""))}</small></td><td>${escapeHtml(String(row.recipient_role || row.role || "—").replaceAll("_", " "))}</td><td>${escapeHtml(String(row.allocation_type || "creator").replaceAll("_", " "))}</td><td>${escapeHtml(incentiveScopeLabel(row))}</td><td><strong>${escapeHtml(incentiveRateText(row.rate, row.status))}</strong></td><td>${row.maximum_rate === null || row.maximum_rate === undefined ? "—" : `${escapeHtml(String(row.maximum_rate))}%`}</td><td>${statusBadge(incentiveStatusLabel(row.status))}</td><td><button type="button" class="button button-quiet incentive-logical-edit-button" data-individual-edit="${index}"><i data-lucide="pencil"></i>Edit</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("user-cog", "No individual configurations", "No employee-specific incentive overrides match the current filters.")}</section>`;
+      individualHost.querySelectorAll<HTMLButtonElement>("[data-individual-edit]").forEach((button) => {
+        const row = individualRows[Number(button.dataset.individualEdit)];
+        if (row) button.addEventListener("click", () => openIndividualEditor(row, async () => { await reload?.(); }));
+      });
+    }
+    refreshIcons(body);
   };
 
+  reload = async () => {
+    data = await adminApi.incentiveConfigurator() as unknown as ConfiguratorData;
+    render();
+  };
+  body.querySelector<HTMLButtonElement>("[data-add-incentive-rule]")?.addEventListener("click", () => openAddIncentiveRule(data, async () => { await reload?.(); }));
   body.querySelectorAll<HTMLButtonElement>("[data-rule-view]").forEach((button) => button.addEventListener("click", () => { activeView = button.dataset.ruleView === "managers" ? "managers" : "users"; render(); }));
   body.querySelectorAll<HTMLSelectElement>("[data-rule-client], [data-rule-product], [data-rule-type], [data-rule-status]").forEach((control) => control.addEventListener("change", render));
   body.querySelector<HTMLInputElement>("[data-rule-search]")?.addEventListener("input", render);

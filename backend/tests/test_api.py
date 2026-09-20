@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+import struct
 from datetime import timedelta
 from io import BytesIO
 from email.utils import parsedate_to_datetime
@@ -13,7 +14,7 @@ from werkzeug.security import generate_password_hash
 
 from app.communication.email import EmailDeliveryError
 from app.customers.codes import customer_code
-from app.finance.service import IncentiveConfigurationError, create_incentive_for_order
+from app.finance.service import create_incentive_for_order
 from app.middleware.access import repair_customer_assignments
 from app.orders.routes import _next_oc_number
 from app.repositories.store import build_store, utcnow
@@ -465,6 +466,8 @@ def test_order_confirmation_and_status_use_central_email_service(app, authentica
     order = app.extensions["store"].insert_one("orders", {
         "_id": "order-email-test", "order_number": "MON_ORD99999",
         "customer_id": COMPANY, "status": "Processing", "currency": "EUR",
+        "record_type": "ORDER_CONFIRMATION", "finalized": True, "locked": True,
+        "document_type": "order_confirmation",
         "customer_snapshot": {"name": "Test Customer", "email": "customer@example.com"},
         "totals": {"grand_total": 100}, "products_snapshot": [], "history": [],
     })
@@ -1060,9 +1063,186 @@ def test_converted_order_keeps_quotation_number(authenticated):
     order = converted.json["data"]
     assert order["quotation_id"] == quote["_id"]
     assert order["quotation_number"] == quote["quotation_number"]
+    persisted_quote = authenticated.application.extensions["store"].find_one("quotations", {"_id": quote["_id"]})
+    assert persisted_quote["status"] == "Converted to Order"
+    assert persisted_quote["converted_order_id"] == order["_id"]
+    assert persisted_quote["converted_order_number"] == order["order_number"]
 
 
-def test_order_confirmation_pdf_is_persisted_and_attached(app, authenticated):
+def test_quote_conversion_is_idempotent_and_returns_the_same_working_order(app, authenticated):
+    store = app.extensions["store"]
+    quote = store.insert_one("quotations", {
+        "_id": "idempotent-working-quote", "quotation_number": "MT-IDEMPOTENT-001", "status": "Sent",
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD", "lines": [],
+        "totals": {"grand_total": 100}, "created_by_user_id": "user-demo-admin",
+    })
+    headers = {"Idempotency-Key": "double-click-conversion"}
+    first = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={}, headers=headers)
+    second = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={}, headers=headers)
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json["data"]["_id"] == second.json["data"]["_id"]
+    assert second.json["data"]["idempotent_replay"] is True
+    assert store.count("orders", {"quotation_id": quote["_id"]}) == 1
+
+
+def test_quote_conversion_rolls_back_order_when_quotation_link_fails(app, authenticated, monkeypatch):
+    store = app.extensions["store"]
+    quote = store.insert_one("quotations", {
+        "_id": "failed-link-quote", "quotation_number": "MT-FAILED-LINK-001", "status": "Sent",
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD", "lines": [],
+        "totals": {"grand_total": 100}, "created_by_user_id": "user-demo-admin",
+    })
+    original_update = store.update_one
+
+    def fail_conversion_link(collection, query, changes):
+        if collection == "quotations" and query.get("_id") == quote["_id"] and changes.get("status") == "Converted to Order":
+            return None
+        return original_update(collection, query, changes)
+
+    monkeypatch.setattr(store, "update_one", fail_conversion_link)
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert response.status_code == 503
+    assert response.json["error"] == "QUOTATION_LINK_FAILED"
+    assert store.count("orders", {"quotation_id": quote["_id"]}) == 0
+    assert store.find_one("quotations", {"_id": quote["_id"]})["status"] == "Sent"
+
+
+def test_legacy_final_oc_is_not_reopened_as_a_working_order(app, authenticated):
+    store = app.extensions["store"]
+    quote = store.insert_one("quotations", {
+        "_id": "legacy-final-quote", "quotation_number": "MT-LEGACY-001", "status": "Legacy Order Confirmation",
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD", "lines": [],
+        "totals": {"grand_total": 100}, "created_by_user_id": "user-demo-admin",
+    })
+    store.insert_one("orders", {
+        "_id": "legacy-final-oc", "order_number": "MT-OC-LEGACY-001",
+        "quotation_id": quote["_id"], "customer_id": COMPANY, "status": "Pending",
+    })
+    response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert response.status_code == 409
+    assert response.json["error"] == "LEGACY_ORDER_CONFIRMATION_EXISTS"
+    assert store.count("orders", {"quotation_id": quote["_id"]}) == 1
+
+
+def test_working_order_edit_to_final_oc_is_single_server_snapshot(app, authenticated):
+    store = app.extensions["store"]
+    configuration = {
+        "thickness_mm": 1.96, "length": 1000, "width": 1000,
+        "dimension_unit": "mm", "format_type": "cut_format",
+    }
+    added = authenticated.post("/api/v1/cart/items", json={
+        "customer_id": COMPANY, "product_id": "mtech_active_sf", "display_currency": "EUR",
+        "quantity": 1, "configuration": configuration,
+    })
+    assert added.status_code == 201
+    quote = authenticated.post("/api/v1/quotations", json={
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD",
+    }).json["data"]
+    original_lines = quote["lines"]
+    original_totals = quote["totals"]
+
+    converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert converted.status_code == 201
+    working = converted.json["data"]
+    assert working["order_number"].startswith("MT-ORD-")
+    assert authenticated.get("/api/v1/orders").json["data"]["total"] == 1
+    assert authenticated.get("/api/v1/order-confirmations").json["data"]["total"] == 0
+
+    changed = authenticated.post(f"/api/v1/orders/{working['_id']}/items", json={
+        "product_id": "mtech_active_sf", "quantity": 2, "display_currency": "EUR",
+        "configuration": configuration,
+    })
+    assert changed.status_code == 201
+    assert changed.json["data"]["order"]["order_amount"] != working["order_amount"]
+    untouched_quote = store.find_one("quotations", {"_id": quote["_id"]})
+    assert untouched_quote["lines"] == original_lines
+    assert untouched_quote["totals"] == original_totals
+
+    ready = authenticated.post(f"/api/v1/orders/{working['_id']}/materials-ready")
+    assert ready.status_code == 200
+    finalized = authenticated.post(f"/api/v1/orders/{working['_id']}/finalize")
+    assert finalized.status_code == 201
+    confirmation = finalized.json["data"]
+    assert confirmation["order_number"].startswith("MT-OC-")
+    assert confirmation["source_order_number"] == working["order_number"]
+    assert confirmation["source_quote_id"] == quote["_id"]
+    assert confirmation["locked"] is True and confirmation["finalized"] is True
+    assert store.count("order_confirmations", {"source_order_id": working["_id"]}) == 1
+    assert store.count("order_documents", {"order_id": confirmation["_id"]}) == 1
+    assert authenticated.get("/api/v1/orders").json["data"]["total"] == 0
+    confirmations = authenticated.get("/api/v1/order-confirmations").json["data"]["items"]
+    assert any(row["_id"] == confirmation["_id"] for row in confirmations)
+    assert all(row.get("finalized") or row.get("record_type") == "ORDER_CONFIRMATION" for row in confirmations)
+
+    replay = authenticated.post(f"/api/v1/orders/{working['_id']}/finalize")
+    assert replay.status_code == 200
+    assert replay.json["data"]["_id"] == confirmation["_id"]
+    locked = authenticated.patch(f"/api/v1/orders/{working['_id']}", json={"notes": "must not change"})
+    assert locked.status_code == 423
+
+
+def test_superadmin_price_lists_use_real_server_assets_and_audit_delivery(app, authenticated):
+    store = app.extensions["store"]
+    listed = authenticated.get("/api/v1/price-lists")
+    assert listed.status_code == 200
+    assert {row["_id"] for row in listed.json["data"]["items"]} >= {"blankets", "underpacking-dealer", "underpacking-distributor"}
+    definitions = {row["_id"]: row for row in listed.json["data"]["items"]}
+    assert definitions["blankets"]["metadata"]["page_orientation"] == "portrait"
+    assert definitions["underpacking-dealer"]["metadata"]["page_orientation"] == "landscape"
+    assert definitions["underpacking-dealer"]["metadata"]["page_sizes"]
+
+    # A stale permission array must not turn a canonical Superadmin into a
+    # 403 on newly introduced price-list routes.
+    store.update_one("roles", {"_id": "superadmin"}, {"permissions": []})
+    assert authenticated.get("/api/v1/price-lists").status_code == 200
+
+    pdf = authenticated.get("/api/v1/price-lists/underpacking-dealer/document")
+    assert pdf.status_code == 200
+    assert pdf.headers["Content-Type"].startswith("application/pdf")
+    assert pdf.data.startswith(b"%PDF")
+    assert "X-Frame-Options" not in pdf.headers
+    assert "frame-ancestors" in pdf.headers.get("Content-Security-Policy", "")
+    distributor_pdf = authenticated.get("/api/v1/price-lists/underpacking-distributor/document")
+    assert distributor_pdf.status_code == 200
+    assert distributor_pdf.headers["Content-Type"].startswith("application/pdf")
+    download = authenticated.get("/api/v1/price-lists/underpacking-dealer/document?download=1")
+    assert download.status_code == 200
+    assert "attachment" in download.headers["Content-Disposition"]
+    assert download.data == pdf.data
+    assert authenticated.get("/api/v1/price-lists/blankets/document").status_code == 404
+    missing_delivery = authenticated.post("/api/v1/price-lists/blankets/send", json={
+        "customer_id": "customer-demo-1", "to": ["procurement@example.com"],
+    })
+    assert missing_delivery.status_code == 409
+    assert missing_delivery.json["error"] == "PRICE_LIST_PDF_MISSING"
+
+    sent = authenticated.post("/api/v1/price-lists/underpacking-dealer/send", json={
+        "customer_id": "customer-demo-1", "to": ["procurement@example.com"],
+        "cc": ["sales@example.com"], "bcc": ["audit@example.com"],
+    })
+    assert sent.status_code == 200
+    assert sent.json["data"]["attachments"] == ["Moneda-Dealer-Price-List.pdf"]
+    log = store.list("price_list_email_logs", limit=10)[0][-1]
+    assert log["to"] == ["procurement@example.com"]
+    assert "sales@example.com" in log["cc"]
+    assert "audit@example.com" in log["bcc"]
+    assert log["attachment_names"] == ["Moneda-Dealer-Price-List.pdf"]
+
+
+def test_profile_signature_is_validated_stored_and_removed(app, authenticated):
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + struct.pack(">II", 10, 5) + b"\x08\x06\x00\x00\x00"
+    invalid = authenticated.post("/api/v1/profile/signature", data={"file": (BytesIO(png), "signature.txt")}, content_type="multipart/form-data")
+    assert invalid.status_code == 422
+    uploaded = authenticated.post("/api/v1/profile/signature", data={"file": (BytesIO(png), "signature.png")}, content_type="multipart/form-data")
+    assert uploaded.status_code == 200
+    assert uploaded.json["data"]["metadata"]["width"] == 10
+    assert authenticated.get("/api/v1/profile/signature/file").status_code == 200
+    assert authenticated.delete("/api/v1/profile/signature").status_code == 200
+    assert authenticated.get("/api/v1/profile/signature").json["data"]["configured"] is False
+
+
+def test_quote_conversion_creates_working_order_without_final_document(app, authenticated):
     store = app.extensions["store"]
     quote = store.insert_one("quotations", {
         "_id": "oc-document-quote", "quotation_number": "MT-DOC-001", "status": "Sent",
@@ -1071,22 +1251,16 @@ def test_order_confirmation_pdf_is_persisted_and_attached(app, authenticated):
         "lines": [{"product_name": "Test Product", "description": "Document line", "quantity": 2, "unit_price": 25, "line_total": 50}],
         "totals": {"subtotal": 50, "grand_total": 50}, "created_by_user_id": "user-demo-admin",
     })
+    email_count = len(app.extensions["email_provider"].messages)
     response = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
     assert response.status_code == 201
     order = response.json["data"]
-    document = store.find_one("order_documents", {"order_id": order["_id"]})
-    assert document and document["document_type"] == "order_confirmation"
-    pdf_bytes = base64.b64decode(document["content_base64"])
-    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf_bytes)).pages)
-    assert order["order_number"] in text
-    assert "Document Customer" in text
-    assert "Test Product" in text
-    download = authenticated.get(f"/api/v1/orders/{order['_id']}/pdf")
-    assert download.status_code == 200 and download.headers["Content-Type"].startswith("application/pdf")
-    message = app.extensions["email_provider"].messages[-1]
-    assert message["attachments"] and message["attachments"][0]["filename"] == document["filename"]
-    attached = base64.b64decode(message["attachments"][0]["content"])
-    assert attached == pdf_bytes
+    assert order["order_number"].startswith("MT-ORD-")
+    assert order["record_type"] == "ORDER" and order["finalized"] is False
+    assert store.find_one("order_documents", {"order_id": order["_id"]}) is None
+    assert store.count("incentives", {"order_id": order["_id"]}) == 0
+    assert len(app.extensions["email_provider"].messages) == email_count
+    assert authenticated.get(f"/api/v1/order-confirmations").json["data"]["total"] == 0
 
 
 def test_superadmin_can_confirm_incentive_payment_and_activate(app, authenticated):
@@ -1111,7 +1285,7 @@ def test_superadmin_can_confirm_incentive_payment_and_activate(app, authenticate
     assert response.json["data"]["payment_confirmed_by_user_id"] == "user-demo-admin"
 
 
-def test_order_email_failure_keeps_oc_and_resend_reuses_pdf(app, authenticated, monkeypatch):
+def test_working_order_conversion_does_not_attempt_final_email(app, authenticated, monkeypatch):
     store = app.extensions["store"]
     quote = store.insert_one("quotations", {
         "_id": "oc-resend-quote", "quotation_number": "MT-RESEND-001", "status": "Sent",
@@ -1119,24 +1293,14 @@ def test_order_email_failure_keeps_oc_and_resend_reuses_pdf(app, authenticated, 
         "customer_snapshot": {"name": "Retry Customer", "email": "customer@example.com"},
         "lines": [], "totals": {"grand_total": 20}, "created_by_user_id": "user-demo-admin",
     })
-    service = app.extensions["email_service"]
-    original = service.send_order_confirmation
-
-    def fail_once(**kwargs):
-        raise EmailDeliveryError("temporary failure", stage="message_submission", diagnostic_id="email-retry", error_code="MESSAGE_SUBMISSION_FAILED")
-
-    monkeypatch.setattr(service, "send_order_confirmation", fail_once)
     converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
     assert converted.status_code == 201
     order = converted.json["data"]
     persisted = store.find_one("orders", {"_id": order["_id"]})
-    assert persisted and persisted["email_status"] == "Failed"
-    assert store.find_one("order_documents", {"order_id": order["_id"]})
-    monkeypatch.setattr(service, "send_order_confirmation", original)
-    resent = authenticated.post(f"/api/v1/orders/{order['_id']}/resend-confirmation", json={})
-    assert resent.status_code == 200
+    assert persisted and persisted["email_status"] == "Pending"
+    assert store.find_one("order_documents", {"order_id": order["_id"]}) is None
     assert store.count("orders", {"quotation_id": quote["_id"]}) == 1
-    assert store.count("incentives", {"order_id": order["_id"]}) == 1
+    assert store.count("incentives", {"order_id": order["_id"]}) == 0
 
 
 def _login_as_user(client, user_id: str):
@@ -1258,7 +1422,7 @@ def test_order_confirmation_configuration_is_server_authoritative(app, authentic
     })
     assert response.status_code == 201
     order = response.json["data"]
-    assert order["order_number"].startswith("MT-OC-") and order["order_number"].endswith("-001")
+    assert order["order_number"].startswith("MT-ORD-") and order["order_number"].endswith("-001")
     assert order["order_amount"] == 458.70
     assert order["payment_terms"] == "60 Days"
     assert order["to"] == ["customer@example.com", "extra@example.com"]
@@ -1325,16 +1489,18 @@ def test_category_incentive_rates_are_snapshotted_per_order_line(app):
     assert [line["incentive_rate_snapshot"] for line in persisted["incentive_lines"]] == [5.0, 3.0, 6.0]
 
 
-def test_missing_category_rate_blocks_incentive_creation(app):
+def test_missing_category_rate_snapshots_zero_without_blocking_order(app):
     store = app.extensions["store"]
     salesperson = add_test_user(app, "missing-category-rate")
     salesperson["incentive_rates"] = {"blankets": 5}
     store.insert_one("products", {"_id": "missing-chemical", "name": "Missing Chemical", "category_id": "chemicals"})
-    with pytest.raises(IncentiveConfigurationError, match="Chemical"):
-        create_incentive_for_order(store, {
-            "_id": "missing-rate-order", "order_number": "MT-OC-MISSING-001", "customer_id": COMPANY,
-            "order_amount": 100, "products_snapshot": [{"product_id": "missing-chemical", "line_total": 100}],
-        }, salesperson)
+    incentive = create_incentive_for_order(store, {
+        "_id": "missing-rate-order", "order_number": "MT-OC-MISSING-001", "customer_id": COMPANY,
+        "order_amount": 100, "products_snapshot": [{"product_id": "missing-chemical", "line_total": 100}],
+    }, salesperson)
+    assert incentive["gross_incentive_amount"] == 0.0
+    assert incentive["incentive_lines"][0]["incentive_rate_snapshot"] == 0.0
+    assert incentive["incentive_lines"][0]["incentive_eligible_snapshot"] is False
 
 
 def test_payment_must_be_submitted_before_superadmin_confirmation(app, authenticated):
@@ -1385,7 +1551,9 @@ def test_category_incentive_configuration_is_superadmin_only(app, client):
     assert saved.status_code == 200
     persisted = store.find_one("users", {"_id": target["_id"]})
     assert persisted["incentive_rates"] == {"blankets": 5.0, "mpacks": 3.0, "chemicals": 6.0}
-    invalid = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 6.5}})
+    valid_half_step = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 6.5}})
+    assert valid_half_step.status_code == 200
+    invalid = client.patch(f"/api/v1/admin/users/{target['_id']}", json={"incentive_rates": {"blankets": 100.5}})
     assert invalid.status_code == 422
     superadmin_target = client.patch(f"/api/v1/admin/users/{superadmin['_id']}", json={"incentive_rates": {"blankets": 5}})
     assert superadmin_target.status_code == 422
@@ -1398,7 +1566,7 @@ def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):
         "pricing_status": "configured",
     })
     preview = authenticated.post("/api/v1/products/mtech_active_sf/price-preview", json={
-        "customer_id": "customer-demo-1", "display_currency": "INR", "quantity": 1, "discount_percent": 3,
+        "customer_id": "customer-demo-1", "display_currency": "INR", "quantity": 1, "discount_percent": 2.5,
         "tax_enabled": True, "tax_mode": "exclusive", "tax_rate": 18,
         "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
     })
@@ -1409,26 +1577,26 @@ def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):
     assert display_line["quotation_currency"] == "EUR"
     assert display_line["master_final_total"] == display_line["master_total"]
     assert display_line["display_final_total"] == display_line["display_total"]
-    assert display_line["discount_percent"] == 3
-    assert display_line["master_total"] == 97.0
+    assert display_line["discount_percent"] == 2.5
+    assert display_line["master_total"] == 97.5
     assert display_line["master_subtotal"] == 100.0
     assert display_line["display_subtotal"] == 10000.0
-    assert display_line["display_discount_amount"] == 300.0
-    assert display_line["display_final_total"] == 9700.0
+    assert display_line["display_discount_amount"] == 250.0
+    assert display_line["display_final_total"] == 9750.0
     assert display_line["display_total"] == display_line["total"]
     assert "final_total" not in display_line
     assert "tax_amount" not in display_line
 
     added = authenticated.post("/api/v1/cart/items", json={
         "customer_id": "customer-demo-1", "product_id": "mtech_active_sf", "display_currency": "INR",
-        "quantity": 1, "discount_percent": 3,
+        "quantity": 1, "discount_percent": 2.5,
         "configuration": {"thickness_mm": 1.96, "length": 1000, "width": 1000, "dimension_unit": "mm", "format_type": "cut_format"},
     })
     assert added.status_code == 201
     saved_item = added.json["data"]
     assert saved_item["currency"] == saved_item["master_currency"] == "EUR"
     assert saved_item["display_currency"] == "INR"
-    assert saved_item["master_final_total"] == 97.0
+    assert saved_item["master_final_total"] == 97.5
 
     # Viewing a cart in another reference currency must convert the saved EUR
     # snapshot, not recalculate it from a newly changed product master price.
@@ -1439,18 +1607,18 @@ def test_india_inr_display_creates_eur_tax_free_quotation(app, authenticated):
     assert usd_cart.status_code == 200
     assert usd_cart.json["data"]["item_count"] == 1
     usd_line = usd_cart.json["data"]["items"][0]["pricing_preview"]
-    assert usd_line["master_final_total"] == 97.0
+    assert usd_line["master_final_total"] == 97.5
     assert usd_line["display_currency"] == "USD"
-    assert usd_line["display_final_total"] == 116.4
+    assert usd_line["display_final_total"] == 117.0
 
     quote = authenticated.post("/api/v1/quotations", json={"customer_id": "customer-demo-1", "currency": "INR"})
     assert quote.status_code == 201
     document = quote.json["data"]
     assert document["currency"] == document["quotation_currency"] == "EUR"
-    assert document["lines"][0]["discount_percent"] == 3
-    assert document["lines"][0]["master_final_total"] == 97.0
-    assert document["lines"][0]["line_total"] == 97.0
-    assert document["totals"]["grand_total"] == 97.0
+    assert document["lines"][0]["discount_percent"] == 2.5
+    assert document["lines"][0]["master_final_total"] == 97.5
+    assert document["lines"][0]["line_total"] == 97.5
+    assert document["totals"]["grand_total"] == 97.5
     assert "tax_amount" not in document["lines"][0]
     assert "tax_amount" not in document["totals"]
 
@@ -1459,7 +1627,7 @@ def test_magnum_price_preview_uses_seeded_eur_price_and_exact_area(authenticated
     authenticated.post("/api/v1/companies/select-customer", json={"customer_id": "customer-demo-1"})
     response = authenticated.post("/api/v1/products/mtech_magnum_sf/price-preview", json={
         "customer_id": "customer-demo-1", "display_currency": "INR",
-        "quantity": 1, "discount_percent": 3,
+        "quantity": 1, "discount_percent": 2.5,
         "configuration": {
             "thickness_mm": 1.96, "length": 585, "width": 875,
             "dimension_unit": "mm", "format_type": "cut_format",
@@ -1471,12 +1639,12 @@ def test_magnum_price_preview_uses_seeded_eur_price_and_exact_area(authenticated
     assert line["master_currency"] == "EUR"
     assert line["master_unit_price"] == 27.13
     assert line["master_subtotal"] == 27.13
-    assert line["master_discount_amount"] == 0.81
-    assert line["master_final_total"] == 26.32
+    assert line["master_discount_amount"] == 0.68
+    assert line["master_final_total"] == 26.45
     assert line["display_currency"] == "INR"
     assert line["display_subtotal"] == 2713.0
-    assert line["display_discount_amount"] == 81.0
-    assert line["display_final_total"] == 2632.0
+    assert line["display_discount_amount"] == 68.0
+    assert line["display_final_total"] == 2645.0
     assert "final_total" not in line
     assert not any(key in line for key in ("tax_amount", "gst_amount", "vat_amount"))
 

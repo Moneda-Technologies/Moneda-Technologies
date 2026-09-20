@@ -114,13 +114,31 @@ class CustomerRecipientRegistry:
             if group not in result or not address or (group, address) in seen:
                 continue
             seen.add((group, address))
-            result[group].append({"_id": row.get("_id"), "email": address, "address": address, "display_name": row.get("display_name"), "group": group, "enabled": bool(row.get("enabled")), "source": row.get("source") or "custom", "created_by": row.get("created_by"), "created_at": row.get("created_at"), "updated_at": row.get("updated_at")})
+            price_list_ids = row.get("price_list_ids")
+            if not isinstance(price_list_ids, list):
+                price_list_ids = []
+            result[group].append({"_id": row.get("_id"), "email": address, "address": address, "display_name": row.get("display_name"), "group": group, "enabled": bool(row.get("enabled")), "source": row.get("source") or "custom", "price_list_ids": [str(value) for value in price_list_ids if value], "created_by": row.get("created_by"), "created_at": row.get("created_at"), "updated_at": row.get("updated_at")})
         return result["cc"], result["bcc"]
 
     def resolved(self) -> dict[str, list[str]]:
         cc = [item["address"] for item in self.cc if item["enabled"]]
         cc_set = set(cc)
         return {"cc": cc, "bcc": [item["address"] for item in self.bcc if item["enabled"] and item["address"] not in cc_set]}
+
+    def resolved_for_price_list(self, price_list_id: str) -> dict[str, list[str]]:
+        """Return enabled routing recipients scoped to this price list.
+
+        An empty scope means all price lists, preserving the existing global
+        routing behavior while allowing Superadmins to narrow custom rows.
+        """
+        target = str(price_list_id or "")
+        scoped = {
+            group: [item["address"] for item in items if item["enabled"] and (not item.get("price_list_ids") or target in item.get("price_list_ids", []))]
+            for group, items in (("cc", self.cc), ("bcc", self.bcc))
+        }
+        cc_set = set(scoped["cc"])
+        scoped["bcc"] = [item for item in scoped["bcc"] if item not in cc_set]
+        return scoped
 
     @staticmethod
     def _dedupe(values: list[str]) -> list[str]:
@@ -160,15 +178,25 @@ class CustomerRecipientRegistry:
             return self.store.update_one("email_routing_recipients", {"_id": item.get("_id"), "group": group, "email": email}, {"enabled": bool(enabled)}) or item
         return item
 
-    def add(self, group: str, email: str, display_name: str | None, actor: str) -> dict[str, Any]:
+    def add(self, group: str, email: str, display_name: str | None, actor: str, price_list_ids: list[str] | None = None) -> dict[str, Any]:
         items = self._group(group)
         if any(row["address"] == email for row in items):
             raise ValueError("That email already exists in this routing group")
-        row = {"email": email, "address": email, "display_name": display_name or None, "group": group, "enabled": True, "source": "custom", "created_by": actor}
+        row = {"email": email, "address": email, "display_name": display_name or None, "group": group, "enabled": True, "source": "custom", "price_list_ids": [str(value) for value in (price_list_ids or []) if value], "created_by": actor}
         if self.store:
             row = self.store.insert_one("email_routing_recipients", {"_id": f"routing-{group}-{email.replace('@', '-at-').replace('.', '-')}", **row})
         items.append(row)
         return row
+
+    def update_price_list_scope(self, group: str, email: str, price_list_ids: list[str]) -> dict[str, Any] | None:
+        item = next((row for row in self._group(group) if row["address"] == email), None)
+        if not item:
+            return None
+        normalized = [str(value) for value in price_list_ids if str(value).strip()]
+        item["price_list_ids"] = normalized
+        if self.store:
+            return self.store.update_one("email_routing_recipients", {"_id": item.get("_id"), "group": group, "email": email}, {"price_list_ids": normalized}) or item
+        return item
 
     def remove(self, group: str, email: str) -> dict[str, Any] | None:
         items = self._group(group)
@@ -198,7 +226,7 @@ class EmailProvider:
              attachments: list[dict[str, Any]] | None = None,
              from_address: str | None = None, cc: list[str] | None = None,
              bcc: list[str] | None = None, from_name: str | None = None,
-             request_id: str | None = None) -> dict[str, Any]:
+             reply_to: str | None = None, request_id: str | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -363,11 +391,12 @@ class RecordingEmailProvider(EmailProvider):
              attachments: list[dict[str, Any]] | None = None,
              from_address: str | None = None, cc: list[str] | None = None,
              bcc: list[str] | None = None, from_name: str | None = None,
-             request_id: str | None = None) -> dict[str, Any]:
+             reply_to: str | None = None, request_id: str | None = None) -> dict[str, Any]:
         message = {
             "id": f"recording-{len(self.messages) + 1}", "from": from_address,
             "from_name": from_name,
             "to": to, "cc": cc or [], "bcc": bcc or [], "subject": subject,
+            "reply_to": reply_to,
             "html": html, "attachments": attachments or [], "provider": "recording",
             "stage": "message_submission",
         }

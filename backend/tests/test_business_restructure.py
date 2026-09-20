@@ -43,7 +43,7 @@ def test_manager_bank_details_are_limited_to_own_team(app):
     assert not can_edit_bank_details(store, manager, other_user["_id"])
 
 
-def test_incentive_rule_seed_is_idempotent_and_preserves_rate(app):
+def test_incentive_startup_adds_no_defaults_and_preserves_explicit_rule(app):
     store = app.extensions["store"]
     key = {
         "allocation_type": "manager_override",
@@ -51,22 +51,43 @@ def test_incentive_rule_seed_is_idempotent_and_preserves_rate(app):
         "recipient_role": "manager_sales_admin",
         "category_id": "*",
     }
-    rule = store.find_one("incentive_rules", key)
-    assert rule is not None
-    store.update_one("incentive_rules", {"_id": rule["_id"]}, {"rate": 6.0})
+    assert store.find_one("incentive_rules", key) is None
+    rule = store.insert_one("incentive_rules", {
+        **key, "rate": 6.0, "active": True, "created_by_user_id": "user-demo-admin",
+    })
     before = store.count("incentive_rules")
     ensure_business_logic_schema(store, Path(app.config["DATA_DIRECTORY"]))
     ensure_business_logic_schema(store, Path(app.config["DATA_DIRECTORY"]))
     assert store.count("incentive_rules") == before
     assert store.find_one("incentive_rules", key)["rate"] == 6.0
-    assert store.find_one("incentive_rules", {
-        **key, "allocation_type": "creator", "recipient_role": "manager_sales_admin",
-    }) is not None
+    assert store.find_one("incentive_rules", {"_id": rule["_id"]})["active"] is True
+
+
+def test_workflow_permission_repair_updates_existing_roles_once(app):
+    store = app.extensions["store"]
+    migration_id = "end-to-end-workflow-permissions-v2"
+    store.delete_one("system_migrations", {"_id": migration_id})
+    role = store.find_one("roles", {"_id": "superadmin"})
+    permissions = set(role.get("permissions") or [])
+    permissions.difference_update({
+        "price_list.view", "price_list.send", "price_list.manage",
+        "customer.pricing.update", "quotation.final_currency.select",
+    })
+    store.update_one("roles", {"_id": "superadmin"}, {"permissions": sorted(permissions)})
+
+    ensure_business_logic_schema(store, Path(app.config["DATA_DIRECTORY"]))
+    repaired = set(store.find_one("roles", {"_id": "superadmin"}).get("permissions") or [])
+    assert {
+        "price_list.view", "price_list.send", "price_list.manage",
+        "customer.pricing.update", "quotation.final_currency.select",
+    }.issubset(repaired)
+    ensure_business_logic_schema(store, Path(app.config["DATA_DIRECTORY"]))
+    assert store.count("system_migrations", {"_id": migration_id}) == 1
 
 
 def test_user_order_allocates_configured_manager_incentive(app):
     store = app.extensions["store"]
-    manager = store.insert_one("users", {"_id": "incentive-manager", "name": "Manager", "email": "manager3@monedatechnologies.com", "role_id": "manager_sales_admin", "active": True})
+    manager = store.insert_one("users", {"_id": "incentive-manager", "name": "Manager", "email": "manager3@monedatechnologies.com", "role_id": "manager_sales_admin", "active": True, "incentive_rates": {"blankets": 2.5}})
     user = store.insert_one("users", {"_id": "incentive-user", "name": "Sales user", "email": "sales@monedatechnologies.com", "role_id": "user", "manager_id": manager["_id"], "active": True, "incentive_rates": {"blankets": 5}})
     order = {
         "_id": "oc-manager-incentive", "created_by_user_id": user["_id"], "created_by_role": "user",
@@ -79,7 +100,7 @@ def test_user_order_allocates_configured_manager_incentive(app):
     assert {line["recipient_user_id"] for line in created["incentive_lines"]} == {user["_id"], manager["_id"]}
 
 
-def test_manager_created_order_uses_manager_creator_rule(app):
+def test_manager_created_order_without_rule_snapshots_zero_rate(app):
     store = app.extensions["store"]
     manager = store.insert_one("users", {
         "_id": "manager-created", "name": "Manager", "email": "manager-created@monedatechnologies.com",
@@ -92,9 +113,10 @@ def test_manager_created_order_uses_manager_creator_rule(app):
         "products_snapshot": [{"product_id": product.get("_id", "mtech-mpack"), "category_id": "mpacks", "line_total": 100.0}],
     }
     created = create_incentive_for_order(store, order, manager)
-    assert created["gross_incentive_amount"] == 5.0
+    assert created["gross_incentive_amount"] == 0.0
     assert created["incentive_lines"][0]["recipient_user_id"] == manager["_id"]
-    assert created["incentive_lines"][0]["incentive_rate_snapshot"] == 5.0
+    assert created["incentive_lines"][0]["incentive_rate_snapshot"] == 0.0
+    assert created["incentive_lines"][0]["incentive_eligible_snapshot"] is False
 
 
 def test_incentive_rule_priority_prefers_customer_then_type(app):
@@ -196,13 +218,13 @@ def test_product_incentive_configuration_upserts_category_rules_without_duplicat
     assert store.find_one("incentive_rules", {"allocation_type": "creator", "recipient_role": "user", "client_type": "DEALER", "category_id": "blankets"})["rate"] == 5.5
 
 
-def test_incentive_rule_status_update_preserves_unique_record(app, authenticated):
+def test_disabling_incentive_rule_preserves_history_and_allows_replacement(app, authenticated):
     store = app.extensions["store"]
-    rule = store.find_one("incentive_rules", {
+    rule = store.insert_one("incentive_rules", {
         "allocation_type": "manager_override", "client_type": "WHOLESALER",
         "recipient_role": "manager_sales_admin", "category_id": "*",
+        "rate": 2.5, "active": True, "created_by_user_id": "user-demo-admin",
     })
-    assert rule is not None
     before = store.count("incentive_rules")
 
     disabled = authenticated.patch(
@@ -215,12 +237,18 @@ def test_incentive_rule_status_update_preserves_unique_record(app, authenticated
         f"/api/v1/admin/incentive-rules/{rule['_id']}", json={"active": "false"},
     )
     assert invalid.status_code == 422
-    duplicate = authenticated.post("/api/v1/admin/incentive-rules", json={
+    replacement = authenticated.post("/api/v1/admin/incentive-rules", json={
         "allocation_type": "manager_override", "client_type": "WHOLESALER",
         "recipient_role": "manager_sales_admin", "category_id": "*", "rate": 3.0,
     })
+    assert replacement.status_code == 201
+    assert store.count("incentive_rules") == before + 1
+    assert store.find_one("incentive_rules", {"_id": rule["_id"]})["active"] is False
+    duplicate = authenticated.post("/api/v1/admin/incentive-rules", json={
+        "allocation_type": "manager_override", "client_type": "WHOLESALER",
+        "recipient_role": "manager_sales_admin", "category_id": "*", "rate": 4.0,
+    })
     assert duplicate.status_code == 409
-    assert store.count("incentive_rules") == before
 
 
 def test_user_cannot_read_or_modify_incentive_configuration(app, client):

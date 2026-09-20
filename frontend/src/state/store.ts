@@ -9,6 +9,7 @@ import { ordersPage } from "../pages/orders";
 import { cartPage, quotationPreparationPage, quotationPreviewPage, quotationsPage } from "../pages/quotations";
 import { reportsPage, reportDetailPage } from "../pages/reports";
 import { accountPriceListsPage } from "../pages/account-price-lists";
+import { activityPage, customerAssignmentsPage, loginDevicesPage, rolesPermissionsPage } from "../pages/access-management";
 import { PageFactory } from "../router";
 import type { Company, Currency, Customer, User } from "../types/domain";
 
@@ -72,6 +73,11 @@ class Store {
   can(permission: string): boolean {
     const user = this.value.user;
     if (!user) return false;
+    // The canonical Superadmin role is the recovery authority. Existing
+    // installations can carry a stale role-permission snapshot until the
+    // startup migration is applied, but that must not hide legitimate
+    // Superadmin controls in the UI. The API still authorizes every action.
+    if (user.role_id === "superadmin") return true;
     if (user.permissions.includes(permission)) return true;
     // These modules are part of every authenticated sales role's read scope.
     // Keep this UI fallback for older sessions whose role document predates
@@ -87,10 +93,10 @@ export const routes: Record<string, PageFactory> = {
   "/customer-selection": companySelectionPage,
   "/company-selection": companySelectionPage,
   "/calculator": () => companySelectionPage({ preserveCurrent: true, nextPath: "/products" }),
-  "/products": () => catalogPage(),
-  "/products/blankets": () => catalogPage("blankets"),
-  "/products/mpacks": () => catalogPage("mpacks"),
-  "/products/chemicals": () => catalogPage("chemicals"),
+  "/products": () => catalogPage("", new URLSearchParams(location.search).get("order_id") ?? undefined),
+  "/products/blankets": () => catalogPage("blankets", new URLSearchParams(location.search).get("order_id") ?? undefined),
+  "/products/mpacks": () => catalogPage("mpacks", new URLSearchParams(location.search).get("order_id") ?? undefined),
+  "/products/chemicals": () => catalogPage("chemicals", new URLSearchParams(location.search).get("order_id") ?? undefined),
   "/cart": cartPage,
   "/quotation": quotationPreparationPage,
   "/quotation/create": quotationPreparationPage,
@@ -100,8 +106,8 @@ export const routes: Record<string, PageFactory> = {
   "/catalog": catalogPage,
   "/customers": customersPage,
   "/quotations": quotationsPage,
-  "/orders": ordersPage,
-  "/order-confirmations": ordersPage,
+  "/orders": () => ordersPage("working"),
+  "/order-confirmations": () => ordersPage("final"),
   "/banking": bankingPage,
   "/payments": paymentsPage,
   "/incentives": incentivesPage,
@@ -123,6 +129,10 @@ export const routes: Record<string, PageFactory> = {
   "/reports/currency-exposure": () => reportDetailPage("currency-exposure"),
   "/companies": companiesPage,
   "/users": usersPage,
+  "/roles-permissions": rolesPermissionsPage,
+  "/customer-assignments": customerAssignmentsPage,
+  "/activity": activityPage,
+  "/login-devices": loginDevicesPage,
   "/admin": adminPage,
   "/price-lists": adminPage,
   "/settings": settingsPage,

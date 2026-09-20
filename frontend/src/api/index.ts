@@ -1,5 +1,5 @@
 import { api, apiEndpoint, jsonBody, patchBody } from "./client";
-import type { CartItem, CatalogOption, Category, Currency, Customer, DashboardData, PageResult, PriceHistoryEntry, PricingResource, Product, Quotation, SessionPayload } from "../types/domain";
+import type { AddressRecord, CartItem, CatalogOption, Category, Currency, Customer, DashboardData, PageResult, PriceHistoryEntry, PriceListDefinition, PricingResource, Product, Quotation, SessionPayload } from "../types/domain";
 import type { CountryMeta } from "../config/customer-metadata";
 
 export const authApi = {
@@ -20,6 +20,13 @@ export const authApi = {
 };
 export const profileApi = {
   update: (value: unknown) => api<SessionPayload["user"]>("/me", patchBody(value)),
+  signature: () => api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null }>("/profile/signature"),
+  uploadSignature: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null }>("/profile/signature", { method: "POST", body });
+  },
+  removeSignature: () => api<{ configured: boolean; metadata: null; url?: string | null }>("/profile/signature", { method: "DELETE" }),
   requestEmailChange: (email: string) => api<{ pending_email: string; expires_at: string }>("/profile/email-change/request", jsonBody({ email })),
   resendEmailChange: () => api<{ pending_email: string; expires_at: string }>("/profile/email-change/resend", jsonBody({})),
   verifyEmailChange: (code: string) => api<SessionPayload["user"]>("/profile/email-change/verify", jsonBody({ code })),
@@ -65,6 +72,18 @@ export const customerApi = {
   update: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}`, patchBody(value)),
   remove: (id: string, reason: string, permanent = false) => api<null>(`/customers/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason, permanent }), headers: { "Content-Type": "application/json" } }),
   restore: (id: string) => api<Customer>(`/customers/${encodeURIComponent(id)}/restore`, jsonBody({})),
+  shippingAddresses: (id: string) => api<{ items: AddressRecord[]; total: number }>(`/customers/${encodeURIComponent(id)}/shipping-addresses`),
+  createShippingAddress: (id: string, value: unknown) => api<AddressRecord>(`/customers/${encodeURIComponent(id)}/shipping-addresses`, jsonBody(value)),
+  updateShippingAddress: (id: string, addressId: string, value: unknown) => api<AddressRecord>(`/customers/${encodeURIComponent(id)}/shipping-addresses/${encodeURIComponent(addressId)}`, patchBody(value)),
+  deactivateShippingAddress: (id: string, addressId: string) => api<null>(`/customers/${encodeURIComponent(id)}/shipping-addresses/${encodeURIComponent(addressId)}`, { method: "DELETE" }),
+  updatePricing: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}/pricing`, patchBody(value)),
+};
+
+export const priceListApi = {
+  list: (query = "") => api<{ items: PriceListDefinition[]; total: number }>(`/price-lists${query ? `?${query}` : ""}`),
+  update: (id: string, value: unknown) => api<PriceListDefinition>(`/price-lists/${encodeURIComponent(id)}`, patchBody(value)),
+  documentUrl: (id: string, download = false) => apiEndpoint(`/price-lists/${encodeURIComponent(id)}/document${download ? "?download=1" : ""}`),
+  send: (id: string, value: unknown) => api<{ sent: boolean; status?: string; diagnostic_id?: string; attachments?: string[]; cc?: string[]; bcc?: string[] }>(`/price-lists/${encodeURIComponent(id)}/send`, jsonBody(value)),
 };
 
 export const quotationApi = {
@@ -86,7 +105,7 @@ export const quotationApi = {
 };
 
 export const cartApi = {
-  get: (customerId: string, currency: Currency = "EUR", signal?: AbortSignal) => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; master_currency?: "EUR"; display_currency?: Currency; totals: Record<string, number>; master_totals?: Record<string, number> }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`, signal ? { signal } : undefined),
+  get: (customerId: string, currency: Currency = "EUR", signal?: AbortSignal) => api<{ customer: { id: string; name: string }; customer_id: string; customer_name: string; customer_company_id?: string; customer_company_name?: string; company_id?: string; company_name?: string; item_count: number; items: CartItem[]; master_currency?: "EUR"; display_currency?: Currency; totals: Record<string, number>; master_totals?: Record<string, number>; billing_address?: AddressRecord; billing_address_record?: AddressRecord; shipping_addresses?: AddressRecord[]; default_shipping_address_id?: string | null }>(`/cart?customer_id=${encodeURIComponent(customerId)}&currency=${currency}`, signal ? { signal } : undefined),
   add: (value: unknown) => api<CartItem>("/cart/items", jsonBody(value)),
   update: (id: string, value: unknown) => api<CartItem>(`/cart/items/${encodeURIComponent(id)}`, patchBody(value)),
   remove: (id: string) => api<null>(`/cart/items/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -103,7 +122,14 @@ export const crmApi = {
 };
 export const orderApi = {
   list: (customerId?: string, limit?: number) => api<{ items: Record<string, unknown>[]; total: number }>(`/orders?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${limit ? `limit=${encodeURIComponent(String(limit))}` : ""}`.replace(/\?$/, "")),
+  listConfirmations: (customerId?: string, limit?: number) => api<{ items: Record<string, unknown>[]; total: number }>(`/order-confirmations?${customerId ? `customer_id=${encodeURIComponent(customerId)}&` : ""}${limit ? `limit=${encodeURIComponent(String(limit))}` : ""}`.replace(/\?$/, "")),
   get: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`),
+  update: (id: string, value: unknown) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}`, patchBody(value)),
+  addItem: (orderId: string, value: unknown) => api<{ item: Record<string, unknown>; order: Record<string, unknown> }>(`/orders/${encodeURIComponent(orderId)}/items`, jsonBody(value)),
+  updateItem: (orderId: string, itemId: string, value: unknown) => api<{ item: Record<string, unknown>; order: Record<string, unknown> }>(`/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}`, patchBody(value)),
+  removeItem: (orderId: string, itemId: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}`, { method: "DELETE" }),
+  markMaterialsReady: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}/materials-ready`, jsonBody({})),
+  finalize: (id: string) => api<Record<string, unknown>>(`/orders/${encodeURIComponent(id)}/finalize`, jsonBody({})),
   configuration: (id: string) => api<{ quote: Quotation; defaults: Record<string, unknown> }>(`/quotations/${encodeURIComponent(id)}/order-configuration`),
   convert: (id: string, value: unknown = {}, idempotencyKey = crypto.randomUUID()) => api<Record<string, unknown>>(
     `/quotations/${encodeURIComponent(id)}/convert-to-order`,
@@ -116,7 +142,7 @@ export const orderApi = {
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };
 export const financeApi = {
-  payments: (query = "") => api<{ items: Record<string, unknown>[]; total: number }>(`/payments${query ? `?${query}` : ""}`),
+  payments: (query = "") => api<{ items: Record<string, unknown>[]; total: number; summary: { total_payments: number; confirmed_received: number; awaiting_confirmation: number; outstanding: number; customer_credit: number; invoice_count: number; currency: "EUR" } }>(`/payments${query ? `?${query}` : ""}`),
   bankDetails: () => api<{ items: Record<string, unknown>[]; total: number }>("/bank-details"),
   bankDetail: (userId: string) => api<Record<string, unknown>>(`/bank-details/${encodeURIComponent(userId)}`),
   updateBankDetails: (userId: string, value: unknown) => api<Record<string, unknown>>(`/bank-details/${encodeURIComponent(userId)}`, patchBody(value)),
@@ -157,6 +183,8 @@ export const adminApi = {
   updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
   setUserPassword: (id: string, password: string, confirm_password: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}/password`, jsonBody({ password, confirm_password })),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
+  userRoleOptions: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/user-role-options"),
+  updateRole: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/roles/${encodeURIComponent(id)}`, patchBody(value)),
   incentiveRules: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/incentive-rules"),
   incentiveConfigurator: () => api<{
     customer_types: string[];
@@ -166,8 +194,12 @@ export const adminApi = {
     customers: Record<string, unknown>[];
     rules: Record<string, unknown>[];
     rules_total: number;
+    maximum_rules?: Record<string, unknown>[];
+    individual_configurations?: Record<string, unknown>[];
     resolution: Record<string, unknown>;
   }>("/admin/incentive-configurator"),
+  userIncentiveConfiguration: (userId: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/incentive-configuration`),
+  updateUserIncentiveConfiguration: (userId: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/incentive-configuration`, { method: "PUT", body: JSON.stringify(value), headers: { "Content-Type": "application/json" } }),
   createIncentiveRule: (value: unknown) => api<Record<string, unknown>>("/admin/incentive-rules", jsonBody(value)),
   configureProductIncentiveRules: (value: unknown) => api<{ items: Record<string, unknown>[]; rates: Record<string, number> }>("/admin/incentive-rules/configure-products", jsonBody(value)),
   updateIncentiveRule: (id: string, value: number | { rate?: number; active?: boolean }) => api<Record<string, unknown>>(`/admin/incentive-rules/${encodeURIComponent(id)}`, patchBody(typeof value === "number" ? { rate: value } : value)),

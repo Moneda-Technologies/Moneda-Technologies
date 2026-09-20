@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 import csv
 import io
 import json
@@ -25,7 +26,19 @@ from app.repositories.store import utcnow
 from app.services.audit import audit
 from app.catalog.service import is_legacy_product
 from app.finance.service import INCENTIVE_CATEGORIES, INCENTIVE_ELIGIBLE_ROLES, INCENTIVE_PERCENTAGES
-from app.services.business_logic import CLIENT_TYPES, MANAGER_ROLE_IDS, resolve_incentive_rate, valid_manager
+from app.services.business_logic import (
+    CLIENT_TYPES,
+    INCENTIVE_CONFIGURATION_SCOPES,
+    INCENTIVE_CONFIGURATION_STATUSES,
+    INCENTIVE_HALF_STEPS,
+    IncentiveConfigurationValidationError,
+    MANAGER_ROLE_IDS,
+    resolve_incentive_maximum,
+    normalize_client_type,
+    resolve_incentive_configuration,
+    resolve_incentive_rate,
+    valid_manager,
+)
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 
 
@@ -191,11 +204,119 @@ def _normalise_incentive_rates(value: Any) -> dict[str, float] | None:
         try:
             rate = float(raw_rate)
         except (TypeError, ValueError):
-            raise ValueError("Incentive percentage must be 0% to 6% in 0.5% steps") from None
+            raise ValueError("Incentive percentage must be 0% to 100% in 0.5% steps") from None
         if rate not in INCENTIVE_PERCENTAGES:
-            raise ValueError("Incentive percentage must be 0% to 6% in 0.5% steps")
+            raise ValueError("Incentive percentage must be 0% to 100% in 0.5% steps")
         rates[key] = rate
     return rates
+
+
+def _incentive_configuration_status(value: Any, *, default: str = "ENABLED") -> str:
+    status = str(value or default).strip().upper().replace(" ", "_")
+    if status == "ACTIVE":
+        status = "ENABLED"
+    if status == "INACTIVE":
+        status = "DISABLED"
+    return status if status in INCENTIVE_CONFIGURATION_STATUSES else default
+
+
+def _incentive_configuration_rate(value: Any, *, required: bool = False) -> float | None:
+    if value is None or str(value).strip() == "":
+        if required:
+            raise ValueError("An enabled incentive configuration requires a rate")
+        return None
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Incentive rate must use 0.5% steps between 0% and 100%") from None
+    if rate not in INCENTIVE_HALF_STEPS:
+        raise ValueError("Incentive rate must use 0.5% steps between 0% and 100%")
+    return rate
+
+
+def _incentive_configuration_date(value: Any, field: str) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a valid ISO date/time") from None
+    return parsed
+
+
+def _incentive_configuration_key(
+    user_id: str, allocation_type: str, scope: str, *,
+    customer_id: str | None = None, product_id: str | None = None,
+    category_id: str | None = None, client_type: str | None = None,
+    role: str | None = None,
+) -> str:
+    # JSON gives us a deterministic, collision-resistant key without relying
+    # on user-controlled separators in IDs.  It is used only for upsert
+    # identity; the dimension fields remain queryable MongoDB fields.
+    return json.dumps([
+        str(user_id), str(allocation_type), str(scope), str(customer_id or ""),
+        str(product_id or ""), str(category_id or ""), str(client_type or "*"),
+        str(role or "*"),
+    ], separators=(",", ":"))
+
+
+def _public_incentive_configuration(row: dict[str, Any], maximum_rate: float | None = None) -> dict[str, Any]:
+    result = {key: row.get(key) for key in (
+        "_id", "user_id", "recipient_user_id", "allocation_type", "scope",
+        "customer_id", "product_id", "category_id", "client_type", "role",
+        "recipient_role", "status", "rate", "effective_from", "effective_to",
+        "configuration_key", "updated_at", "created_at",
+    ) if key in row}
+    result["maximum_rate"] = maximum_rate
+    result["source"] = "INDIVIDUAL" if row.get("user_id") or row.get("recipient_user_id") else "DEFAULT"
+    return result
+
+
+def _configuration_validation_category(store, *, scope: str, category_id: str | None, product_id: str | None) -> str:
+    """Resolve the dimension used when checking an employee ceiling.
+
+    A person/default configuration does not have a category of its own, so it
+    must be checked against the generic ceiling rather than an arbitrary
+    blanket ceiling.  Product-scoped rows can derive their category from the
+    persisted product record.  This keeps maximum validation data-driven.
+    """
+    if category_id:
+        return str(category_id).strip().lower()
+    if scope == "product" and product_id:
+        product = store.find_one("products", {"_id": product_id}) or {}
+        return str(
+            product.get("category_id")
+            or product.get("family_id")
+            or product.get("product_type")
+            or "*"
+        ).strip().lower()
+    return "*"
+
+
+def _configuration_validation_maximum(
+    store, *, recipient: dict[str, Any], client_type: str,
+    category_id: str, customer_id: str | None, product_id: str | None,
+    allocation_type: str,
+) -> float | None:
+    """Return the strictest applicable ceiling for a broad configuration.
+
+    A person, client-type, or customer override can apply to more than one
+    product family.  Validate it against every known family rather than
+    silently choosing one (or defaulting to blankets).
+    """
+    categories = [category_id] if category_id != "*" else list(INCENTIVE_CATEGORIES)
+    maxima = []
+    for category in categories:
+        maximum = resolve_incentive_maximum(
+            store, recipient=recipient, client_type=client_type,
+            category_id=category, customer_id=customer_id,
+            product_id=product_id, allocation_type=allocation_type,
+        )
+        if maximum is not None:
+            maxima.append(maximum)
+    return min(maxima) if maxima else None
 
 
 def _normalise_manager_id(store, manager_id: Any, *, target_role_id: str, target_user_id: str | None = None) -> str | None:
@@ -1314,12 +1435,37 @@ def update_user(user_id: str):
         existing_configs, _ = store.list("incentive_configurations", {"user_id": user_id}, limit=10_000)
         for config in existing_configs:
             if str(config.get("category_id")) not in configured:
-                store.delete_one("incentive_configurations", {"_id": config.get("_id")})
+                # Preserve the row for auditability and historical tracing.
+                # A missing category in this legacy payload means that the
+                # current individual override is no longer configured.
+                store.update_one("incentive_configurations", {"_id": config.get("_id")}, {
+                    "status": "NOT_CONFIGURED", "rate": None,
+                    "updated_by_user_id": actor.get("_id"), "updated_at": utcnow(),
+                })
         for category_id, rate in configured.items():
-            store.update_one("incentive_configurations", {"user_id": user_id, "category_id": category_id}, {
-                "user_id": user_id, "category_id": category_id, "category_name": INCENTIVE_CATEGORIES[category_id], "incentive_percentage": rate,
+            scope = "category"
+            allocation = "creator"
+            key = _incentive_configuration_key(
+                user_id, allocation, scope, category_id=category_id,
+                role=target_role_id,
+            )
+            existing_config = store.find_one("incentive_configurations", {"configuration_key": key})
+            values = {
+                "user_id": user_id, "recipient_user_id": user_id,
+                "recipient_role": target_role_id, "role": target_role_id,
+                "allocation_type": allocation, "scope": scope,
+                "category_id": category_id,
+                "category_name": INCENTIVE_CATEGORIES[category_id],
+                "status": "ENABLED", "rate": float(rate),
+                # Keep the legacy field for older projections/clients.
+                "incentive_percentage": float(rate),
+                "configuration_key": key,
                 "updated_by_user_id": actor.get("_id"), "updated_at": utcnow(),
-            }, upsert=True)
+            }
+            if existing_config:
+                store.update_one("incentive_configurations", {"_id": existing_config.get("_id")}, values)
+            else:
+                store.insert_one("incentive_configurations", {**values, "created_by_user_id": actor.get("_id"), "created_at": utcnow()})
         audit("incentive.configuration_updated", "user", user_id, {
             "old_value": existing.get("incentive_rates") or {}, "new_value": configured,
             "updated_by": actor.get("_id"),
@@ -1334,6 +1480,201 @@ def update_user(user_id: str):
     public_row = dict(row or {})
     public_row.pop("password_hash", None)
     return success(public_row, "User updated")
+
+
+@bp.get("/admin/users/<user_id>/incentive-configuration")
+@permission_required("incentives.manage")
+def get_user_incentive_configuration(user_id: str):
+    """Return one employee's actual incentive configuration and ceilings.
+
+    This endpoint is intentionally separate from the legacy category-rule
+    projection.  It exposes individual rows (including INHERIT/DISABLED)
+    without exposing credentials or rewriting historical allocations.
+    """
+    if not _can_configure_incentive():
+        return failure("Only a Superadmin can configure individual incentives", status=403, error="incentive_configuration_forbidden")
+    store = current_app.extensions["store"]
+    user = store.find_one("users", {"_id": user_id})
+    if not user:
+        return failure("User not found", status=404)
+    role_id = str(user.get("role_id") or "").strip().lower()
+    if role_id not in INCENTIVE_ELIGIBLE_ROLES:
+        return failure("This account is not eligible for individual incentives", status=422, error="incentive_not_applicable")
+    configurations, _ = store.list("incentive_configurations", {
+        "$or": [{"user_id": user_id}, {"recipient_user_id": user_id}],
+    }, limit=10_000, sort="updated_at", direction=-1)
+    maximum_rules, _ = store.list("incentive_rules", {}, limit=100_000, sort="updated_at", direction=-1)
+    maximum_rules = [row for row in maximum_rules if str(row.get("rule_kind") or "").strip().lower() in {"maximum", "max", "ceiling"}]
+    public_maximums = []
+    for row in maximum_rules:
+        row_role = str(row.get("recipient_role") or "*").strip().lower()
+        if row_role not in {"*", role_id, "manager" if role_id == "manager_sales_admin" else role_id}:
+            continue
+        allocation = str(row.get("allocation_type") or "creator").strip().lower()
+        maximum = row.get("maximum_rate", row.get("rate"))
+        try:
+            maximum = float(maximum)
+        except (TypeError, ValueError):
+            continue
+        public_maximums.append({
+            "_id": row.get("_id"), "allocation_type": allocation,
+            "scope": row.get("scope") or "maximum", "client_type": row.get("client_type") or "*",
+            "category_id": row.get("category_id") or "*", "customer_id": row.get("customer_id"),
+            "product_id": row.get("product_id"), "recipient_role": row.get("recipient_role") or "*",
+            "maximum_rate": maximum,
+        })
+    items = []
+    for row in configurations:
+        maximum = resolve_incentive_maximum(
+            store, recipient=user, client_type=row.get("client_type") or "WHOLESALER",
+            category_id=row.get("category_id") or "*", customer_id=row.get("customer_id"),
+            product_id=row.get("product_id"), allocation_type=row.get("allocation_type") or "creator",
+        )
+        items.append(_public_incentive_configuration(row, maximum))
+    public_user = {key: user.get(key) for key in ("_id", "name", "email", "role_id", "manager_id")}
+    return success({
+        "user": public_user,
+        "status": next((str(row.get("status")).upper() for row in configurations if not row.get("customer_id") and not row.get("product_id") and not row.get("category_id") and not row.get("client_type")), "INHERIT"),
+        "configurations": items,
+        "maximum_rules": public_maximums,
+    })
+
+
+@bp.put("/admin/users/<user_id>/incentive-configuration")
+@permission_required("incentives.manage")
+def update_user_incentive_configuration(user_id: str):
+    """Persist optional employee incentive overrides without deleting rows.
+
+    ``replace`` marks omitted rows NOT_CONFIGURED rather than deleting them;
+    this preserves auditability and leaves existing OC snapshots immutable.
+    """
+    if not _can_configure_incentive():
+        return failure("Only a Superadmin can configure individual incentives", status=403, error="incentive_configuration_forbidden")
+    store = current_app.extensions["store"]
+    target = store.find_one("users", {"_id": user_id})
+    if not target:
+        return failure("User not found", status=404)
+    role_id = str(target.get("role_id") or "").strip().lower()
+    if role_id not in INCENTIVE_ELIGIBLE_ROLES:
+        return failure("This account is not eligible for individual incentives", status=422, error="incentive_not_applicable")
+    payload = request.get_json(silent=True) or {}
+    raw_items = payload.get("configurations", payload.get("items", payload.get("configs")))
+    if raw_items is None:
+        raw_items = [{
+            "scope": "person", "allocation_type": payload.get("allocation_type", "creator"),
+            "status": payload.get("status", "INHERIT"), "rate": payload.get("default_rate"),
+        }]
+    if not isinstance(raw_items, list):
+        return failure("Incentive configurations must be a list", status=422, error="invalid_incentive_configuration")
+    normalized: list[dict[str, Any]] = []
+    now = utcnow()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            return failure("Each incentive configuration must be an object", status=422, error="invalid_incentive_configuration")
+        scope = str(raw.get("scope") or "person").strip().lower()
+        # A user-scoped default is represented as person, never as a global
+        # default.  This keeps the resolver precedence unambiguous.
+        if scope == "default":
+            scope = "person"
+        if scope not in INCENTIVE_CONFIGURATION_SCOPES - {"default"}:
+            return failure("Unsupported incentive configuration scope", status=422, error="invalid_incentive_scope")
+        allocation = str(raw.get("allocation_type") or "creator").strip().lower()
+        if allocation not in {"creator", "manager_override"}:
+            return failure("Unsupported incentive allocation type", status=422, error="invalid_incentive_allocation")
+        status = _incentive_configuration_status(raw.get("status"), default="INHERIT")
+        if status not in INCENTIVE_CONFIGURATION_STATUSES:
+            return failure("Unsupported incentive configuration status", status=422, error="invalid_incentive_status")
+        try:
+            rate = _incentive_configuration_rate(raw.get("rate", raw.get("default_rate")), required=status == "ENABLED")
+            effective_from = _incentive_configuration_date(raw.get("effective_from"), "effective_from")
+            effective_to = _incentive_configuration_date(raw.get("effective_to"), "effective_to")
+        except ValueError as exc:
+            return failure(str(exc), status=422, error="invalid_incentive_configuration")
+        if effective_from and effective_to and effective_from > effective_to:
+            return failure("effective_from must not be later than effective_to", status=422, error="invalid_incentive_date_range")
+        client_type = str(raw.get("client_type") or "*").strip().upper()
+        if client_type != "*" and client_type not in CLIENT_TYPES:
+            return failure("Customer type must be WHOLESALER, DEALER, CUSTOMER or *", status=422, error="invalid_customer_type")
+        customer_id = str(raw.get("customer_id") or "").strip() or None
+        product_id = str(raw.get("product_id") or "").strip() or None
+        category_id = str(raw.get("category_id") or "").strip().lower() or None
+        if scope == "customer":
+            if not customer_id:
+                return failure("Customer scope requires a customer", status=422, error="invalid_incentive_scope")
+            customer = store.find_one("customers", {"_id": customer_id})
+            if not customer or customer.get("is_issuer"):
+                return failure("Customer not found", status=404)
+        if scope == "product" and not product_id:
+            return failure("Product scope requires a product", status=422, error="invalid_incentive_scope")
+        if scope == "category" and category_id not in INCENTIVE_CATEGORIES:
+            return failure("Category scope requires a valid product category", status=422, error="invalid_incentive_scope")
+        if scope == "client_type" and client_type == "*":
+            return failure("Client type scope requires a customer type", status=422, error="invalid_incentive_scope")
+        if scope not in {"customer", "product", "category"}:
+            customer_id = customer_id if scope == "client_type" else None
+            product_id = product_id if scope == "product" else None
+            category_id = category_id if scope == "category" else None
+        if scope == "customer":
+            product_id = product_id or None
+        if status != "ENABLED":
+            rate = None
+        if rate is not None:
+            validation_category_id = _configuration_validation_category(
+                store, scope=scope, category_id=category_id, product_id=product_id,
+            )
+            maximum = _configuration_validation_maximum(
+                store, recipient=target,
+                client_type=client_type if client_type != "*" else "WHOLESALER",
+                category_id=validation_category_id, customer_id=customer_id,
+                product_id=product_id, allocation_type=allocation,
+            )
+            if maximum is not None and rate > maximum:
+                return failure(f"Incentive rate {rate:g}% exceeds the configured maximum of {maximum:g}%", status=422, error="incentive_rate_exceeds_maximum", maximum_rate=maximum)
+        identity = {
+            "user_id": user_id, "allocation_type": allocation, "scope": scope,
+            "customer_id": customer_id, "product_id": product_id, "category_id": category_id,
+            "client_type": client_type if client_type != "*" else None, "role": role_id,
+        }
+        normalized.append({
+            **identity,
+            "recipient_user_id": user_id,
+            "recipient_role": role_id,
+            "status": status,
+            "rate": rate,
+            "effective_from": effective_from,
+            "effective_to": effective_to,
+            "configuration_key": _incentive_configuration_key(
+                user_id, allocation, scope,
+                customer_id=customer_id, product_id=product_id,
+                category_id=category_id,
+                client_type=client_type if client_type != "*" else None,
+                role=role_id,
+            ),
+            "updated_by_user_id": (current_user() or {}).get("_id"),
+            "updated_at": now,
+        })
+    existing, _ = store.list("incentive_configurations", {"user_id": user_id}, limit=10_000)
+    incoming_keys = {row["configuration_key"] for row in normalized}
+    updated = []
+    for row in normalized:
+        existing_row = store.find_one("incentive_configurations", {"configuration_key": row["configuration_key"]})
+        if existing_row:
+            updated.append(store.update_one("incentive_configurations", {"_id": existing_row.get("_id")}, row))
+        else:
+            updated.append(store.insert_one("incentive_configurations", {**row, "created_by_user_id": (current_user() or {}).get("_id")}))
+    if bool(payload.get("replace")):
+        for row in existing:
+            if row.get("configuration_key") in incoming_keys:
+                continue
+            store.update_one("incentive_configurations", {"_id": row.get("_id")}, {
+                "status": "NOT_CONFIGURED", "rate": None,
+                "updated_by_user_id": (current_user() or {}).get("_id"), "updated_at": now,
+            })
+    audit("incentive.individual_configuration_updated", "user", user_id, {
+        "actor_user_id": (current_user() or {}).get("_id"), "configuration_count": len(normalized),
+        "replace": bool(payload.get("replace")),
+    })
+    return success({"user_id": user_id, "configurations": updated}, "Individual incentive configuration saved")
 
 
 @bp.post("/admin/users/<user_id>/password")
@@ -1364,10 +1705,22 @@ def set_user_password(user_id: str):
 
 
 @bp.get("/admin/roles")
-@permission_required("roles.view")
+@superadmin_required
 def list_roles():
     roles, total = current_app.extensions["store"].list("roles", limit=100, sort="display_name", direction=1)
     return success({"items": roles, "total": total})
+
+
+@bp.get("/admin/user-role-options")
+@permission_required("users.view")
+def user_role_options():
+    """Safe role labels for user administration; never exposes permissions."""
+    roles, _ = current_app.extensions["store"].list("roles", limit=100, sort="display_name", direction=1)
+    actor = current_user() or {}
+    if str(actor.get("role_id") or "") != "superadmin":
+        roles = [row for row in roles if str(row.get("_id") or "") != "superadmin"]
+    items = [{"_id": row.get("_id"), "display_name": row.get("display_name") or row.get("name") or row.get("_id")} for row in roles]
+    return success({"items": items, "total": len(items)})
 
 
 @bp.get("/admin/incentive-rules")
@@ -1415,16 +1768,18 @@ def incentive_configurator():
         for client_type in CLIENT_TYPES:
             for product_type in product_types:
                 product_type_id = product_type["id"]
-                user_rate = resolve_incentive_rate(
+                user_resolution = resolve_incentive_configuration(
                     store, recipient=user, client_type=client_type,
                     category_id=product_type_id, allocation_type="creator",
                 )
+                user_rate = user_resolution.get("rate") if user_resolution.get("eligible") else None
                 manager_team_rate = None
                 if manager:
-                    manager_team_rate = resolve_incentive_rate(
+                    manager_resolution = resolve_incentive_configuration(
                         store, recipient=manager, client_type=client_type,
                         category_id=product_type_id, allocation_type="manager_override",
                     )
+                    manager_team_rate = manager_resolution.get("rate") if manager_resolution.get("eligible") else None
                 matrix.append({
                     "customer_type": client_type,
                     "product_type_id": product_type_id,
@@ -1447,14 +1802,16 @@ def incentive_configurator():
         for client_type in CLIENT_TYPES:
             for product_type in product_types:
                 product_type_id = product_type["id"]
-                team_rate = resolve_incentive_rate(
+                team_resolution = resolve_incentive_configuration(
                     store, recipient=manager, client_type=client_type,
                     category_id=product_type_id, allocation_type="manager_override",
                 )
-                creator_rate = resolve_incentive_rate(
+                creator_resolution = resolve_incentive_configuration(
                     store, recipient=manager, client_type=client_type,
                     category_id=product_type_id, allocation_type="creator",
                 )
+                team_rate = team_resolution.get("rate") if team_resolution.get("eligible") else None
+                creator_rate = creator_resolution.get("rate") if creator_resolution.get("eligible") else None
                 matrix.append({
                     "customer_type": client_type,
                     "product_type_id": product_type_id,
@@ -1479,6 +1836,31 @@ def incentive_configurator():
         for row in customers if row.get("_id") and not row.get("is_issuer")
     ]
 
+    # Separate ceilings from employee configuration in the admin projection.
+    # Both are sourced from MongoDB so the UI never turns a display constant
+    # into an incentive calculation.
+    maximum_rules = [
+        row for row in rules
+        if str(row.get("rule_kind") or "").strip().lower() in {"maximum", "max", "ceiling"}
+    ]
+    individual_rows, _ = store.list("incentive_configurations", {}, limit=100_000, sort="updated_at", direction=-1)
+    individual_configurations = []
+    all_users_by_id = {str(row.get("_id")): row for row in user_rows if row.get("_id")}
+    for row in individual_rows:
+        target = all_users_by_id.get(str(row.get("user_id") or row.get("recipient_user_id") or ""))
+        if not target:
+            continue
+        maximum = resolve_incentive_maximum(
+            store, recipient=target, client_type=row.get("client_type") or "WHOLESALER",
+            category_id=row.get("category_id") or "blankets", customer_id=row.get("customer_id"),
+            product_id=row.get("product_id"), allocation_type=row.get("allocation_type") or "creator",
+        )
+        individual_configurations.append({
+            **_public_incentive_configuration(row, maximum),
+            "user_name": target.get("name"), "user_email": target.get("email"),
+            "role_id": target.get("role_id"),
+        })
+
     # Keep the business-facing list compact while exposing the existing
     # category-specific rule records that the resolver already understands.
     # ``Configurable`` is deliberately a projection-only label; MongoDB
@@ -1488,6 +1870,8 @@ def incentive_configurator():
     for client_type in CLIENT_TYPES:
         group_keys.update({("creator", client_type, "user", None), ("manager_override", client_type, "manager_sales_admin", None), ("creator", client_type, "manager_sales_admin", None)})
     for rule in rules:
+        if str(rule.get("rule_kind") or "default").strip().lower() in {"maximum", "max", "ceiling"}:
+            continue
         allocation = str(rule.get("allocation_type") or "creator").strip().lower()
         if allocation not in {"creator", "manager_override"}:
             continue
@@ -1500,6 +1884,7 @@ def incentive_configurator():
     for allocation, client_type, recipient_role, customer_id in sorted(group_keys, key=lambda item: (item[0], item[1], item[2], item[3] or "")):
         scoped_rules = [
             row for row in rules
+            if str(row.get("rule_kind") or "default").strip().lower() not in {"maximum", "max", "ceiling"}
             if str(row.get("allocation_type") or "creator").strip().lower() == allocation
             and str(row.get("client_type") or "*").strip().upper() == client_type
             and str(row.get("recipient_role") or "*").strip().lower() == recipient_role
@@ -1563,6 +1948,8 @@ def incentive_configurator():
         "rules": rules,
         "rules_total": rules_total,
         "rule_groups": rule_groups,
+        "maximum_rules": maximum_rules,
+        "individual_configurations": individual_configurations,
         "resolution": {
             "basis": "OC line net amount",
             "dimensions": ["customer_type", "product_type", "recipient", "allocation_type"],
@@ -1577,12 +1964,17 @@ def configure_product_incentive_rules():
     """Create/update category-specific rates without changing old snapshots."""
     store = current_app.extensions["store"]
     payload = request.get_json(silent=True) or {}
+    rule_kind = str(payload.get("rule_kind") or "default").strip().lower()
+    if rule_kind in {"max", "ceiling"}:
+        rule_kind = "maximum"
+    if rule_kind not in {"default", "maximum"}:
+        return failure("Unsupported incentive rule kind", status=422, error="invalid_incentive_rule_kind")
     allocation_type = str(payload.get("allocation_type") or "creator").strip().lower()
     if allocation_type not in {"creator", "manager_override"}:
         return failure("Unsupported incentive allocation type", status=422)
     client_type = str(payload.get("client_type") or "").strip().upper()
     if client_type not in CLIENT_TYPES:
-        return failure("Customer type must be DISTRIBUTOR, DEALER or CUSTOMER", status=422)
+        return failure("Customer type must be WHOLESALER, DEALER or CUSTOMER", status=422)
     recipient_role = str(payload.get("recipient_role") or "*").strip().lower()
     if recipient_role not in {"admin", "manager", "manager_sales_admin", "user", "*"}:
         return failure("Unsupported incentive recipient role", status=422)
@@ -1601,9 +1993,9 @@ def configure_product_incentive_rules():
         try:
             rate = float(raw_rate)
         except (TypeError, ValueError):
-            return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
+            return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
         if rate not in INCENTIVE_PERCENTAGES:
-            return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
+            return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
         normalized_rates[category] = rate
     updated = []
     now = utcnow()
@@ -1651,13 +2043,18 @@ def create_incentive_rule():
     """
     store = current_app.extensions["store"]
     payload = request.get_json(silent=True) or {}
+    rule_kind = str(payload.get("rule_kind") or "default").strip().lower()
+    if rule_kind in {"max", "ceiling"}:
+        rule_kind = "maximum"
+    if rule_kind not in {"default", "maximum"}:
+        return failure("Unsupported incentive rule kind", status=422, error="invalid_incentive_rule_kind")
     allocation_type = str(payload.get("allocation_type") or "creator").strip().lower()
     if allocation_type not in {"creator", "manager_override"}:
         return failure("Unsupported incentive allocation type", status=422)
     raw_client_type = str(payload.get("client_type") or "*").strip().upper()
     client_type = raw_client_type if raw_client_type == "*" or raw_client_type in CLIENT_TYPES else ""
     if not client_type:
-        return failure("Customer type must be DISTRIBUTOR, DEALER, CUSTOMER or *", status=422)
+        return failure("Customer type must be WHOLESALER, DEALER, CUSTOMER or *", status=422)
     category_id = str(payload.get("category_id") or "*").strip().lower()
     if category_id != "*" and category_id not in INCENTIVE_CATEGORIES:
         return failure("Category must be blankets, mpacks, chemicals or *", status=422)
@@ -1668,28 +2065,38 @@ def create_incentive_rule():
     if customer_id and not store.find_one("customers", {"_id": customer_id}):
         return failure("Customer not found", status=404)
     try:
-        rate = float(payload.get("rate"))
+        rate = _incentive_configuration_rate(payload.get("maximum_rate", payload.get("rate")), required=True) if rule_kind == "maximum" else float(payload.get("rate"))
     except (TypeError, ValueError):
-        return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
-    if rate not in INCENTIVE_PERCENTAGES:
-        return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
+        return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
+    if rule_kind == "default" and rate not in INCENTIVE_PERCENTAGES:
+        return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
     active = payload.get("active", True)
     if not isinstance(active, bool):
         return failure("Incentive rule status must be active or inactive", status=422)
+    try:
+        effective_from = _incentive_configuration_date(payload.get("effective_from"), "effective_from")
+        effective_to = _incentive_configuration_date(payload.get("effective_to"), "effective_to")
+    except ValueError as exc:
+        return failure(str(exc), status=422, error="invalid_incentive_date_range")
+    if effective_from and effective_to and effective_from > effective_to:
+        return failure("effective_from must not be later than effective_to", status=422, error="invalid_incentive_date_range")
     existing = store.find_one("incentive_rules", {
-        "allocation_type": allocation_type, "customer_id": customer_id,
+        "rule_kind": rule_kind, "allocation_type": allocation_type, "customer_id": customer_id,
         "client_type": client_type, "recipient_role": recipient_role, "category_id": category_id,
     })
     if existing:
         return failure("An incentive rule with this scope already exists", status=409)
-    scope = "customer" if customer_id else "client_type_category" if client_type != "*" and category_id != "*" else "client_type" if client_type != "*" else "role" if recipient_role != "*" else "global"
+    scope = "maximum" if rule_kind == "maximum" else "customer" if customer_id else "client_type_category" if client_type != "*" and category_id != "*" else "client_type" if client_type != "*" else "role" if recipient_role != "*" else "global"
     row = store.insert_one("incentive_rules", {
+        "rule_kind": rule_kind,
         "scope": scope, "allocation_type": allocation_type, "customer_id": customer_id,
         "client_type": client_type, "recipient_role": recipient_role, "category_id": category_id,
-        "rate": rate, "base": "OC_NET_AMOUNT", "active": active,
+        "rate": rate, "maximum_rate": rate if rule_kind == "maximum" else None,
+        "base": "OC_NET_AMOUNT", "active": active,
+        "effective_from": effective_from, "effective_to": effective_to,
         "created_at": utcnow(), "created_by_user_id": (current_user() or {}).get("_id"),
     })
-    audit("incentive.rule_created", "incentive_rule", row.get("_id"), {"scope": scope, "rate": rate})
+    audit("incentive.rule_created", "incentive_rule", row.get("_id"), {"scope": scope, "rule_kind": rule_kind, "rate": rate})
     return success(row, "Incentive rule created", 201)
 
 
@@ -1704,12 +2111,14 @@ def update_incentive_rule(rule_id: str):
     changes: dict[str, Any] = {}
     if "rate" in payload:
         try:
-            rate = float(payload.get("rate"))
+            rate = _incentive_configuration_rate(payload.get("rate"), required=True) if str(existing.get("rule_kind") or "default").lower() == "maximum" else float(payload.get("rate"))
         except (TypeError, ValueError):
-            return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
-        if rate not in INCENTIVE_PERCENTAGES:
-            return failure("Incentive percentage must be 0% to 6% in 0.5% steps", status=422)
+            return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
+        if str(existing.get("rule_kind") or "default").lower() != "maximum" and rate not in INCENTIVE_PERCENTAGES:
+            return failure("Incentive percentage must be 0% to 100% in 0.5% steps", status=422)
         changes["rate"] = rate
+        if str(existing.get("rule_kind") or "default").lower() == "maximum":
+            changes["maximum_rate"] = rate
     if "active" in payload:
         if not isinstance(payload.get("active"), bool):
             return failure("Incentive rule status must be active or inactive", status=422)
@@ -1730,7 +2139,7 @@ def client_type_pricing():
 
 
 @bp.patch("/admin/roles/<role_id>")
-@permission_required("roles.manage")
+@superadmin_required
 def update_role(role_id: str):
     payload = request.get_json(silent=True) or {}
     allowed_permissions = {row["_id"] for row in current_app.extensions["store"].list("permissions", limit=1000)[0]}

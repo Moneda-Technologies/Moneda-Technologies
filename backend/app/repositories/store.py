@@ -30,6 +30,30 @@ _INDEX_TRANSIENT_ERRORS = (AutoReconnect, ConnectionFailure, NetworkTimeout, Ser
 _STARTUP_MAX_ATTEMPTS = 3
 _STARTUP_BACKOFF_SECONDS = 1.0
 
+# Older deployments used either of these unique scopes for incentive rules.
+# Neither includes ``rule_kind`` (and one also omitted ``allocation_type``),
+# so it prevents the intentional default/maximum pair from coexisting. Keep
+# the exact key order here: unrelated unique indexes must never be dropped by
+# the startup migration.
+_LEGACY_INCENTIVE_RULE_INDEX_KEYS = frozenset({
+    (
+        ("client_type", ASCENDING),
+        ("recipient_role", ASCENDING),
+        ("category_id", ASCENDING),
+    ),
+    (
+        ("allocation_type", ASCENDING),
+        ("client_type", ASCENDING),
+        ("recipient_role", ASCENDING),
+        ("category_id", ASCENDING),
+    ),
+})
+
+
+def _is_legacy_incentive_rule_index(info: dict[str, Any]) -> bool:
+    """Return whether an index is the obsolete incentive-rule uniqueness constraint."""
+    return bool(info.get("unique")) and tuple(info.get("key", [])) in _LEGACY_INCENTIVE_RULE_INDEX_KEYS
+
 
 class MongoStartupError(RuntimeError):
     """A safe, categorized failure raised when MongoDB cannot initialize."""
@@ -503,81 +527,110 @@ class MongoStore:
                 self.db.orders.drop_index(name)
         self._create_index("orders", "quotation_id", unique=True, sparse=True)
         self._create_index("order_documents", "order_id", unique=True)
+        self._create_index("order_confirmations", "source_order_id", unique=True, sparse=True)
         self._create_index("payments", [("order_id", ASCENDING), ("status", ASCENDING)])
         self._create_index("user_bank_details", "user_id", unique=True)
         self._create_index("incentives", [("salesperson_id", ASCENDING), ("status", ASCENDING)])
         self._create_index("incentives", "order_id", unique=True)
         self._create_index("credit_notes", [("order_id", ASCENDING), ("created_at", DESCENDING)])
         self._create_index("incentive_adjustments", [("incentive_id", ASCENDING), ("created_at", DESCENDING)])
-        # Category is the configuration key.  Drop the pre-category product
-        # index when upgrading an existing Mongo database so multiple category
-        # rows can coexist for one user.
-        self._current_index_operation = "incentive_configurations.user_id_1_product_id_1.index_information"
-        if "user_id_1_product_id_1" in self.db.incentive_configurations.index_information():
-            self._current_index_operation = "incentive_configurations.user_id_1_product_id_1.drop"
-            self.db.incentive_configurations.drop_index("user_id_1_product_id_1")
-        self._create_index("incentive_configurations", [("user_id", ASCENDING), ("category_id", ASCENDING)], unique=True)
+        # Individual incentive configuration rows can be scoped by customer,
+        # product, category, client type, or allocation.  The old unique
+        # ``user_id + category_id`` index made those legitimate rows collide;
+        # migrate them to a deterministic configuration key and retain a
+        # non-unique lookup index for compatibility.
+        configurations = self.db.incentive_configurations
+        self._current_index_operation = "incentive_configurations.migrate_configuration_keys"
+
+        def _configuration_key(row: dict[str, Any]) -> str:
+            parts = (
+                str(row.get("user_id") or row.get("recipient_user_id") or "*"),
+                str(row.get("allocation_type") or "creator").strip().lower(),
+                str(row.get("scope") or "category").strip().lower(),
+                str(row.get("customer_id") or "*"),
+                str(row.get("product_id") or "*"),
+                str(row.get("category_id") or "*"),
+                str(row.get("client_type") or "*").strip().upper(),
+                str(row.get("role") or row.get("recipient_role") or "*").strip().lower(),
+            )
+            return "|".join(parts)
+
+        seen_configuration_keys: set[str] = set()
+        for row in configurations.find({}):
+            if row.get("configuration_key"):
+                key = str(row.get("configuration_key"))
+            else:
+                key = _configuration_key(row)
+            # Do not overwrite a colliding legacy row.  A stable suffix keeps
+            # both records available for an administrator to reconcile.
+            if key in seen_configuration_keys:
+                key = f"{key}|legacy:{row.get('_id')}"
+            seen_configuration_keys.add(key)
+            changes: dict[str, Any] = {"configuration_key": key}
+            if not row.get("status"):
+                changes["status"] = "ENABLED"
+            configurations.update_one({"_id": row.get("_id")}, {"$set": changes})
+        configuration_index_info = configurations.index_information()
+        for name, info in configuration_index_info.items():
+            if not info.get("unique"):
+                continue
+            key = list(info.get("key", []))
+            if key == [("user_id", ASCENDING), ("category_id", ASCENDING)] or key == [("user_id", ASCENDING), ("product_id", ASCENDING)]:
+                self._current_index_operation = f"incentive_configurations.{name}.drop"
+                configurations.drop_index(name)
+        self._create_index("incentive_configurations", "configuration_key", unique=True, sparse=True)
+        self._create_index("incentive_configurations", [("user_id", ASCENDING), ("category_id", ASCENDING)])
         # ``allocation_type`` is part of the rule scope: a manager override
         # and a creator rule may legitimately share client/role/category while
         # carrying different rates. Replace the legacy three-field unique
         # index before seeding those distinct scopes.
         incentive_rules = self.db.incentive_rules
-        legacy_rule_key = [("client_type", ASCENDING), ("recipient_role", ASCENDING), ("category_id", ASCENDING)]
-        self._current_index_operation = "incentive_rules.index_information"
-        for name, info in incentive_rules.index_information().items():
-            if info.get("unique") and list(info.get("key", [])) == legacy_rule_key:
-                self._current_index_operation = f"incentive_rules.{name}.drop"
-                incentive_rules.drop_index(name)
         # A database created before the corrected scope index may contain
-        # duplicate documents. Preserve the most recently updated active row
-        # and archive every other row before enforcing the new constraint.
-        grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        # duplicate documents. Never delete or overwrite administrator data
+        # during startup; require an explicit audited repair before enforcing
+        # the new constraint instead. Check before dropping the legacy index so
+        # a repair-required startup cannot leave the collection unprotected.
         self._current_index_operation = "incentive_rules.find"
-        for row in incentive_rules.find({}):
+        rule_rows = list(incentive_rules.find({}))
+        grouped: dict[tuple[str, str, str, str, str, str, str], list[dict[str, Any]]] = {}
+        for row in rule_rows:
             key = (
+                str(row.get("rule_kind") or "default").strip().lower(),
                 str(row.get("allocation_type") or ""),
                 str(row.get("client_type") or ""),
                 str(row.get("recipient_role") or ""),
                 str(row.get("category_id") or ""),
+                str(row.get("customer_id") or ""),
+                str(row.get("product_id") or ""),
             )
             grouped.setdefault(key, []).append(row)
         for key, rows in grouped.items():
             if len(rows) < 2:
                 continue
-            def _rule_timestamp(row: dict[str, Any]) -> datetime:
-                value = row.get("updated_at") or row.get("created_at")
-                if not isinstance(value, datetime):
-                    return datetime.min.replace(tzinfo=timezone.utc)
-                return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-            rows.sort(key=lambda row: (
-                row.get("active") is not False,
-                _rule_timestamp(row),
-                str(row.get("_id") or ""),
-            ), reverse=True)
-            winner = rows[0]
-            for duplicate in rows[1:]:
-                duplicate_id = duplicate.get("_id")
-                if not duplicate_id:
-                    continue
-                self._current_index_operation = f"incentive_rule_archives.duplicate:{duplicate_id}.replace"
-                self.db.incentive_rule_archives.replace_one(
-                    {"_id": f"duplicate:{duplicate_id}"},
-                    {
-                        "_id": f"duplicate:{duplicate_id}",
-                        "source_id": duplicate_id,
-                        "winner_id": winner.get("_id"),
-                        "scope": key,
-                        "reason": "duplicate_incentive_rule_scope",
-                        "archived_at": utcnow(),
-                        "document": duplicate,
-                    },
-                    upsert=True,
-                )
-                self._current_index_operation = f"incentive_rules.{duplicate_id}.delete"
-                incentive_rules.delete_one({"_id": duplicate_id})
+            self._current_index_operation = "incentive_rules.duplicate_check"
+            raise RuntimeError(
+                "Duplicate incentive rule identity requires an explicit audited repair "
+                f"before startup: scope={key} document_ids={[row.get('_id') for row in rows]}"
+            )
+        # Remove only the exact legacy uniqueness shapes. The replacement
+        # index below enforces the complete logical rule identity.
+        self._current_index_operation = "incentive_rules.index_information"
+        for name, info in incentive_rules.index_information().items():
+            if _is_legacy_incentive_rule_index(info):
+                self._current_index_operation = f"incentive_rules.{name}.drop"
+                incentive_rules.drop_index(name)
+        # Legacy rows pre-date ``rule_kind`` and are actual/default rules.
+        # Adding the field in place keeps their IDs and rates intact while
+        # allowing separate maximum/ceiling rows for the same business scope.
+        self._current_index_operation = "incentive_rules.migrate_rule_kind"
+        for row in rule_rows:
+            if "rule_kind" not in row:
+                incentive_rules.update_one({"_id": row.get("_id")}, {"$set": {"rule_kind": "default"}})
         self._create_index("incentive_rules", [
-            ("allocation_type", ASCENDING), ("client_type", ASCENDING),
-            ("recipient_role", ASCENDING), ("category_id", ASCENDING),
+            ("rule_kind", ASCENDING), ("allocation_type", ASCENDING),
+            ("client_type", ASCENDING), ("recipient_role", ASCENDING),
+            ("category_id", ASCENDING), ("customer_id", ASCENDING),
+            ("product_id", ASCENDING),
         ], unique=True, sparse=True)
         self._create_index("incentive_allocations", [("incentive_id", ASCENDING), ("recipient_user_id", ASCENDING)])
         self._create_index("incentive_allocations", "allocation_key", unique=True, sparse=True)
@@ -613,7 +666,14 @@ class MongoStore:
     def upsert_one(self, collection: str, query: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
         """Insert a document if its business key is absent; never overwrite it."""
         now = utcnow()
-        insert_document = {**copy.deepcopy(document), "created_at": now, "updated_at": now}
+        # Mongo upserts do not copy equality predicates into the inserted row.
+        # Persist the business key too, otherwise a restart can seed a second
+        # row because the next lookup cannot find the first one.
+        equality_fields = {
+            key: value for key, value in query.items()
+            if not key.startswith("$") and not isinstance(value, dict)
+        }
+        insert_document = {**equality_fields, **copy.deepcopy(document), "created_at": now, "updated_at": now}
         return self.db[collection].find_one_and_update(
             query,
             {"$setOnInsert": insert_document},

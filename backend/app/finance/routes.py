@@ -64,7 +64,7 @@ def _parse_date(value: object, *, required: bool = True):
 
 
 def _order(order_id: str):
-    return _store().find_one("orders", {"_id": order_id})
+    return _store().find_one("orders", {"_id": order_id}) or _store().find_one("order_confirmations", {"_id": order_id})
 
 
 def _incentive_order(row: dict):
@@ -471,6 +471,59 @@ def _enrich_payment_rows(rows: list[dict]) -> list[dict]:
     return enriched
 
 
+def _is_final_invoice(row: dict) -> bool:
+    """Recognize current and historical Order Confirmations for finance totals."""
+    record_type = str(row.get("record_type") or "").upper()
+    order_kind = str(row.get("order_kind") or "").upper()
+    if record_type == "ORDER" or order_kind == "WORKING":
+        return False
+    if record_type == "ORDER_CONFIRMATION":
+        return True
+    if bool(row.get("finalized")):
+        return True
+    if str(row.get("document_type") or "").casefold() == "order_confirmation":
+        return True
+    if str(row.get("lifecycle_state") or "").upper() in {"FINAL", "FINALIZED"}:
+        return True
+    metadata_fields = ("record_type", "order_kind", "lifecycle_state", "document_type")
+    return not any(row.get(field) for field in metadata_fields) and str(row.get("order_number") or "").upper().startswith("MT-OC-")
+
+
+def _payment_summary(rows: list[dict], actor: dict) -> dict:
+    """Return finance aggregates from the actor's authorized immutable OCs."""
+    store = _store()
+    confirmed = [row for row in rows if str(row.get("status") or "").upper() == PAYMENT_STATUS_CONFIRMED]
+    awaiting = [row for row in rows if str(row.get("status") or "").upper() in {PAYMENT_STATUS_AWAITING, "AWAITING BANK CONFIRMATION"}]
+    current, _ = store.list("order_confirmations", {"status": {"$ne": "Deleted"}}, limit=100_000)
+    legacy, _ = store.list("orders", {"status": {"$ne": "Deleted"}}, limit=100_000)
+    invoices_by_id = {
+        str(row.get("_id")): row
+        for row in [*current, *legacy]
+        if row.get("_id") and _is_final_invoice(row) and _can_access_order(row, actor)
+    }
+    outstanding = 0.0
+    customer_credit = 0.0
+    for invoice in invoices_by_id.values():
+        invoice_id = str(invoice.get("_id") or "")
+        linked_rows, _ = store.list(
+            "payments",
+            {"$or": [{"order_id": invoice_id}, {"oc_id": invoice_id}]},
+            limit=100_000,
+        )
+        rollup = payment_rollup(invoice, linked_rows)
+        outstanding += money(rollup.get("remaining_balance"))
+        customer_credit += money(rollup.get("customer_credit"))
+    return {
+        "total_payments": len(rows),
+        "confirmed_received": money(sum(money(row.get("amount")) for row in confirmed)),
+        "awaiting_confirmation": len(awaiting),
+        "outstanding": money(outstanding),
+        "customer_credit": money(customer_credit),
+        "invoice_count": len(invoices_by_id),
+        "currency": "EUR",
+    }
+
+
 def _validate_banking_payload(payload: dict) -> dict[str, str]:
     fields = {
         "customer_id": "Customer",
@@ -604,20 +657,21 @@ def list_payments():
         # of the operational Banking list.
         query["status"] = {"$ne": PAYMENT_STATUS_DELETED}
     if order_id:
-        query["order_id"] = order_id
+        query["$or"] = [{"order_id": order_id}, {"oc_id": order_id}]
         order = _order(order_id)
         if not order:
-            return failure("Order Confirmation not found", status=404)
+            return failure("Order not found", status=404)
         if not global_scope and not _can_access_order(order, user):
             return failure("Payment access denied", status=403)
     if not global_scope:
         rows, _ = store.list("payments", query, limit=100_000)
         rows = [row for row in rows if _can_view_payment(row, user)]
         rows = _enrich_payment_rows(rows)
-        return success({"items": rows, "total": len(rows)})
-    rows, total = store.list("payments", query, limit=min(int(request.args.get("limit", 100)), 500))
+        return success({"items": rows, "total": len(rows), "summary": _payment_summary(rows, user)})
+    summary_rows, total = store.list("payments", query, limit=100_000)
+    rows = summary_rows[:min(int(request.args.get("limit", 100)), 500)]
     rows = _enrich_payment_rows(rows)
-    return success({"items": rows, "total": total})
+    return success({"items": rows, "total": total, "summary": _payment_summary(summary_rows, user)})
 
 
 @bp.get("/payments/<payment_id>/proof")
@@ -647,7 +701,7 @@ def create_payment():
     order_id = str(payload.get("order_id") or payload.get("oc_id") or "").strip()
     order = _order(order_id)
     if not order:
-        return failure("Order Confirmation not found", status=404, error="order_not_found")
+        return failure("Order not found", status=404, error="order_not_found")
     customer_id = _order_customer_id(order)
     user = current_user() or {}
     if not _can_create_payment(user):
@@ -660,8 +714,6 @@ def create_payment():
             return failure("Please correct the payment details", status=422, error="invalid_payment_fields", details={"fields": errors})
     if not _can_record_payment(order, user):
         return failure("Payment access denied", status=403)
-    if order.get("financial_locked") and not _superadmin() and _confirmed_payment_total(order_id) >= _invoice_amount(order):
-        return failure("Confirmed financial records are locked", status=423, error="financial_record_locked")
     amount = money(payload.get("payment_amount", payload.get("amount")))
     payment_date = _parse_date(payload.get("payment_date"))
     if amount <= 0 or payment_date is None:
@@ -1338,7 +1390,18 @@ def list_credit_notes():
     if str(user.get("role_id") or "") != "superadmin":
         rows = [row for row in rows if (_order(str(row.get("order_id") or row.get("oc_id") or "")) and _can_access_order(_order(str(row.get("order_id") or row.get("oc_id") or "")), user))]
         total = len(rows)
-    return success({"items": rows, "total": total})
+    enriched = []
+    for row in rows:
+        order = _order(str(row.get("order_id") or row.get("oc_id") or "")) or {}
+        customer = order.get("customer_snapshot") or order.get("customer_company_snapshot") or row.get("customer_snapshot") or {}
+        enriched.append({
+            **row,
+            "order_number": order.get("order_number") or order.get("oc_number") or row.get("order_id") or row.get("oc_id"),
+            "customer_name": customer.get("company_name") or customer.get("name") or order.get("customer_id"),
+            "order_total": _invoice_amount(order),
+            "currency": str(order.get("currency") or row.get("currency") or "EUR"),
+        })
+    return success({"items": enriched, "total": total})
 
 
 @bp.post("/credit-notes")

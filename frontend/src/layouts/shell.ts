@@ -72,9 +72,10 @@ const navGroups: NavGroup[] = [
   ] },
   { key: "users-access", label: "Users & Access", icon: "users", items: [
     { id: "user-list", label: "Users", path: "/users", icon: "users", permission: "users.view" },
-    { id: "roles-permissions", label: "Roles & Permissions", path: "/users?section=roles", icon: "shield-check", permission: "users.view" },
-    { id: "customer-assignments", label: "Customer Assignments", path: "/users?section=assignments", icon: "building-2", permission: "users.view" },
-    { id: "activity-devices", label: "Activity / Login Devices", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
+    { id: "roles-permissions", label: "Roles & Permissions", path: "/roles-permissions", icon: "shield-check", permission: "roles.view", roles: ["superadmin"] },
+    { id: "customer-assignments", label: "Customer Assignments", path: "/customer-assignments", icon: "building-2", permission: "users.view" },
+    { id: "activity", label: "Activity", path: "/activity", icon: "history", permission: "audit_logs.view", roles: ["superadmin", "admin"] },
+    { id: "login-devices", label: "Login Devices", path: "/login-devices", icon: "monitor-smartphone", permission: "users.view", roles: ["superadmin", "admin"] },
   ] },
   { key: "my-account", label: "My Account", icon: "user-round", items: [
     { id: "my-account-profile", label: "My Account", path: "/profile", icon: "user-round", permission: "account.view" },
@@ -86,7 +87,6 @@ const navGroups: NavGroup[] = [
   { key: "account-admin", label: "Account", icon: "user-round", items: [
     { id: "account-settings", label: "Account Settings", path: "/profile", icon: "user-round", permission: "account.view" },
     { id: "account-security", label: "Security", path: "/settings/security", icon: "shield-check", permission: "account.view" },
-    { id: "login-activity", label: "Login Activity", path: "/users?section=devices", icon: "monitor-smartphone", permission: "users.view" },
     { id: "account-price-lists", label: "Price Lists", path: "/account/price-lists", icon: "files", permission: "account.view" },
   ] },
   { key: "incentives-admin", label: "Incentives", icon: "badge-euro", items: [

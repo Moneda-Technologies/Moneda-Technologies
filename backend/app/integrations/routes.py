@@ -92,7 +92,10 @@ def add_zoho_routing_recipient():
     if any((row.get("email") or row.get("address")) == email and row.get("enabled") for row in _routing_service().display().get(opposite, [])):
         return failure("This recipient is already enabled in the other routing group", status=409, error="RECIPIENT_DUPLICATE_ROUTE")
     try:
-        row = _routing_service().add(group, email, str(payload.get("display_name") or "").strip() or None, str((current_user() or {}).get("_id") or ""))
+        price_list_ids = payload.get("price_list_ids") or []
+        if not isinstance(price_list_ids, list) or any(not str(value).strip() for value in price_list_ids):
+            return failure("price_list_ids must be an array of non-empty IDs", status=422)
+        row = _routing_service().add(group, email, str(payload.get("display_name") or "").strip() or None, str((current_user() or {}).get("_id") or ""), price_list_ids)
     except ValueError as exc:
         return failure(str(exc), status=409, error="RECIPIENT_DUPLICATE")
     audit(f"EMAIL_{group.upper()}_ADDED", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "source": "custom"})
@@ -120,7 +123,12 @@ def update_zoho_routing_recipient():
     row = _routing_service().update_enabled(group, email, enabled)
     if not row:
         return failure("Recipient not found", status=404)
-    audit(f"EMAIL_{group.upper()}_{'ENABLED' if enabled else 'DISABLED'}", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "previous_state": not enabled, "new_state": enabled, "reason": reason})
+    scope = payload.get("price_list_ids")
+    if scope is not None:
+        if not isinstance(scope, list) or any(not str(value).strip() for value in scope):
+            return failure("price_list_ids must be an array of non-empty IDs", status=422)
+        row = _routing_service().update_price_list_scope(group, email, scope) or row
+    audit(f"EMAIL_{group.upper()}_{'ENABLED' if enabled else 'DISABLED'}", "email_routing_recipient", str(row.get("_id")), {"email": email, "group": group, "previous_state": not enabled, "new_state": enabled, "price_list_ids": row.get("price_list_ids", []), "reason": reason})
     return success(row, "Routing recipient updated")
 
 

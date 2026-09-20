@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, request
 
 from app.api.responses import failure, success
-from app.middleware.access import current_user, customer_id_from, customer_record, enforce_active_customer, permission_required
+from app.middleware.access import current_user, customer_id_from, customer_record, enforce_active_customer, enforce_customer, permission_required
 from app.pricing.engine import (
     PricingUnavailable, calculate_line, calculate_quote_totals,
     configuration_fingerprint, resolve_product_adjustments, with_display_currency, validate_blanket_machine_selection,
@@ -149,10 +149,11 @@ def get_cart():
     })
 
 
-def _calculate(payload: dict):
+def _calculate(payload: dict, *, customer_id_override: str | None = None, require_active_context: bool = True):
     store = current_app.extensions["store"]
-    customer_id = customer_id_from(payload)
-    if not enforce_active_customer(customer_id):
+    customer_id = customer_id_override or customer_id_from(payload)
+    allowed = enforce_active_customer(customer_id) if require_active_context else enforce_customer(customer_id)
+    if not allowed:
         raise PermissionError("Customer access denied")
     customer_company = customer_record(customer_id)
     product = get_active_catalog_product(store, payload.get("product_id"))

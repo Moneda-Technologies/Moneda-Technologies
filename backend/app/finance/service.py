@@ -11,13 +11,14 @@ from app.services.business_logic import (
     manager_snapshot,
     normalize_client_type,
     normalize_price_list_account_type,
+    resolve_incentive_configuration,
     resolve_incentive_rate,
     validate_customer_incentive_config,
 )
 
 
 INCENTIVE_ELIGIBLE_ROLES = frozenset({"admin", "manager_sales_admin", "user"})
-INCENTIVE_PERCENTAGES = frozenset(index / 2 for index in range(0, 13))
+INCENTIVE_PERCENTAGES = frozenset(index / 2 for index in range(0, 201))
 # Incentives are configured against the product family/category, never against
 # an individual product.  These IDs match the authoritative catalogue family
 # IDs used by the products collection.
@@ -180,12 +181,13 @@ def payment_rollup(order: dict[str, Any], payments: list[dict[str, Any]]) -> dic
 def sync_order_payment_state(store: Any, order_id: str) -> dict[str, Any] | None:
     order = store.find_one("orders", {"_id": order_id})
     if not order:
+        order = store.find_one("order_confirmations", {"_id": order_id})
+    if not order:
         return None
-    payments, _ = store.list(
-        "payments",
-        {"$or": [{"order_id": order_id}, {"oc_id": order_id}]},
-        limit=100_000,
-    )
+    ids = {str(order_id)}
+    if order.get("source_order_id"):
+        ids.add(str(order.get("source_order_id")))
+    payments, _ = store.list("payments", {"$or": [{"order_id": value} for value in ids] + [{"oc_id": value} for value in ids]}, limit=100_000)
     rollup = payment_rollup(order, payments)
     order_changes = {
         "payment_status": rollup["payment_status"],
@@ -196,8 +198,59 @@ def sync_order_payment_state(store: Any, order_id: str) -> dict[str, Any] | None
         "pending_payment_count": rollup["pending_payment_count"],
         "financial_locked": rollup["payment_status"] == "PAID",
     }
-    updated = store.update_one("orders", {"_id": order_id}, order_changes) or {**order, **order_changes}
-    if order.get("quotation_id"):
+    # Working Orders remain editable after a receipt is confirmed; only the
+    # final OC is immutable. Payment state is derived here rather than from a
+    # client status field so every payment path follows the same transitions.
+    if str(order.get("record_type") or "").upper() == "ORDER" and not order.get("finalized"):
+        terms = str(order.get("payment_terms") or "Advance").strip()
+        if terms == "Advance":
+            if rollup["invoice_status"] == "PAID":
+                order_changes.update({
+                    "payment_workflow_state": "PAYMENT_CONFIRMED",
+                    "lifecycle_state": "READY_TO_FINALIZE",
+                    "order_status": "READY_TO_FINALIZE",
+                    "status": "Ready to Finalize",
+                })
+            elif rollup["pending_payment_count"]:
+                order_changes.update({
+                    "payment_workflow_state": "PAYMENT_RECORDED",
+                    "lifecycle_state": "PAYMENT_RECORDED",
+                    "order_status": "PAYMENT_RECORDED",
+                    "status": "Payment Recorded",
+                })
+            else:
+                order_changes.update({
+                    "payment_workflow_state": "AWAITING_PAYMENT",
+                    "lifecycle_state": "AWAITING_PAYMENT",
+                    "order_status": "AWAITING_PAYMENT",
+                    "status": "Awaiting Payment",
+                })
+        elif order.get("materials_ready_for_dispatch"):
+            order_changes.update({
+                "lifecycle_state": "READY_FOR_DISPATCH",
+                "order_status": "READY_FOR_DISPATCH",
+                "status": "Ready for Dispatch",
+            })
+        else:
+            order_changes.update({
+                "lifecycle_state": "WORKING",
+                "order_status": "WORKING",
+                "status": "Working",
+            })
+    target_collection = "orders" if store.find_one("orders", {"_id": order_id}) else "order_confirmations"
+    updated = store.update_one(target_collection, {"_id": order_id}, order_changes) or {**order, **order_changes}
+    # A final OC owns an immutable snapshot, but its live payment rollup must
+    # stay in sync with the working Order that carries post-finalization bank
+    # receipts.  Never rewrite its commercial lines or incentive snapshots.
+    final_id = str(order.get("final_oc_id") or "")
+    if final_id:
+        store.update_one("order_confirmations", {"_id": final_id}, order_changes)
+    final_rows, _ = store.list("order_confirmations", {"source_order_id": order_id}, limit=10)
+    for final_row in final_rows:
+        store.update_one("order_confirmations", {"_id": final_row.get("_id")}, order_changes)
+    # Converted working Orders and final OCs must not mutate their source
+    # quotation. Keep the mirror only for legacy order records.
+    if order.get("quotation_id") and str(order.get("record_type") or "").upper() not in {"ORDER", "ORDER_CONFIRMATION"}:
         store.update_one("quotations", {"_id": order.get("quotation_id")}, {
             "payment_status": rollup["payment_status"],
             "confirmed_received": rollup["confirmed_received"],
@@ -376,18 +429,18 @@ def build_incentive_lines(
             continue
         if category_id not in INCENTIVE_CATEGORIES:
             raise IncentiveConfigurationError(category_id, category_id, product_name)
-        rate = resolve_incentive_rate(
+        resolved = resolve_incentive_configuration(
             store, recipient=recipient, client_type=order.get("client_type_at_creation"),
             category_id=category_id, customer_id=order.get("customer_id"),
-            allocation_type=allocation_type, prefer_persisted_rules=True,
+            product_id=product_id, allocation_type=allocation_type,
         )
-        if rate is None:
-            # Preserve the pre-restructure validation behavior for legacy
-            # users while allowing new users (which carry an empty map) to
-            # resolve the configured client-type defaults.
-            rate = incentive_rate_for_category(recipient, category_id, allow_legacy=True)
-        if rate is None:
-            raise IncentiveConfigurationError(category_id, INCENTIVE_CATEGORIES[category_id], product_name)
+        status = str(resolved.get("status") or "NOT_CONFIGURED").upper()
+        configured_rate = resolved.get("rate")
+        eligible = status == "ENABLED" and configured_rate is not None and float(configured_rate) > 0
+        # Missing, disabled, and explicit 0% configurations are valid opt-out
+        # states. Snapshot them as zero instead of blocking OC finalization or
+        # inventing a role-derived percentage.
+        rate = float(configured_rate or 0)
         amount = _line_amount(line)
         snapshots.append({
             "oc_line_id": str(line.get("_id") or line.get("line_id") or index),
@@ -398,6 +451,17 @@ def build_incentive_lines(
             "product_amount": amount,
             "incentive_rate_snapshot": rate,
             "incentive_amount": money(amount * rate / 100),
+            "incentive_eligible_snapshot": eligible,
+            # These fields are immutable OC-time metadata.  They make the
+            # source/ceiling explicit without ever recalculating history when
+            # an administrator changes future configuration.
+            "incentive_config_status": status,
+            "incentive_config_source": resolved.get("source"),
+            "incentive_rule_id": resolved.get("rule_id"),
+            "maximum_rate_snapshot": resolved.get("maximum_rate"),
+            "incentive_base_type_snapshot": resolved.get("incentive_base_type") or "OC_NET_AMOUNT",
+            "effective_from_snapshot": resolved.get("effective_from"),
+            "effective_to_snapshot": resolved.get("effective_to"),
             "allocation_type": allocation_type,
             "recipient_user_id": (recipient or {}).get("_id"),
             "recipient_role": str((recipient or {}).get("role_id") or "user"),
@@ -559,6 +623,15 @@ def create_incentive_for_order(store: Any, order: dict[str, Any], salesperson: d
     rates = {float(line.get("incentive_rate_snapshot") or 0) for line in internal_lines}
     rate = next(iter(rates)) if len(rates) == 1 else None
     now = utcnow()
+    pricing_snapshot_at = order.get("finalized_at") or now
+    incentive_source_context = {
+        "source": "working_order_finalization",
+        "order_id": order.get("source_order_id") or order.get("_id"),
+        "oc_id": order.get("_id"),
+        "quotation_id": order.get("quotation_id"),
+        "pricing_snapshot_at": pricing_snapshot_at,
+        "master_currency": order.get("master_currency") or "EUR",
+    }
     document = {
         "order_id": order.get("_id"),
         "oc_id": order.get("_id"),
@@ -578,6 +651,10 @@ def create_incentive_for_order(store: Any, order: dict[str, Any], salesperson: d
         "bearer_name_snapshot": customer_snapshot.get("bearer_name_snapshot") if customer_snapshot else None,
         "bearer_designation_snapshot": customer_snapshot.get("designation_snapshot") if customer_snapshot else None,
         "incentive_base": "OC_NET_AMOUNT",
+        "incentive_calculated_at": now,
+        "incentive_source_context": incentive_source_context,
+        "pricing_snapshot_at": pricing_snapshot_at,
+        "pricing_snapshot_source": "server_recalculated_at_finalization",
         "order_number": order.get("order_number"),
         "oc_number": order.get("order_number"),
         "order_amount": amount,
@@ -650,6 +727,21 @@ def validate_incentive_configuration(store: Any, order: dict[str, Any], salesper
 
 def activate_incentive(store: Any, order_id: str, confirmed_at) -> dict[str, Any] | None:
     incentive = store.find_one("incentives", {"order_id": order_id})
+    if not incentive:
+        working = store.find_one("orders", {"_id": order_id})
+        final_id = str((working or {}).get("final_oc_id") or "")
+        if final_id:
+            incentive = store.find_one("incentives", {"order_id": final_id})
+    if not incentive:
+        final = store.find_one("order_confirmations", {"_id": order_id})
+        source_order_id = str((final or {}).get("source_order_id") or "")
+        if source_order_id:
+            incentive = store.find_one("incentives", {"order_id": order_id}) or store.find_one("incentives", {"order_id": source_order_id})
+            if not incentive:
+                source_order = store.find_one("orders", {"_id": source_order_id}) or {}
+                final_id = str(source_order.get("final_oc_id") or "")
+                if final_id:
+                    incentive = store.find_one("incentives", {"order_id": final_id})
     if not incentive:
         return None
     # Payment confirmation may be retried.  Activation is a one-way, repeatable

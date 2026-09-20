@@ -268,10 +268,16 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
             and request.path.endswith("/pdf")
             and request.args.get("preview") == "true"
         )
-        if quotation_pdf_preview:
-            # The authenticated PDF is intentionally embedded by the Moneda
-            # frontend. Keep framing closed to every origin except configured
-            # application origins; all other responses retain DENY below.
+        price_list_pdf_preview = (
+            request.method == "GET"
+            and request.path.startswith("/api/v1/price-lists/")
+            and request.path.endswith("/document")
+            and request.args.get("download") != "1"
+        )
+        if quotation_pdf_preview or price_list_pdf_preview:
+            # Authenticated PDFs are intentionally embedded by the Moneda
+            # frontend. Keep framing closed to configured application origins;
+            # all other responses retain DENY below.
             response.headers.pop("X-Frame-Options", None)
             frame_sources = {"'self'", app.config["FRONTEND_ORIGIN"], app.config["APP_BASE_URL"]}
             response.headers.setdefault("Content-Security-Policy", f"frame-ancestors {' '.join(sorted(frame_sources))}")

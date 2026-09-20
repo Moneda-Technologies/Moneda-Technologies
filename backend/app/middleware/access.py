@@ -85,7 +85,11 @@ def permission_required(permission: str) -> Callable[[F], F]:
             blocked = enforce_device_access(user)
             if blocked is not None:
                 return blocked
-            if permission not in user.get("permissions", []):
+            # Existing installations can have a stale permission array even
+            # though the canonical role is still Superadmin. Keep the role
+            # boundary authoritative after authentication/device checks.
+            is_superadmin = str(user.get("role_id") or "") == "superadmin"
+            if permission not in user.get("permissions", []) and not is_superadmin:
                 if permission == "quotations.send":
                     current_app.logger.info(
                         "quotation_send_authorization quotation_id=%s user_authorized=false permission=%s result=FAIL",
