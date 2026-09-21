@@ -187,22 +187,13 @@ function quotationRows(quotations: Quotation[], emptyTitle = "No quotations matc
   if (!quotations.length) return `<div class="quotation-empty">${emptyState("file-text", emptyTitle, emptyCopy)}</div>`;
   const canSend = appStore.can("quotations.send");
   const canDownload = appStore.can("quotations.download");
-  // Quotations follow a two-step lifecycle: active records are archived first,
-  // and only a Superadmin may permanently delete an archived record. Keep the
-  // UI aligned with the server guard so a trash action is never shown for an
-  // active quotation (or to a non-Superadmin).
   const canArchive = appStore.can("quotations.archive");
   const canDelete = appStore.state.user?.role_id === "superadmin" && appStore.can("quotations.delete");
   const canRestore = appStore.can("quotations.restore");
   const rows = quotations.map((quote) => {
     const status = quote.status.toLowerCase();
+    const historical = status.includes("legacy order confirmation") || status === "legacy oc" || Boolean(quote.converted_oc_id);
     const resend = status === "sent" || status === "send_failed";
-    const sendAction = canSend && (status === "draft" || resend)
-      ? `<button class="icon-button send-quote" data-id="${escapeHtml(quote._id)}" aria-label="${resend ? "Send quotation again" : "Send quotation"}" title="${resend ? "Send quotation again" : "Send quotation"}"><i data-lucide="mail"></i></button>`
-      : "";
-    const lifecycleAction = status === "archived"
-      ? `${canRestore ? `<button class="icon-button restore-quote" data-id="${escapeHtml(quote._id)}" aria-label="Restore quotation" title="Restore quotation"><i data-lucide="archive-restore"></i></button>` : ""}${canDelete ? `<button class="icon-button delete-quote" data-id="${escapeHtml(quote._id)}" aria-label="Delete quotation" title="Delete quotation"><i data-lucide="trash-2"></i></button>` : ""}`
-      : canArchive ? `<button class="icon-button archive-quote" data-id="${escapeHtml(quote._id)}" aria-label="Archive quotation" title="Archive quotation"><i data-lucide="archive"></i></button>` : "";
     const converted = new Set(["converted to order", "converted_to_order", "converted"]).has(status);
     const linkedOrder = quote.converted_order_id && quote.converted_order_number
       ? `<a class="quotation-linked-order" href="/orders/${encodeURIComponent(quote.converted_order_id)}" data-route="/orders/${encodeURIComponent(quote.converted_order_id)}"><i data-lucide="shopping-bag"></i>${escapeHtml(quote.converted_order_number)}</a>`
@@ -211,7 +202,12 @@ function quotationRows(quotations: Quotation[], emptyTitle = "No quotations matc
       ? `<a class="quotation-linked-order is-legacy" href="/order-confirmations/${encodeURIComponent(quote.converted_oc_id)}" data-route="/order-confirmations/${encodeURIComponent(quote.converted_oc_id)}"><i data-lucide="file-check-2"></i>${escapeHtml(quote.converted_oc_number)}</a>`
       : "";
     const hasConversion = converted || Boolean(linkedOrder) || Boolean(linkedLegacyOc);
-    return `<tr><td><strong>${escapeHtml(quote.quotation_number)}</strong><small>${quote.lines.length} line${quote.lines.length === 1 ? "" : "s"}</small></td><td>${escapeHtml(quote.customer_snapshot?.company_name ?? quote.customer_snapshot?.name ?? "Customer")}</td><td><div class="quotation-status-cell">${statusBadge(quote.status)}${linkedOrder || linkedLegacyOc}</div></td><td>${formatDate(quote.created_at)}</td><td><span class="currency-tag">${escapeHtml(quote.currency)}</span></td><td class="money">${formatMoney(quote.totals.grand_total, quote.currency)}</td><td><div class="row-actions"><a class="icon-button" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank" aria-label="View quotation" title="View quotation"><i data-lucide="eye"></i></a>${!hasConversion ? `<button class="icon-button convert-quote" data-id="${escapeHtml(quote._id)}" aria-label="Convert to order" title="Convert to order"><i data-lucide="shopping-bag"></i></button>` : ""}${canDownload ? `<a class="icon-button" href="${quotationPdfUrl(quote._id)}" aria-label="Download PDF" title="Download PDF"><i data-lucide="download"></i></a><button class="icon-button print-quote" data-id="${escapeHtml(quote._id)}" aria-label="Print quotation" title="Print quotation"><i data-lucide="printer"></i></button>` : ""}${sendAction}${canSend ? `<button class="icon-button whatsapp-quote" data-id="${escapeHtml(quote._id)}" aria-label="Send via WhatsApp" title="Send via WhatsApp"><i data-lucide="message-circle"></i></button>` : ""}${lifecycleAction}</div></td></tr>`;
+    const lifecycleActions = status === "archived"
+      ? `${canRestore ? `<button type="button" class="restore-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="archive-restore"></i>Restore quotation</button>` : ""}${canDelete ? `<button type="button" class="delete-quote danger" data-id="${escapeHtml(quote._id)}"><i data-lucide="trash-2"></i>Delete permanently</button>` : ""}`
+      : canArchive && !historical ? `<button type="button" class="archive-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="archive"></i>Archive quotation</button>` : "";
+    const moreActions = `${!hasConversion && !historical ? `<button type="button" class="convert-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="shopping-bag"></i>Convert to working Order</button>` : ""}${canDownload ? `<a href="${quotationPdfUrl(quote._id)}"><i data-lucide="download"></i>Download PDF</a><button type="button" class="print-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="printer"></i>Print</button>` : ""}${canSend && (status === "draft" || resend) ? `<button type="button" class="send-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="mail"></i>${resend ? "Send again" : "Send email"}</button>` : ""}${canSend && !historical ? `<button type="button" class="whatsapp-quote" data-id="${escapeHtml(quote._id)}"><i data-lucide="message-circle"></i>Send via WhatsApp</button>` : ""}${lifecycleActions}`;
+    const lifecycleLabel = historical ? "Legacy OC" : quote.status;
+    return `<tr><td><strong>${escapeHtml(quote.quotation_number)}</strong><small>${quote.lines.length} line${quote.lines.length === 1 ? "" : "s"}</small></td><td>${escapeHtml(quote.customer_snapshot?.company_name ?? quote.customer_snapshot?.name ?? "Customer")}</td><td><div class="quotation-status-cell">${statusBadge(lifecycleLabel)}${linkedOrder || linkedLegacyOc}</div></td><td>${formatDate(quote.created_at)}</td><td><span class="currency-tag">${escapeHtml(quote.currency)}</span></td><td class="money">${formatMoney(quote.totals.grand_total, quote.currency)}</td><td><div class="row-actions"><a class="button button-secondary table-primary-action" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank" aria-label="View quotation">View</a>${moreActions ? `<details class="table-action-menu"><summary class="button button-quiet">More<i data-lucide="chevron-down"></i></summary><div class="table-action-menu__popover">${moreActions}</div></details>` : ""}</div></td></tr>`;
   }).join("");
   return `<div class="data-table panel"><table><thead><tr><th>Quotation</th><th>Customer</th><th>Status</th><th>Created</th><th>Currency</th><th>Total</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }

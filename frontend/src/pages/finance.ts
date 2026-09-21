@@ -500,7 +500,7 @@ export async function paymentsPage(): Promise<HTMLElement> {
       }).join("");
       tableHost.innerHTML = visible.length
         ? `<div class="data-table panel banking-table"><table><thead><tr><th>Payment ID</th><th>Customer</th><th>Invoice / OC</th><th>Payment date</th><th>Invoice amount</th><th>Payment amount</th><th>Balance</th><th>Status</th><th>Payment mode</th><th>UTR / reference</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-        : emptyState("landmark", items.length ? "No matching payments" : "No payments found", items.length ? "Adjust the filters or record a new payment." : "Payment records will appear here after a payment is recorded.");
+         : emptyState("landmark", items.length ? "No matching payments" : "No payments yet", items.length ? "Adjust the filters or record a new payment." : "Record a payment against an invoice to see payment history here.");
       tableHost.querySelectorAll<HTMLButtonElement>("[data-payment-view], [data-payment-edit]").forEach((button) => button.addEventListener("click", () => {
         const id = button.dataset.paymentView || button.dataset.paymentEdit;
         const record = items.find((item) => String(item._id) === String(id));

@@ -56,8 +56,8 @@ def test_active_payment_must_be_voided_before_oc_delete_and_unpaid_incentive_is_
 
     deleted = authenticated.delete(f"/api/v1/orders/{order['_id']}", json={"reason": "remove test OC"})
     assert deleted.status_code == 200
-    assert deleted.json["data"]["quotation_restored"] is True
-    assert store.find_one("quotations", {"_id": quotation["_id"]})["status"] == "Sent"
+    assert deleted.json["data"]["quotation_restored"] is False
+    assert store.find_one("quotations", {"_id": quotation["_id"]})["status"] == "Converted to Order"
     assert store.find_one("incentives", {"_id": incentive["_id"]})["status"] == "CANCELLED"
     assert store.find_one("incentive_allocations", {"_id": allocation["_id"]})["status"] == "CANCELLED"
 

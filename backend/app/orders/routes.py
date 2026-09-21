@@ -299,8 +299,14 @@ def _working_order_for_quotation(store, quotation_id: str) -> dict | None:
     ``quotation_id``.  Those records are deliberately not treated as working
     Orders and must never be reopened or returned as an idempotent conversion.
     """
-    record = store.find_one("orders", {"quotation_id": quotation_id})
-    return record if record and not _is_final_confirmation_record(record) else None
+    records, _ = store.list(
+        "orders",
+        {"quotation_id": quotation_id, "status": {"$ne": "Deleted"}},
+        limit=100,
+        sort="created_at",
+        direction=-1,
+    )
+    return next((record for record in records if not _is_final_confirmation_record(record)), None)
 
 
 def _link_quotation_to_working_order(store, quotation: dict, order: dict) -> dict | None:
@@ -325,6 +331,7 @@ def _link_quotation_to_working_order(store, quotation: dict, order: dict) -> dic
         "converted_oc_id": None,
         "converted_oc_number": None,
         "converted_at": quotation.get("converted_at") or now,
+        "source_status_before_conversion": quotation.get("status") if str(quotation.get("status") or "").casefold() != "converted to order" else quotation.get("source_status_before_conversion", "Sent"),
         "history": history,
     })
 
@@ -817,19 +824,23 @@ def delete_order(order_id: str):
         "previous_state": order.get("status", "Pending"),
         "linked_records": linked_counts, "incentives": incentive_result,
     })
-    # Deleting a working Order must not reopen or otherwise mutate its source
-    # quotation.  The quotation remains the immutable commercial source while
-    # the working Order is the editable fulfilment record.  Only legacy/final
-    # Order Confirmation deletes retain the historical restoration behaviour.
+    # Deleting a working Order releases its source quotation. Final/legacy OCs
+    # remain historical and never trigger quotation restoration.
     quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "")
     quotation_restored = False
-    if quotation_id and is_final_confirmation:
+    if quotation_id and not is_final_confirmation:
         quotation = store.find_one("quotations", {"_id": quotation_id})
-        if quotation and str(quotation.get("status") or "").casefold() == "converted to order":
-            quotation_history = [*(quotation.get("history") or []), {"status": "Sent", "at": now, "by": actor_id, "reason": "Order Confirmation deleted", "order_id": order_id}]
+        linked_order_id = str(quotation.get("converted_order_id") or "") if quotation else ""
+        if quotation and linked_order_id == order_id and str(quotation.get("status") or "").casefold() == "converted to order":
+            restored_status = str(order.get("source_status_before_conversion") or quotation.get("source_status_before_conversion") or "Sent")
+            if restored_status.casefold() in {"converted to order", "converted", "converted_to_order", ""}:
+                restored_status = "Sent"
+            quotation_history = [*(quotation.get("history") or []), {"status": restored_status, "at": now, "by": actor_id, "reason": "Working Order deleted", "order_id": order_id}]
             relationship_reset = {
-                "status": "Sent", "history": quotation_history,
-                "converted_order_id": None, "converted_oc_id": None, "converted_at": None,
+                "status": restored_status, "history": quotation_history,
+                "converted_order_id": None, "converted_order_number": None,
+                "converted_oc_id": None, "converted_oc_number": None,
+                "converted_at": None,
             }
             # These legacy aliases are only cleared when they point to the
             # order being deleted; unrelated quotation metadata is preserved.
@@ -839,7 +850,7 @@ def delete_order(order_id: str):
                 relationship_reset["oc_id"] = None
             store.update_one("quotations", {"_id": quotation_id}, relationship_reset)
             quotation_restored = True
-            audit("quotation.restored_after_order_delete", "quotation", quotation_id, {"order_id": order_id, "status": "Sent"})
+            audit("quotation.restored_after_order_delete", "quotation", quotation_id, {"order_id": order_id, "status": restored_status})
     record_label = "Order Confirmation" if is_final_confirmation else "Working Order"
     return success({"_id": updated.get("_id"), "status": "Deleted", "record_type": "order_confirmation" if is_final_confirmation else "working_order", "incentives": incentive_result, "quotation_restored": quotation_restored}, f"{record_label} archived")
 

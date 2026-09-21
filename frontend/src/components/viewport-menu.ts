@@ -30,7 +30,10 @@ export function closeViewportMenus(): void {
     const ownerId = popover.dataset.ownerId;
     const owner = ownerId ? document.getElementById(ownerId) as HTMLDetailsElement | null : null;
     if (owner?.isConnected) owner.append(popover);
-    if (owner) owner.open = false;
+    if (owner) {
+      owner.open = false;
+      owner.querySelector<HTMLElement>(":scope > summary")?.setAttribute("aria-expanded", "false");
+    }
     popover.classList.remove("viewport-action-menu");
     popover.removeAttribute("style");
   });

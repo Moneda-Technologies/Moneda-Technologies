@@ -719,6 +719,11 @@
 .payment-proof-dropzone > button { width: auto; }
 .payment-proof-dropzone input[type="file"] { display: none; }
 .oc-detail-actions { border-top: 1px solid var(--border); margin-top: 2px; padding-top: 14px; }
+.oc-details-modal { max-height: min(820px, calc(100vh - 24px)); }
+.oc-details-modal .modal-body { min-width: 0; overflow-x: hidden; padding-bottom: 0; }
+.oc-details-modal .stack-form { min-width: 0; }
+.oc-details-modal .stack-form > .panel { min-width: 0; }
+.oc-details-modal .oc-detail-actions { margin-bottom: -20px; }
 .incentive-status-card { background: #f7f7f4; border-left: 3px solid var(--yellow); }
 .oc-recipients { display: grid; gap: 8px; }
 .oc-recipients > strong { font-size: .86rem; }

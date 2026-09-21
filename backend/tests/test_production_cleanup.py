@@ -161,3 +161,38 @@ def test_confirmation_origin_contract_distinguishes_linked_and_historical(app, a
     assert by_id[linked["_id"]]["is_legacy_confirmation"] is False
     assert by_id[historical["_id"]]["confirmation_type"] == "HISTORICAL_OC"
     assert by_id[historical["_id"]]["is_legacy_confirmation"] is True
+
+
+def test_deleting_working_order_restores_quote_and_allows_one_new_conversion(app, authenticated):
+    configuration = {
+        "thickness_mm": 1.96, "length": 1000, "width": 1000,
+        "dimension_unit": "mm", "format_type": "cut_format",
+    }
+    added = authenticated.post("/api/v1/cart/items", json={
+        "customer_id": "company-moneda-demo", "product_id": "mtech_active_sf",
+        "display_currency": "EUR", "quantity": 1, "configuration": configuration,
+    })
+    assert added.status_code == 201
+    quote = authenticated.post("/api/v1/quotations", json={
+        "customer_id": "company-moneda-demo", "currency": "EUR", "payment_terms": "POD",
+    }).json["data"]
+
+    first = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert first.status_code == 201
+    order_one = first.json["data"]
+    assert authenticated.get(f"/api/v1/orders/{order_one['_id']}").status_code == 200
+
+    deleted = authenticated.delete(f"/api/v1/orders/{order_one['_id']}", json={"reason": "Lifecycle regression test"})
+    assert deleted.status_code == 200
+    assert deleted.json["data"]["quotation_restored"] is True
+    restored = authenticated.get(f"/api/v1/quotations/{quote['_id']}").json["data"]
+    assert restored["status"] == "Draft"
+    assert restored.get("converted_order_id") is None
+    assert restored.get("converted_order_number") is None
+    assert restored["quotation_number"] == quote["quotation_number"]
+
+    second = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert second.status_code == 201
+    order_two = second.json["data"]
+    assert order_two["_id"] != order_one["_id"]
+    assert order_two["quotation_id"] == quote["_id"]
