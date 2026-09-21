@@ -22,6 +22,7 @@ from app.extensions import limiter
 from app.finance.service import repair_payment_states
 from app.middleware.access import repair_customer_assignments
 from app.quotations.service import QuotationService
+from app.quotations.integrity import repair_stale_conversions
 from app.repositories.store import build_store
 from app.services.seed import ensure_business_logic_schema, seed, sync_blanket_catalog, sync_commercial_units, sync_machine_catalog, sync_underpacking_catalog
 
@@ -150,6 +151,12 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
             "payment_state_migration repaired_payments=%s synchronized_orders=%s",
             payment_repairs["payments"], payment_repairs["orders"],
         )
+    quotation_integrity = repair_stale_conversions(store)
+    app.logger.info(
+        "quotation_integrity_repair scanned=%s repaired=%s historical_skipped=%s archived_links_cleared=%s",
+        quotation_integrity["scanned"], quotation_integrity["repaired"],
+        quotation_integrity["historical_skipped"], quotation_integrity["archived_links_cleared"],
+    )
     configured_provider = str(app.config.get("EMAIL_PROVIDER") or "zoho_mail_api").strip().lower()
     if configured_provider != "zoho_mail_api":
         raise RuntimeError("EMAIL_PROVIDER must be zoho_mail_api; SMTP fallback is not supported")

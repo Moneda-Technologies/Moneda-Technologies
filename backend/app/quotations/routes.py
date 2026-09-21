@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import re
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, Response, current_app, request
@@ -16,6 +18,7 @@ from app.middleware.access import (
 )
 from app.pricing.engine import PricingUnavailable
 from app.quotations.pdf import render_quotation_pdf
+from app.quotations.integrity import EDITABLE_STATUSES, has_historical_reference, live_working_order, repair_stale_conversions, quotation_status
 from app.repositories.store import utcnow
 from app.services.audit import audit
 
@@ -25,6 +28,52 @@ bp = Blueprint("quotations", __name__, url_prefix="/api/quotations")
 
 def _accessible(quotation: dict) -> bool:
     return quotation_is_authorized(quotation, current_user() or {})
+
+
+def _edit_signature(value: dict) -> tuple:
+    return (
+        str(value.get("product_id") or ""), repr(sorted((value.get("configuration") or {}).items())),
+        int(value.get("requested_quantity", value.get("quantity", 1)) or 1),
+        float(value.get("requested_discount_percent", value.get("discount_percent", 0)) or 0),
+    )
+
+
+def _replace_quotation_items(store, quotation: dict, submitted: object, submitted_transport: object = None) -> dict:
+    from app.pricing.engine import calculate_quote_totals
+    from app.pricing.routes import _calculate
+
+    if not isinstance(submitted, list) or not submitted:
+        raise ValueError("A quotation must contain at least one item")
+    customer_id = str(quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id") or "")
+    existing_lines = quotation.get("lines") or []
+    existing = {str(line.get("item_id") or line.get("line_id") or index): line for index, line in enumerate(existing_lines)}
+    lines = []
+    for index, raw in enumerate(submitted):
+        if not isinstance(raw, dict):
+            raise ValueError("Each quotation item must be an object")
+        item_id = str(raw.get("item_id") or raw.get("line_id") or uuid4().hex)
+        previous = existing.get(item_id)
+        if previous and _edit_signature(previous) == _edit_signature(raw):
+            line = deepcopy(previous)
+        else:
+            _customer, _product, priced, rate_meta = _calculate(raw, customer_id_override=customer_id, require_active_context=False)
+            line = {**priced, "exchange_rate_meta": rate_meta}
+        line.update({"item_id": item_id, "line_id": item_id})
+        lines.append(line)
+    transport = submitted_transport if isinstance(submitted_transport, dict) else (quotation.get("transport") or {})
+    transport_cost = float(transport.get("charges") or (quotation.get("totals") or {}).get("transport_cost") or 0)
+    totals = calculate_quote_totals(lines, transport_cost)
+    now = utcnow()
+    version = int(quotation.get("version") or 1)
+    store.insert_one("quotation_versions", {
+        "quotation_id": quotation.get("_id"), "quotation_number": quotation.get("quotation_number"),
+        "version": version, "lines": deepcopy(existing_lines), "totals": deepcopy(quotation.get("totals") or {}),
+        "created_at": now, "created_by": (current_user() or {}).get("_id"),
+    })
+    return store.update_one("quotations", {"_id": quotation.get("_id")}, {
+        "lines": lines, "totals": totals, "eur_totals": totals, "version": version + 1,
+        "history": [*(quotation.get("history") or []), {"status": quotation.get("status"), "event": "ITEMS_UPDATED", "at": now, "by": (current_user() or {}).get("_id")}],
+    }) or {**quotation, "lines": lines, "totals": totals, "version": version + 1}
 
 
 def _valid_email(value: object) -> str | None:
@@ -61,6 +110,12 @@ def _scope_id(payload: dict) -> str | None:
 @bp.get("")
 @permission_required("quotations.view")
 def list_quotations():
+    integrity = repair_stale_conversions(current_app.extensions["store"])
+    if integrity["repaired"]:
+        current_app.logger.info(
+            "quotation_integrity_repair_on_list scanned=%s repaired=%s",
+            integrity["scanned"], integrity["repaired"],
+        )
     user = current_user() or {}
     clauses: list[dict] = []
     authorized = permitted_quotation_query(user)
@@ -220,7 +275,11 @@ def preview_quotation():
 @bp.get("/<quotation_id>")
 @permission_required("quotations.view")
 def get_quotation(quotation_id: str):
-    row = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    store = current_app.extensions["store"]
+    integrity = repair_stale_conversions(store)
+    if integrity["repaired"]:
+        current_app.logger.info("quotation_integrity_repair_on_get quotation_id=%s repaired=%s", quotation_id, integrity["repaired"])
+    row = store.find_one("quotations", {"_id": quotation_id})
     if not row:
         return failure("Quotation not found", status=404)
     return success(row) if _accessible(row) else failure("Quotation access denied", status=403)
@@ -230,21 +289,41 @@ def get_quotation(quotation_id: str):
 @permission_required("quotations.edit")
 def update_quotation(quotation_id: str):
     store = current_app.extensions["store"]
+    repair_stale_conversions(store)
     row = store.find_one("quotations", {"_id": quotation_id})
     if not row:
         return failure("Quotation not found", status=404)
     if not _accessible(row):
         return failure("Customer company access denied", status=403)
-    if row.get("status") != "Draft":
-        return failure("Sent quotations are immutable; create a revision instead", status=409)
+    if has_historical_reference(row):
+        return failure("Historical Order Confirmations are immutable", status=409, error="QUOTATION_LOCKED")
+    if live_working_order(store, row):
+        return failure("This quotation is locked while its Working Order is active", status=409, error="QUOTATION_CONVERTED")
+    if quotation_status(row) not in EDITABLE_STATUSES:
+        return failure("This quotation is not in an editable state", status=409, error="QUOTATION_NOT_EDITABLE")
     payload = request.get_json(silent=True) or {}
+    items_changed = "items" in payload
+    if items_changed:
+        try:
+            row = _replace_quotation_items(store, row, payload.get("items"), payload.get("transport"))
+        except PermissionError as exc:
+            return failure(str(exc), status=403)
+        except LookupError as exc:
+            return failure(str(exc), status=404)
+        except PricingUnavailable as exc:
+            return failure(str(exc), status=409)
+        except (ValueError, TypeError) as exc:
+            return failure(str(exc), status=422)
+        payload = {key: value for key, value in payload.items() if key != "items"}
     if {"tax_rate", "tax_mode", "lines", "totals", "exchange_rate"}.intersection(payload):
         return failure("Money and tax fields cannot be changed directly", status=422)
     allowed = {"payment_terms", "transport", "notes", "customer_notes", "terms", "expiry_date", "validity_days", "proforma_validity_days"}
     changes = {key: value for key, value in payload.items() if key in allowed}
-    updated = store.update_one("quotations", {"_id": quotation_id}, changes)
+    if not changes and not items_changed:
+        return failure("No editable quotation fields were supplied", status=422, error="NO_QUOTATION_CHANGES")
+    updated = store.update_one("quotations", {"_id": quotation_id}, changes) if changes else row
     audit("quotation.update", "quotation", quotation_id, {"fields": sorted(changes)})
-    return success(updated, "Draft updated")
+    return success(updated, "Quotation updated")
 
 
 @bp.get("/<quotation_id>/pdf")

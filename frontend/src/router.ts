@@ -3,6 +3,7 @@ import { updateActiveNav } from "./layouts/shell";
 import { customerDetailPage } from "./pages/customers";
 import { orderDetailPage } from "./pages/orders";
 import { quotationDetailPage } from "./pages/quotations";
+import { documentEditorPage } from "./pages/document-editor";
 import { element } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
 import { customerCompanyApi } from "./api";
@@ -37,7 +38,8 @@ export async function navigate(path: string, push = true): Promise<void> {
   updateActiveNav(`${resolved}${query}`);
   document.querySelector(".app-shell")?.classList.remove("mobile-nav-open");
   try {
-    const factory = routes[resolved] ?? (resolved.startsWith("/customers/") ? () => customerDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotation/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/quotations/") ? () => quotationDetailPage(resolved.split("/")[2]) : resolved.startsWith("/orders/") || resolved.startsWith("/order-confirmations/") ? () => orderDetailPage(resolved.split("/")[2]) : undefined);
+    const parts = resolved.split("/");
+    const factory = routes[resolved] ?? (resolved.startsWith("/customers/") ? () => customerDetailPage(parts[2]) : resolved.match(/^\/quotations\/[^/]+\/edit$/) ? () => documentEditorPage("quotation", parts[2]) : resolved.match(/^\/orders\/[^/]+\/edit$/) ? () => documentEditorPage("order", parts[2]) : resolved.startsWith("/quotation/") ? () => quotationDetailPage(parts[2]) : resolved.startsWith("/quotations/") ? () => quotationDetailPage(parts[2]) : resolved.startsWith("/orders/") || resolved.startsWith("/order-confirmations/") ? () => orderDetailPage(parts[2]) : undefined);
     const page = factory ? await factory() : element("section", "page not-found", '<span>404</span><h1>Page not found</h1><p>The requested workspace does not exist.</p><a class="button button-primary" href="/dashboard" data-route="/dashboard">Return to dashboard</a>');
     if (requestRevision !== navigationRevision) return;
     main.replaceChildren(page);

@@ -411,6 +411,7 @@ interface ConfiguratorOptions {
   orderId?: string;
   orderCustomerId?: string;
   onSaved?: (item: CartItem) => void | Promise<void>;
+  onDraftSaved?: (item: CartItem) => void | Promise<void>;
 }
 
 function bindMpackDependencies(form: HTMLFormElement, product: Product): void {
@@ -472,8 +473,8 @@ function bindMpackDependencies(form: HTMLFormElement, product: Product): void {
 function renderConfigurator(host: HTMLElement, product: Product, options: ConfiguratorOptions): void {
   configuratorSubscriptions.get(host)?.();
   const customerCompany = appStore.state.customer ?? appStore.state.customerCompany ?? appStore.state.company;
-  if (!customerCompany) return;
-  const configuredCustomerId = options.orderCustomerId ?? customerCompany._id;
+  if (!customerCompany && !options.orderCustomerId) return;
+  const configuredCustomerId = options.orderCustomerId ?? customerCompany!._id;
   const inWorkingOrder = Boolean(options.orderId);
   const initial = options.initial?.configuration ?? {};
   const initialDiscount = Number(options.initial?.discount_percent ?? 0);
@@ -843,6 +844,23 @@ function renderConfigurator(host: HTMLElement, product: Product, options: Config
     console.debug("add_to_cart_ui", { step: "START", item_id: options.initial?._id ?? "new" });
     const payload = { customer_id: configuredCustomerId, product_id: product._id, display_currency: appStore.state.currency, configuration: configurationFromForm(product, form), quantity: Number(data.get("quantity")), discount_percent: Number(data.get("discount_percent")) };
     try {
+      if (options.onDraftSaved) {
+        if (!latestPreviewLine) throw new Error("Calculate a valid server price before saving this item.");
+        const draftItem: CartItem = {
+          _id: options.initial?._id ?? crypto.randomUUID(),
+          product_id: product._id,
+          customer_id: configuredCustomerId,
+          configuration: payload.configuration as Record<string, unknown>,
+          quantity: Number(payload.quantity),
+          discount_percent: Number(payload.discount_percent),
+          currency: "EUR",
+          master_currency: "EUR",
+          display_currency: latestPreviewLine.display_currency,
+          pricing_preview: latestPreviewLine,
+        };
+        await options.onDraftSaved(draftItem);
+        return;
+      }
       const result = inWorkingOrder
         ? (options.mode === "edit" && options.initial ? await orderApi.updateItem(options.orderId!, options.initial._id, payload) : await orderApi.addItem(options.orderId!, payload))
         : (options.mode === "edit" && options.initial ? await cartApi.update(options.initial._id, payload) : await cartApi.add(payload));
@@ -962,6 +980,86 @@ export async function openCartItemEditor(item: CartItem, onSaved: () => void | P
     host.innerHTML = '<div class="selection-summary"><i data-lucide="mouse-pointer-2"></i><span>Select a product to continue.</span></div>';
     refreshIcons(host);
   }, current);
+  refreshIcons(wrapper);
+}
+
+export async function openDocumentItemEditor(
+  customerId: string,
+  item: CartItem | undefined,
+  onSaved: (item: CartItem) => void | Promise<void>,
+): Promise<void> {
+  const products = (await catalogApi.products()).items;
+  const current = item ? await catalogApi.product(item.product_id) : products[0];
+  if (!current) throw new Error("No configurable products are available.");
+  const families = [...new Set(products.map((product) => String(product.category_id)).filter(Boolean))];
+  const initialFamily = String(current.category_id);
+  let selectedFamily = initialFamily;
+  let selectedProduct: Product | undefined = item ? current : undefined;
+  let availableProducts = products.filter((product) => product.category_id === selectedFamily);
+  const wrapper = document.createElement("div");
+  const familyOptions = families.map((family) => `<option value="${escapeHtml(family)}" ${selected(family, initialFamily)}>${escapeHtml(familyCopy[family]?.label ?? family)}</option>`).join("");
+  wrapper.innerHTML = `<div class="guided-product-editor">
+    <div class="guided-editor-heading"><span class="eyebrow">MONEDA WORKSPACE</span><h2>${item ? "Edit Product" : "Add Product"}</h2><p>Select a product type, then configure it using the same catalog and pricing rules as Calculator.</p></div>
+    <div class="guided-editor-steps" aria-label="Product workflow"><span class="is-active" data-editor-step="product"><b>1</b>Product</span><i data-lucide="chevron-right"></i><span data-editor-step="configure"><b>2</b>Configure</span><i data-lucide="chevron-right"></i><span data-editor-step="review"><b>3</b>Review</span></div>
+    <section class="guided-editor-product-step" data-editor-panel="product">
+      <div class="guided-editor-grid">
+        <div class="guided-editor-fields">
+          <label>Product Type<select data-product-family required>${familyOptions}</select></label>
+          <label>Product<input class="product-combobox" autocomplete="off" placeholder="Search products in this type" ${availableProducts.length ? "" : "disabled"}></label>
+          <div class="guided-editor-selection" data-product-selection>${selectedProduct ? "" : '<i data-lucide="mouse-pointer-2"></i><span>Choose a product to continue.</span>'}</div>
+        </div>
+        <aside class="guided-editor-preview panel" data-product-preview><span class="eyebrow">Product preview</span><p>Select a product to see its details.</p></aside>
+      </div>
+      <div class="guided-editor-actions"><button class="button button-secondary" type="button" data-editor-cancel>Cancel</button><button class="button button-primary" type="button" data-editor-continue disabled>Continue to Configure<i data-lucide="arrow-right"></i></button></div>
+    </section>
+    <section class="guided-editor-configure" data-editor-panel="configure" hidden><div class="guided-editor-config-header"><button class="button button-secondary" type="button" data-editor-back><i data-lucide="arrow-left"></i>Change product</button><span class="guided-editor-config-product" data-config-product></span></div><div class="edit-configurator-host"></div></section>
+  </div>`;
+  const dialog = openModal(item ? "Edit Order Item" : "Add Product", wrapper, "wide", { autoFocus: false });
+  const host = wrapper.querySelector<HTMLElement>(".edit-configurator-host")!;
+  const productInput = wrapper.querySelector<HTMLInputElement>(".product-combobox")!;
+  const familyInput = wrapper.querySelector<HTMLSelectElement>("[data-product-family]")!;
+  const continueButton = wrapper.querySelector<HTMLButtonElement>("[data-editor-continue]")!;
+  const productSelection = wrapper.querySelector<HTMLElement>("[data-product-selection]")!;
+  const productPreview = wrapper.querySelector<HTMLElement>("[data-product-preview]")!;
+  const setStep = (step: "product" | "configure" | "review") => {
+    wrapper.querySelectorAll<HTMLElement>("[data-editor-step]").forEach((node) => node.classList.toggle("is-active", node.dataset.editorStep === step));
+    wrapper.querySelector<HTMLElement>(`[data-editor-panel="product"]`)!.hidden = step !== "product";
+    wrapper.querySelector<HTMLElement>(`[data-editor-panel="configure"]`)!.hidden = step === "product";
+  };
+  const showProduct = (product: Product | undefined) => {
+    selectedProduct = product;
+    continueButton.disabled = !product;
+    if (!product) {
+      productSelection.innerHTML = '<i data-lucide="mouse-pointer-2"></i><span>Choose a product to continue.</span>';
+      productPreview.innerHTML = '<span class="eyebrow">Product preview</span><p>Select a product to see its details.</p>';
+    } else {
+      productSelection.innerHTML = `<i data-lucide="check-circle-2"></i><span><strong>${escapeHtml(product.name)}</strong> selected</span>`;
+      productPreview.innerHTML = `<span class="eyebrow">${escapeHtml(familyCopy[product.category_id]?.label ?? product.category_id)}</span><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description ?? "")}</p><small>Art. ${escapeHtml(product.article_no ?? product.sku)} · EUR master pricing</small>`;
+    }
+    refreshIcons(wrapper);
+  };
+  const render = async (product: Product) => {
+    const bars = product.category_id === "blankets"
+      ? await catalogApi.blanketBars().then((result) => normalizeBlanketBars(result.items)).catch(() => null)
+      : null;
+    wrapper.querySelector<HTMLElement>("[data-config-product]")!.textContent = `${familyCopy[product.category_id]?.label ?? product.category_id} · ${product.name}`;
+    setStep("configure");
+    renderConfigurator(host, withBlanketBars(product, bars), {
+      mode: item ? "edit" : "add", initial: item && item.product_id === product._id ? item : undefined, orderCustomerId: customerId,
+      onDraftSaved: async (saved) => { dialog.close(); await onSaved(saved); },
+    });
+  };
+  familyInput.addEventListener("change", () => {
+    selectedFamily = familyInput.value;
+    availableProducts = products.filter((product) => product.category_id === selectedFamily);
+    productInput.value = "";
+    showProduct(undefined);
+  });
+  bindProductCombobox(productInput, () => availableProducts, showProduct, () => showProduct(undefined));
+  wrapper.querySelector<HTMLButtonElement>("[data-editor-continue]")?.addEventListener("click", () => { if (selectedProduct) void render(selectedProduct); });
+  wrapper.querySelector<HTMLButtonElement>("[data-editor-back]")?.addEventListener("click", () => setStep("product"));
+  wrapper.querySelector<HTMLButtonElement>("[data-editor-cancel]")?.addEventListener("click", () => dialog.close());
+  if (item) { showProduct(current); productInput.value = productChoice(current); }
   refreshIcons(wrapper);
 }
 

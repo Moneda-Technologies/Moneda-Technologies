@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 from datetime import timedelta
 from html import escape
 import re
@@ -33,11 +34,15 @@ def _working_order_lines(order: dict) -> list[dict]:
     """Return editable working-order lines with stable item identifiers."""
     source = order.get("lines") or order.get("products_snapshot") or []
     lines: list[dict] = []
-    for raw in source if isinstance(source, list) else []:
+    for index, raw in enumerate(source if isinstance(source, list) else []):
         if not isinstance(raw, dict):
             continue
-        line = dict(raw)
-        line["item_id"] = str(line.get("item_id") or line.get("line_id") or line.get("_id") or uuid4().hex)
+        line = deepcopy(raw)
+        # Historical quotation/order rows predate item IDs. Use a stable,
+        # document-local identity so the same source/current line compares as
+        # the same product across requests without rewriting old snapshots.
+        legacy_id = f"legacy-{index}-{line.get('product_id') or line.get('article_no') or 'item'}"
+        line["item_id"] = str(line.get("item_id") or line.get("line_id") or line.get("_id") or legacy_id)
         lines.append(line)
     return lines
 
@@ -742,6 +747,35 @@ def get_order(order_id: str):
     })
     if _is_final_confirmation_record(order):
         order.update(_confirmation_origin(store, order))
+    elif order.get("quotation_snapshot"):
+        source_lines = _working_order_lines({"lines": (order.get("quotation_snapshot") or {}).get("lines") or []})
+        current_lines = _working_order_lines(order)
+        changes = []
+        matched_source: set[int] = set()
+        def comparison_key(line: dict) -> tuple:
+            return str(line.get("product_id") or line.get("article_no") or ""), repr(sorted((line.get("configuration") or {}).items()))
+        for line in current_lines:
+            item_id = str(line.get("item_id"))
+            source_index = next((index for index, source in enumerate(source_lines) if index not in matched_source and str(source.get("item_id")) == item_id), None)
+            if source_index is None:
+                source_index = next((index for index, source in enumerate(source_lines) if index not in matched_source and comparison_key(source) == comparison_key(line)), None)
+            source = source_lines[source_index] if source_index is not None else None
+            if not source:
+                changes.append({"type": "ITEM_ADDED", "item_id": item_id, "product_id": line.get("product_id")})
+                continue
+            matched_source.add(source_index)
+            source_quantity = int(source.get("requested_quantity", source.get("quantity", 1)) or 1)
+            current_quantity = int(line.get("requested_quantity", line.get("quantity", 1)) or 1)
+            if current_quantity != source_quantity:
+                changes.append({"type": "QUANTITY_CHANGED", "item_id": item_id, "product_id": line.get("product_id"), "from": source_quantity, "to": current_quantity})
+            source_discount = float(source.get("requested_discount_percent", source.get("discount_percent", 0)) or 0)
+            current_discount = float(line.get("requested_discount_percent", line.get("discount_percent", 0)) or 0)
+            if current_discount != source_discount:
+                changes.append({"type": "DISCOUNT_CHANGED", "item_id": item_id, "product_id": line.get("product_id"), "from": source_discount, "to": current_discount})
+        for index, line in enumerate(source_lines):
+            if index not in matched_source:
+                changes.append({"type": "ITEM_REMOVED", "item_id": str(line.get("item_id")), "product_id": line.get("product_id")})
+        order["changes_from_quotation"] = changes
     # Internal storage routing is only needed while persisting legacy rows;
     # never expose it as part of the public order contract.
     order.pop("_storage_collection", None)
@@ -811,6 +845,15 @@ def delete_order(order_id: str):
     now = utcnow()
     actor_id = (current_user() or {}).get("_id")
     incentive_result = cancel_unpaid_incentives_for_order(store, order_id, actor_id=actor_id, reason=reason)
+    source_quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "") or None
+    unset_deleted_relationship = []
+    if not is_final_confirmation:
+        # The source quotation is retained in the audit event below. Clearing
+        # the active relationship on the archived document prevents the
+        # unique quotation link from blocking a later, valid reconversion.
+        unset_deleted_relationship = [
+            field for field in ("quotation_id", "source_quotation_id", "quote_id") if order.get(field)
+        ]
     updated = store.update_one(_record_collection(order), {"_id": order_id}, {
         "status": "Deleted",
         "document_status": "Deleted",
@@ -818,15 +861,16 @@ def delete_order(order_id: str):
         "deleted_by": (current_user() or {}).get("_id"),
         "deletion_reason": reason,
         "incentive_cancellation": incentive_result,
-    }) or {**order, "status": "Deleted"}
+    }, unset_fields=unset_deleted_relationship) or {**order, "status": "Deleted"}
     audit("ORDER_CONFIRMATION_DELETED" if is_final_confirmation else "WORKING_ORDER_DELETED", "order", order_id, {
         "reason": reason,
         "previous_state": order.get("status", "Pending"),
+        "quotation_id": source_quotation_id,
         "linked_records": linked_counts, "incentives": incentive_result,
     })
     # Deleting a working Order releases its source quotation. Final/legacy OCs
     # remain historical and never trigger quotation restoration.
-    quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "")
+    quotation_id = source_quotation_id or ""
     quotation_restored = False
     if quotation_id and not is_final_confirmation:
         quotation = store.find_one("quotations", {"_id": quotation_id})
@@ -1035,6 +1079,10 @@ def convert_quotation(quotation_id: str):
     initial_label = "Awaiting Payment" if payment_terms == "Advance" else "Working"
     order_document = {
         "order_number": "", "quotation_id": quotation_id,
+        "source_quotation_id": quotation_id,
+        "source_quotation_number": quotation.get("quotation_number"),
+        "source_quotation_version": int(quotation.get("version") or 1),
+        "version": 1,
         "quotation_number": quotation.get("quotation_number"),
         "lead_id": lead.get("_id") if lead else None,
         "customer_id": quotation_customer_id, "customer_company_id": quotation_customer_id, "company_id": quotation_customer_id,
@@ -1047,7 +1095,7 @@ def convert_quotation(quotation_id: str):
         "manager_at_creation": manager_snapshot(store, user),
         "client_type_at_creation": quotation.get("client_type_at_creation") or customer_client_type(quotation.get("customer_snapshot") or {}),
         "account_type_at_creation": quotation.get("account_type_at_creation") or ("DEALER" if quotation.get("client_type_at_creation") == "DEALER" else "DISTRIBUTOR"),
-        "quotation_snapshot": quotation, "products_snapshot": working_lines, "lines": working_lines,
+        "quotation_snapshot": deepcopy(quotation), "products_snapshot": deepcopy(working_lines), "lines": deepcopy(working_lines),
         "master_currency": quotation.get("master_currency", "EUR"), "currency": quotation["currency"],
         "exchange_rate": quotation.get("exchange_rate"), "exchange_rate_meta": quotation.get("exchange_rate_meta"),
         "billing_address_snapshot": quotation.get("billing_address_snapshot"),
@@ -1082,7 +1130,7 @@ def convert_quotation(quotation_id: str):
         "notes": quotation.get("notes", ""), "to": quotation_to, "cc": quotation_cc, "bcc": quotation_bcc,
         "additional_recipients": additional_recipients,
         "conversion_state": "PROCESSING",
-        "history": [{"status": initial_state, "at": now, "by": (current_user() or {}).get("_id")}],
+        "history": [{"status": initial_state, "event": "CREATED_FROM_QUOTATION", "at": now, "by": (current_user() or {}).get("_id"), "quotation_id": quotation_id}],
     }
     if idempotency_key:
         order_document["idempotency_key"] = idempotency_key
@@ -1208,15 +1256,11 @@ def finalize_order(order_id: str):
                 return success(existing, "Order Confirmation already finalized")
             return failure("Order is already finalized", status=409, error="order_already_finalized")
 
-        # Finalization is the last pricing boundary. Re-resolve the stored
-        # configurations against current catalogue/master prices and persist
-        # those authoritative totals before validating payment and incentive.
-        try:
-            order = _reprice_working_order(store, order)
-        except PricingUnavailable as exc:
-            return failure(str(exc), status=409, error="PRICING_UNAVAILABLE")
-        except (LookupError, ValueError, TypeError) as exc:
-            return failure(str(exc), status=422, error="ORDER_REPRICE_FAILED")
+        # The working Order is already server-priced whenever an item changes.
+        # Finalization must copy that exact commercial state; repricing here
+        # would make the immutable OC differ from the approved working Order.
+        if not _working_order_lines(order):
+            return failure("A working Order must contain at least one item", status=422, error="ORDER_REQUIRES_ITEM")
 
         payments = _payment_rows_for_record(store, order_id)
         rollup = payment_rollup(order, payments)
@@ -1228,7 +1272,7 @@ def finalize_order(order_id: str):
 
         salesperson_id = order.get("salesperson_id") or order.get("created_by_user_id")
         salesperson = store.find_one("users", {"_id": salesperson_id}) or {}
-        final_record = {**order}
+        final_record = deepcopy(order)
         final_record.pop("_id", None)
         final_record.pop("_storage_collection", None)
         now = utcnow()
@@ -1281,6 +1325,12 @@ def finalize_order(order_id: str):
             "lifecycle_state": "FINALIZED", "order_status": "FINALIZED", "finalized_at": now,
             "finalized_by": (current_user() or {}).get("_id"), "finalization_id": final.get("_id"),
         }) or order
+        quotation_id = str(order.get("quotation_id") or order.get("source_quotation_id") or "")
+        if quotation_id:
+            store.update_one("quotations", {"_id": quotation_id}, {
+                "converted_oc_id": final.get("_id"), "converted_oc_number": final.get("oc_number"),
+                "final_oc_id": final.get("_id"), "finalized_at": now,
+            })
         final["source_order_id"] = updated_order.get("_id")
         audit("order.finalized", "order_confirmation", str(final.get("_id")), {"source_order_id": order_id})
         return success(final, "Order Confirmation finalized", 201)
@@ -1298,6 +1348,19 @@ def update_order(order_id: str):
     if _is_order_locked(order):
         return failure("Final Order Confirmations are immutable", status=423, error="order_locked")
     payload = request.get_json(silent=True) or {}
+    if "items" in payload:
+        try:
+            updated = _replace_working_order_items(store, order, payload.get("items"))
+        except PermissionError as exc:
+            return failure(str(exc), status=403)
+        except LookupError as exc:
+            return failure(str(exc), status=404)
+        except PricingUnavailable as exc:
+            return failure(str(exc), status=409)
+        except (ValueError, TypeError) as exc:
+            return failure(str(exc), status=422)
+        audit("order.items.replace", "order", order_id, {"item_count": len(payload.get("items") or [])})
+        return success(updated, "Working Order items saved")
     changes: dict = {}
     # Pricing and line values are intentionally not accepted through this
     # generic metadata endpoint.  They must go through the item endpoints,
@@ -1371,8 +1434,46 @@ def _calculate_order_line(payload: dict, order: dict):
     from app.pricing.routes import _calculate
 
     request_payload = dict(payload)
-    request_payload["customer_id"] = _order_customer_id(order)
-    return _calculate(request_payload)
+    return _calculate(request_payload, customer_id_override=_order_customer_id(order), require_active_context=False)
+
+
+def _line_edit_signature(value: dict) -> tuple:
+    return (
+        str(value.get("product_id") or ""),
+        repr(sorted((value.get("configuration") or {}).items())),
+        int(value.get("requested_quantity", value.get("quantity", 1)) or 1),
+        float(value.get("requested_discount_percent", value.get("discount_percent", 0)) or 0),
+    )
+
+
+def _replace_working_order_items(store, order: dict, submitted: object) -> dict:
+    if not isinstance(submitted, list) or not submitted:
+        raise ValueError("A working Order must contain at least one item")
+    existing = {str(line.get("item_id")): line for line in _working_order_lines(order)}
+    lines: list[dict] = []
+    for raw in submitted:
+        if not isinstance(raw, dict):
+            raise ValueError("Each order item must be an object")
+        item_id = str(raw.get("item_id") or raw.get("line_id") or uuid4().hex)
+        previous = existing.get(item_id)
+        if previous and _line_edit_signature(previous) == _line_edit_signature(raw):
+            line = deepcopy(previous)
+        else:
+            _customer, _product, priced, rate_meta = _calculate_order_line(raw, order)
+            line = {**priced, "exchange_rate_meta": rate_meta}
+        line.update({"item_id": item_id, "line_id": item_id})
+        lines.append(line)
+    before = float((order.get("totals") or {}).get("grand_total") or 0)
+    updated = _recalculate_working_order(store, order, lines)
+    now = utcnow()
+    history = [*(updated.get("history") or []), {
+        "status": updated.get("lifecycle_state") or "WORKING", "event": "ITEMS_UPDATED",
+        "at": now, "by": (current_user() or {}).get("_id"), "before_total": before,
+        "after_total": float((updated.get("totals") or {}).get("grand_total") or 0),
+    }]
+    return store.update_one("orders", {"_id": order.get("_id")}, {
+        "history": history, "version": int(order.get("version") or 1) + 1,
+    }) or {**updated, "history": history}
 
 
 @bp.post("/orders/<order_id>/items")

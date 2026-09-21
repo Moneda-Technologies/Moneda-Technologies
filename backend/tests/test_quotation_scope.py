@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.middleware.access import permitted_quotation_query, quotation_is_authorized
+from app.quotations.integrity import repair_stale_conversions
 from app.reports.routes import _is_valid_conversion
 
 
@@ -76,3 +77,61 @@ def test_converted_quotation_requires_live_order_confirmation(app):
         assert not _is_valid_conversion(store, quotation)
         store.insert_one("orders", {"_id": "quote-live-conversion-order", "quotation_id": quotation["_id"], "status": "Pending"})
         assert _is_valid_conversion(store, quotation)
+
+
+def test_stale_working_order_reference_is_repaired_without_touching_quote_values(app):
+    with app.app_context():
+        store = app.extensions["store"]
+        quotation = store.insert_one("quotations", {
+            "_id": "quote-integrity-repair",
+            "quotation_number": "MT-INTEGRITY-001",
+            "status": "Converted to Order",
+            "source_status_before_conversion": "Sent",
+            "converted_order_id": "deleted-working-integrity-order",
+            "converted_order_number": "MT-ORD-INTEGRITY-001",
+            "lines": [{"product_id": "product-1", "quantity": 2, "line_total": 99}],
+            "totals": {"grand_total": 99},
+            "history": [{"status": "Sent"}, {"status": "Converted to Order"}],
+        })
+        deleted_order = store.insert_one("orders", {
+            "_id": "deleted-working-integrity-order",
+            "quotation_id": quotation["_id"],
+            "order_number": "MT-ORD-INTEGRITY-001",
+            "status": "Deleted",
+        })
+
+        result = repair_stale_conversions(store, actor="test-integrity")
+
+        repaired = store.find_one("quotations", {"_id": quotation["_id"]})
+        assert result["scanned"] == 1
+        assert result["repaired"] == 1
+        assert repaired["status"] == "Sent"
+        assert repaired.get("converted_order_id") is None
+        assert repaired.get("converted_order_number") is None
+        assert repaired["lines"] == quotation["lines"]
+        assert repaired["totals"] == quotation["totals"]
+        assert store.find_one("orders", {"_id": deleted_order["_id"]}).get("quotation_id") is None
+        assert store.find_one("audit_logs", {"action": "quotation.reconciled_after_missing_order", "entity_id": quotation["_id"]}) is not None
+
+
+def test_integrity_repair_leaves_historical_oc_reference_untouched(app):
+    with app.app_context():
+        store = app.extensions["store"]
+        quotation = store.insert_one("quotations", {
+            "_id": "quote-historical-integrity",
+            "quotation_number": "MT-HISTORICAL-001",
+            "status": "Converted to Order",
+            "converted_oc_id": "legacy-oc-that-is-outside-working-lifecycle",
+            "converted_oc_number": "MT-OC-HISTORICAL-001",
+            "converted_order_id": "missing-working-parent-but-historical-oc-wins",
+            "lines": [{"product_id": "product-1", "quantity": 1}],
+            "totals": {"grand_total": 42},
+        })
+
+        result = repair_stale_conversions(store, actor="test-integrity")
+
+        untouched = store.find_one("quotations", {"_id": quotation["_id"]})
+        assert result["repaired"] == 0
+        assert untouched["status"] == "Converted to Order"
+        assert untouched["converted_oc_id"] == "legacy-oc-that-is-outside-working-lifecycle"
+        assert untouched["converted_order_id"] == "missing-working-parent-but-historical-oc-wins"

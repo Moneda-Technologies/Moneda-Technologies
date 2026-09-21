@@ -94,6 +94,7 @@ export const quotationApi = {
     return api<PageResult<Quotation>>(`/quotations${query ? `?${query}` : ""}`);
   },
   get: (id: string) => api<Quotation>(`/quotations/${encodeURIComponent(id)}`),
+  update: (id: string, value: unknown) => api<Quotation>(`/quotations/${encodeURIComponent(id)}`, patchBody(value)),
   communications: (id: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/quotations/${encodeURIComponent(id)}/communications`),
   create: (value: unknown) => api<Quotation>("/quotations", jsonBody(value)),
   preview: (value: unknown) => api<Quotation>("/quotations/preview", jsonBody(value)),

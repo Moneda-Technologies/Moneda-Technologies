@@ -1182,6 +1182,75 @@ def test_working_order_edit_to_final_oc_is_single_server_snapshot(app, authentic
     assert locked.status_code == 423
 
 
+def test_document_edit_workflow_reprices_server_side_and_keeps_snapshots_isolated(app, authenticated):
+    store = app.extensions["store"]
+    configuration = {
+        "thickness_mm": 1.96, "length": 1000, "width": 1000,
+        "dimension_unit": "mm", "format_type": "cut_format",
+    }
+    added = authenticated.post("/api/v1/cart/items", json={
+        "customer_id": COMPANY, "product_id": "mtech_active_sf", "display_currency": "EUR",
+        "quantity": 1, "configuration": configuration,
+    })
+    assert added.status_code == 201
+    quote = authenticated.post("/api/v1/quotations", json={
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD",
+    }).json["data"]
+
+    edited_quote = authenticated.patch(f"/api/v1/quotations/{quote['_id']}", json={
+        "items": [{
+            "item_id": "0", "product_id": "mtech_active_sf", "configuration": configuration,
+            "quantity": 2, "discount_percent": 0, "display_currency": "EUR",
+        }],
+        "payment_terms": "POD", "validity_days": 30,
+    })
+    assert edited_quote.status_code == 200
+    quotation_snapshot = edited_quote.json["data"]
+    assert quotation_snapshot["lines"][0]["requested_quantity"] == 2
+    assert quotation_snapshot["version"] == 2
+    assert store.count("quotation_versions", {"quotation_id": quote["_id"]}) == 1
+    stored_quote_snapshot = store.find_one("quotations", {"_id": quote["_id"]})
+
+    converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert converted.status_code == 201
+    order = converted.json["data"]
+    order_item = order["lines"][0]
+    edited_order = authenticated.patch(f"/api/v1/orders/{order['_id']}", json={
+        "items": [{
+            "item_id": order_item["item_id"], "product_id": order_item["product_id"],
+            "configuration": order_item["configuration"], "quantity": 3,
+            "discount_percent": order_item.get("discount_percent", 0), "display_currency": "EUR",
+        }],
+    })
+    assert edited_order.status_code == 200
+    assert edited_order.json["data"]["lines"][0]["requested_quantity"] == 3
+
+    untouched_quote = store.find_one("quotations", {"_id": quote["_id"]})
+    assert untouched_quote["lines"] == stored_quote_snapshot["lines"]
+    assert untouched_quote["totals"] == stored_quote_snapshot["totals"]
+    detail = authenticated.get(f"/api/v1/orders/{order['_id']}")
+    assert detail.status_code == 200
+    assert detail.json["data"]["changes_from_quotation"] == [{
+        "type": "QUANTITY_CHANGED", "item_id": order_item["item_id"],
+        "product_id": order_item["product_id"], "from": 2, "to": 3,
+    }]
+
+
+def test_legacy_working_order_lines_compare_without_false_added_removed_changes(app, authenticated):
+    store = app.extensions["store"]
+    source_line = {"product_id": "legacy-product", "configuration": {"size": "A"}, "quantity": 2, "line_total": 20}
+    order = store.insert_one("orders", {
+        "_id": "legacy-line-comparison", "order_number": "MT-ORD-LEGACY-COMPARE",
+        "customer_id": COMPANY, "status": "Working", "record_type": "ORDER",
+        "lines": [source_line], "products_snapshot": [source_line],
+        "quotation_snapshot": {"lines": [source_line], "totals": {"grand_total": 20}},
+        "totals": {"grand_total": 20},
+    })
+    detail = authenticated.get(f"/api/v1/orders/{order['_id']}")
+    assert detail.status_code == 200
+    assert detail.json["data"]["changes_from_quotation"] == []
+
+
 def test_superadmin_price_lists_use_real_server_assets_and_audit_delivery(app, authenticated):
     store = app.extensions["store"]
     listed = authenticated.get("/api/v1/price-lists")
