@@ -37,7 +37,7 @@ type Listener = (state: AppState) => void;
 
 const initial: AppState = {
   brandName: "Moneda Technologies",
-  brandLogoPath: "/brand/moneda-logo.svg",
+  brandLogoPath: "/brand/image.png",
   user: null,
   customers: [],
   customer: null,

@@ -154,8 +154,7 @@ export function renderShell(): HTMLElement {
   root.innerHTML = `
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="sidebar-header"><a class="brand-home" href="/dashboard" data-route="/dashboard" aria-label="${escapeHtml(state.brandName)} dashboard"><img src="${escapeHtml(state.brandLogoPath)}" alt="${escapeHtml(state.brandName)}"></a></div>
-      <nav>${nav}</nav>
-      <div class="sidebar-foot"><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button><div class="sidebar-account"><div class="avatar">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role_display_name)}</span></div><a href="/profile" data-route="/profile" aria-label="Profile" title="Open profile"><i data-lucide="chevron-right"></i></a></div></div>
+      <div class="sidebar-body"><nav>${nav}</nav><div class="sidebar-foot"><button class="icon-button sidebar-toggle" aria-label="Collapse navigation" title="Collapse navigation"><i data-lucide="panel-left-close"></i></button><div class="sidebar-account"><div class="avatar">${escapeHtml(state.user?.name?.slice(0, 2).toUpperCase() ?? "MT")}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role_display_name)}</span></div><a href="/profile" data-route="/profile" aria-label="Profile" title="Open profile"><i data-lucide="chevron-right"></i></a></div></div></div>
     </aside>
     <div class="workspace">
       <header class="topbar">

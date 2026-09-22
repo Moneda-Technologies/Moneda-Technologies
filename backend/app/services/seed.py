@@ -1016,7 +1016,7 @@ def seed(store: Store, data_directory: Path, *, demo_mode: bool) -> None:
         store.insert_one("app_settings", {
             "_id": "system",
             "brand_name": "Moneda Technologies",
-            "brand_logo_path": "/brand/moneda-logo.svg",
+            "brand_logo_path": "/brand/image.png",
             "watermark_enabled": True,
             "issuer": {
                 "name": "Moneda Technologies",

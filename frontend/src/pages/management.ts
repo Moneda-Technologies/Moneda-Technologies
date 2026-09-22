@@ -313,7 +313,7 @@ export async function usersPage(): Promise<HTMLElement> {
     availableRoles = roles.items;
     availableManagers = (users.manager_options ?? users.items.filter((user) => ["manager", "manager_sales_admin"].includes(String(user.role_id))));
     const customers = customerResult.items as unknown as Record<string, unknown>[];
-     body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Record<string, unknown> | null)?.name ?? "—"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
+     body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Record<string, unknown> | null)?.name ?? "Unassigned"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
     const accessSummary = body.querySelector<HTMLElement>(".access-summary");
     if (accessSummary) accessSummary.innerHTML = `<div><span class="eyebrow">User accounts</span><h2>${users.total} active and inactive users</h2><p>Create users here. Role policy, customer scope, activity and trusted devices each have their own workspace.</p></div>`;
     body.querySelectorAll<HTMLButtonElement>(".customer-count-button").forEach((button) => {
@@ -432,7 +432,9 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
         page.dataset.zohoConnected = String(status.connected);
       } catch (_error) { /* settings remains usable when the integration permission is absent */ }
     }
-    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><a class="${section === "brand" ? "active" : ""}" href="/settings" data-route="/settings"><i data-lucide="palette"></i>Brand & company</a><a class="${section === "currencies" ? "active" : ""}" href="/settings/currencies" data-route="/settings/currencies"><i data-lucide="euro"></i>Currencies</a><a class="${section === "communication" ? "active" : ""}" href="/settings/communication" data-route="/settings/communication"><i data-lucide="mail"></i>Communication</a><a class="${section === "security" ? "active" : ""}" href="/settings/security" data-route="/settings/security"><i data-lucide="shield-check"></i>Security</a></nav><div class="settings-stack"><section class="panel settings-panel" data-settings-section="brand"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(settings.brand_logo_path ?? "/brand/moneda-logo.svg")}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="${escapeHtml(String(settings.brand_logo_path ?? "/brand/moneda-logo.svg"))}"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${securityMarkup}${zohoMarkup}<section class="panel settings-panel" data-settings-section="currencies"><span class="eyebrow">Currencies</span><h2>EUR master pricing</h2><p>All catalogue and quotation values remain in EUR. USD and INR are display/reference currencies only.</p><div class="master-currency-card"><strong>Master currency</strong><b>EUR</b><span>Locked · quotations always EUR</span></div><div class="currency-rates" data-currency-rates><p class="form-hint">Loading latest reference rates…</p></div></section></div></div>`;
+    const configuredLogo = String(settings.brand_logo_path ?? "");
+    const logoPath = configuredLogo.toLowerCase().endsWith(".svg") || !configuredLogo ? "/brand/image.png" : configuredLogo;
+    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><a class="${section === "brand" ? "active" : ""}" href="/settings" data-route="/settings"><i data-lucide="palette"></i>Brand & company</a><a class="${section === "currencies" ? "active" : ""}" href="/settings/currencies" data-route="/settings/currencies"><i data-lucide="euro"></i>Currencies</a><a class="${section === "communication" ? "active" : ""}" href="/settings/communication" data-route="/settings/communication"><i data-lucide="mail"></i>Communication</a><a class="${section === "security" ? "active" : ""}" href="/settings/security" data-route="/settings/security"><i data-lucide="shield-check"></i>Security</a></nav><div class="settings-stack"><section class="panel settings-panel" data-settings-section="brand"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(logoPath)}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="/brand/image.png"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${securityMarkup}${zohoMarkup}<section class="panel settings-panel" data-settings-section="currencies"><span class="eyebrow">Currencies</span><h2>EUR master pricing</h2><p>All catalogue and quotation values remain in EUR. USD and INR are display/reference currencies only.</p><div class="master-currency-card"><strong>Master currency</strong><b>EUR</b><span>Locked · quotations always EUR</span></div><div class="currency-rates" data-currency-rates><p class="form-hint">Loading latest reference rates…</p></div></section></div></div>`;
     [...body.querySelectorAll<HTMLElement>(".settings-nav button")].find((button) => button.textContent?.trim() === "Taxes")?.remove();
     [...body.querySelectorAll<HTMLElement>(".settings-panel label")].filter((label) => ["Default tax", "Tax mode"].some((text) => label.textContent?.trim().startsWith(text))).forEach((label) => label.remove());
     const policyGrid = body.querySelector<HTMLElement>(".settings-panel .form-grid");
@@ -572,7 +574,7 @@ export async function profilePage(): Promise<HTMLElement> {
   if (profileStack && accountPanel) {
     const signaturePanel = document.createElement("section");
     signaturePanel.className = "panel settings-panel profile-signature-panel";
-    signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select>Replace image</button><button type="button" class="button button-quiet" data-signature-remove>Remove image</button></div></div><span class="form-hint">PNG, JPG or WEBP, maximum 2 MB.</span><small class="field-error" data-signature-error></small>';
+    signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-main"><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><div class="profile-signature-dropzone" data-signature-dropzone role="button" tabindex="0" aria-controls="profile-signature-file"><i data-lucide="cloud-upload"></i><strong>Drag &amp; drop your signature here</strong><span>or click to browse</span><small>Supported formats: PNG, JPG, WEBP<br>Maximum size: 2 MB</small></div></div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-actionbar"><span class="profile-signature-status" data-signature-status aria-live="polite"></span><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select><i data-lucide="upload"></i>Replace image</button><button type="button" class="button button-danger" data-signature-remove><i data-lucide="trash-2"></i>Remove image</button></div></div></div><small class="field-error" data-signature-error></small>';
     profileStack.insertBefore(signaturePanel, accountPanel.nextElementSibling);
     const preview = signaturePanel.querySelector<HTMLElement>("[data-signature-preview]");
     const signatureInput = signaturePanel.querySelector<HTMLInputElement>("#profile-signature-file");
@@ -580,39 +582,55 @@ export async function profilePage(): Promise<HTMLElement> {
     const removeButton = signaturePanel.querySelector<HTMLButtonElement>("[data-signature-remove]");
     const selectButton = signaturePanel.querySelector<HTMLButtonElement>("[data-signature-select]");
     const controls = signaturePanel.querySelector<HTMLElement>("[data-signature-controls]");
-    const renderSignature = (metadata: { updated_at?: string | null; filename?: string } | null) => {
+    const dropzone = signaturePanel.querySelector<HTMLElement>("[data-signature-dropzone]");
+    const status = signaturePanel.querySelector<HTMLElement>("[data-signature-status]");
+    const renderSignature = (metadata: { updated_at?: string | null; filename?: string; size?: number } | null) => {
       if (!preview || !removeButton || !controls) return;
       if (!metadata) {
-        preview.innerHTML = '<button type="button" class="profile-signature-add" data-signature-add><i data-lucide="image-plus"></i><strong>Add image</strong><span>Place your email signature artwork inside this editor</span></button>';
+        preview.innerHTML = '';
+        preview.hidden = true;
         controls.hidden = true;
-        preview.querySelector<HTMLButtonElement>("[data-signature-add]")?.addEventListener("click", () => signatureInput?.click());
+        if (status) status.textContent = '';
         refreshIcons(preview);
         return;
       }
+      preview.hidden = false;
       const cacheKey = encodeURIComponent(String(metadata.updated_at ?? Date.now()));
-      preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span>${escapeHtml(String(metadata.filename ?? "Signature image"))}</span>`;
+      const size = Number(metadata.size ?? 0);
+      const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : '';
+      preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span>${escapeHtml(String(metadata.filename ?? "Signature image"))}${sizeLabel ? `<small>${sizeLabel}</small>` : ''}</span>`;
       controls.hidden = false;
+      if (status) status.innerHTML = '<i data-lucide="circle-check"></i><span>Image uploaded successfully</span>';
+      refreshIcons(preview.parentElement ?? preview);
     };
     void profileApi.signature().then((result) => renderSignature(result.metadata)).catch(() => renderSignature(null));
-    selectButton?.addEventListener("click", () => signatureInput?.click());
-    signatureInput?.addEventListener("change", async () => {
-      const file = signatureInput?.files?.[0];
+    const uploadSignature = async (file: File | undefined) => {
       if (!file) { if (signatureError) signatureError.textContent = "Choose a signature image first."; return; }
       if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
         if (signatureError) signatureError.textContent = "Use a PNG, JPG or WEBP image no larger than 2 MB.";
         return;
       }
       if (selectButton) selectButton.disabled = true;
+      if (dropzone) { dropzone.classList.add("is-uploading"); dropzone.setAttribute("aria-busy", "true"); }
+      if (status) status.innerHTML = '<span class="signature-upload-spinner" aria-hidden="true"></span><span>Uploading signature...</span>';
       if (signatureError) signatureError.textContent = "";
       try {
         const result = await profileApi.uploadSignature(file);
         renderSignature(result.metadata);
-        signatureInput.value = "";
+        if (signatureInput) signatureInput.value = "";
         toast("Email signature updated");
       } catch (error) {
         if (signatureError) signatureError.textContent = error instanceof Error ? error.message : "Signature could not be uploaded";
-      } finally { if (selectButton) selectButton.disabled = false; }
-    });
+        if (status) status.textContent = "";
+      } finally { if (selectButton) selectButton.disabled = false; if (dropzone) { dropzone.classList.remove("is-uploading"); dropzone.removeAttribute("aria-busy"); } }
+    };
+    selectButton?.addEventListener("click", () => signatureInput?.click());
+    dropzone?.addEventListener("click", () => signatureInput?.click());
+    dropzone?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); signatureInput?.click(); } });
+    dropzone?.addEventListener("dragover", (event) => { event.preventDefault(); dropzone.classList.add("is-dragging"); });
+    dropzone?.addEventListener("dragleave", () => dropzone.classList.remove("is-dragging"));
+    dropzone?.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("is-dragging"); void uploadSignature(event.dataTransfer?.files?.[0]); });
+    signatureInput?.addEventListener("change", () => { void uploadSignature(signatureInput.files?.[0]); });
     removeButton?.addEventListener("click", async () => {
       removeButton.disabled = true;
       if (signatureError) signatureError.textContent = "";

@@ -64,6 +64,9 @@ class Config:
     DEVICE_ACCESS_MODE = os.getenv("DEVICE_ACCESS_MODE", "approved_devices_only").strip().lower()
     DEVICE_COOKIE_NAME = os.getenv("DEVICE_COOKIE_NAME", "moneda_device")
     DEVICE_COOKIE_MAX_AGE = max(60, int(os.getenv("DEVICE_COOKIE_MAX_AGE", str(60 * 60 * 24 * 365))))
+    DEVICE_ONLINE_WINDOW_SECONDS = max(60, int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "300")))
+    DEVICE_RECENT_WINDOW_SECONDS = max(DEVICE_ONLINE_WINDOW_SECONDS, int(os.getenv("DEVICE_RECENT_WINDOW_SECONDS", "1800")))
+    DEVICE_ACTIVITY_WRITE_INTERVAL_SECONDS = max(30, int(os.getenv("DEVICE_ACTIVITY_WRITE_INTERVAL_SECONDS", "60")))
     # Device location is approximate network geolocation only. Forwarded
     # headers are honored only when the direct peer is explicitly trusted.
     TRUSTED_PROXY_IPS = os.getenv("TRUSTED_PROXY_IPS", "")

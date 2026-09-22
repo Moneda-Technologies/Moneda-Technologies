@@ -5,6 +5,20 @@ export const escapeHtml = (value: unknown): string => String(value ?? "")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#039;");
 
+/** Restrict server-configured assets to this application's HTTP(S) origin. */
+export function safeAssetUrl(value: unknown, fallback = "/brand/image.png"): string {
+  try {
+    const raw = String(value ?? "").trim();
+    if (!raw) return fallback;
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin || !["http:", "https:"].includes(url.protocol)) return fallback;
+    if (url.pathname === "/" || !/\.(png|jpe?g|webp|gif|svg)$/i.test(url.pathname)) return fallback;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 export function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", html = ""): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   node.className = className;

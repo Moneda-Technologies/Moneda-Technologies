@@ -170,7 +170,7 @@ def test_denial_requires_reason_and_reinstate_returns_to_pending_with_history(ap
     assert any("Device reinstated" in item["subject"] or "Device reinstated" in item.get("html", "") for item in app.extensions["email_provider"].messages)
 
 
-def test_denied_device_delete_requires_reason_and_preserves_audit(app):
+def test_only_revoked_device_delete_requires_reason_and_preserves_audit(app):
     store = _pending_app(app)
     target = app.test_client()
     _login, _verified = complete_password_otp_login(app, target, "device-user", "Secure123")
@@ -178,16 +178,18 @@ def test_denied_device_delete_requires_reason_and_preserves_audit(app):
     assert admin.post("/api/auth/demo", json={}).status_code == 200
     device = store.find_one("devices", {"user_id": "device-user"})
     assert device
-    store.update_one("devices", {"_id": device["_id"]}, {"device_ref": "DVC-DENIED", "device_status": "denied"})
-    assert admin.delete("/api/v1/admin/users/device-user/devices/DVC-DENIED", json={}).status_code == 422
-    deleted = admin.delete("/api/v1/admin/users/device-user/devices/DVC-DENIED", json={"reason": "Old rejected device entry"})
+    store.update_one("devices", {"_id": device["_id"]}, {"device_ref": "DVC-REVOKED", "device_status": "approved"})
+    assert admin.delete("/api/v1/admin/users/device-user/devices/DVC-REVOKED", json={"reason": "Must not delete"}).status_code == 409
+    store.update_one("devices", {"_id": device["_id"]}, {"device_status": "revoked"})
+    assert admin.delete("/api/v1/admin/users/device-user/devices/DVC-REVOKED", json={}).status_code == 422
+    deleted = admin.delete("/api/v1/admin/users/device-user/devices/DVC-REVOKED", json={"reason": "Old revoked device entry"})
     assert deleted.status_code == 200
     assert store.find_one("devices", {"_id": device["_id"]}) is None
     events, _ = store.list("audit_logs", {"action": "DEVICE_DELETED"}, limit=20)
-    assert any(event.get("metadata", {}).get("previous_status") == "denied" for event in events)
+    assert any(event.get("metadata", {}).get("previous_status") == "revoked" for event in events)
 
 
-def test_device_details_are_safe_structured_and_audited(app):
+def test_device_list_is_safe_structured_and_does_not_audit_passive_views(app):
     store = _pending_app(app)
     target = app.test_client()
     _login, _verified = complete_password_otp_login(app, target, "device-user", "Secure123")
@@ -200,9 +202,10 @@ def test_device_details_are_safe_structured_and_audited(app):
     item = response.json["data"]["items"][0]
     assert item["device_type"] in {"Desktop", "Tablet", "Mobile"}
     assert "browser_name" in item and "os_name" in item and "location" in item
+    assert item["presence_status"] in {"online", "recently_active", "offline"}
     assert "last_ip" not in item and "token_hash" not in item
     events, _ = store.list("audit_logs", {"action": "DEVICE_DETAILS_VIEWED"}, limit=20)
-    assert any(event.get("entity_id") == "device-user" for event in events)
+    assert not any(event.get("entity_id") == "device-user" for event in events)
 
 
 def test_forwarded_client_ip_requires_trusted_proxy(app):

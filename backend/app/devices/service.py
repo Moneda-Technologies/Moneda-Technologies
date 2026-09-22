@@ -285,6 +285,26 @@ def current_device(user: dict[str, Any] | None = None) -> dict[str, Any] | None:
     return current_app.extensions["store"].find_one("devices", {"_id": device_id, "user_id": user_id})
 
 
+def touch_current_device_activity() -> None:
+    """Refresh authenticated device presence without producing audit noise."""
+    user_id = str(session.get("user_id") or "")
+    device_id = session.get("device_id")
+    if not user_id or not device_id:
+        return
+    store = current_app.extensions["store"]
+    device = store.find_one("devices", {"_id": device_id, "user_id": user_id})
+    if not device or str(device.get("device_status") or "") != APPROVED:
+        return
+    now = utcnow()
+    last_seen = ensure_utc(device.get("last_seen_at") or device.get("last_activity_at"))
+    interval = int(current_app.config.get("DEVICE_ACTIVITY_WRITE_INTERVAL_SECONDS", 60))
+    if last_seen and (now - last_seen).total_seconds() < interval:
+        return
+    store.update_one("devices", {"_id": device_id, "user_id": user_id, "device_status": APPROVED}, {
+        "last_seen_at": now, "last_activity_at": now,
+    })
+
+
 def device_access_status(user: dict[str, Any] | None = None) -> dict[str, Any]:
     user = user or {}
     if policy_for(user) == "any_authorized_device":
@@ -332,6 +352,14 @@ def safe_device(row: dict[str, Any], *, current_session: bool = False, include_p
     registered_at = row.get("registered_at") or row.get("created_at")
     last_activity_at = row.get("last_seen_at") or row.get("last_activity_at")
     status = row.get("device_status") or row.get("status")
+    activity_at = ensure_utc(last_activity_at)
+    age_seconds = (utcnow() - activity_at).total_seconds() if activity_at else None
+    presence_status = "offline"
+    if str(status or "").lower() == APPROVED and age_seconds is not None:
+        if age_seconds <= int(current_app.config.get("DEVICE_ONLINE_WINDOW_SECONDS", 300)):
+            presence_status = "online"
+        elif age_seconds <= int(current_app.config.get("DEVICE_RECENT_WINDOW_SECONDS", 1800)):
+            presence_status = "recently_active"
     if not location.get("label"):
         location["label"] = ", ".join(str(location.get(key)) for key in ("city", "state", "country") if location.get(key)) or "Location unavailable"
     location["approximate"] = True
@@ -345,7 +373,7 @@ def safe_device(row: dict[str, Any], *, current_session: bool = False, include_p
         "os_name": os_name, "os_version": row.get("os_version") or "", "approval_required": row.get("approval_required", row.get("device_status") == PENDING),
         "location": location, "city": location.get("city"), "state": location.get("state"),
         "country": location.get("country"), "country_code": location.get("country_code"),
-        "current_session": current_session, "history": history, "location_source": row.get("location_source"),
+        "current_session": current_session, "presence_status": presence_status, "history": history, "location_source": row.get("location_source"),
         "location_resolved_at": row.get("location_resolved_at")}
     if include_public_ip:
         result["public_ip"] = row.get("public_ip") or row.get("last_ip")

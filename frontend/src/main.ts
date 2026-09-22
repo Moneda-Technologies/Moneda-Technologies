@@ -75,7 +75,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 
-let bootstrapConfig: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR" };
+let bootstrapConfig: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: "/brand/image.png", demo_mode: false, master_currency: "EUR" };
 function configForPending(): PublicConfig { return bootstrapConfig; }
 
 function renderPublicAuthentication(config: PublicConfig): void {
@@ -87,12 +87,31 @@ function renderPublicAuthentication(config: PublicConfig): void {
   }
 }
 
+function renderFatalState(config: PublicConfig, title: string, message: string): void {
+  const container = document.createElement("div");
+  container.className = "fatal-state";
+  const logo = document.createElement("img");
+  logo.src = "/brand/image.png";
+  logo.alt = config.brand_name;
+  const heading = document.createElement("h1");
+  heading.textContent = title;
+  const copy = document.createElement("p");
+  copy.textContent = message;
+  const retry = document.createElement("button");
+  retry.className = "button button-primary";
+  retry.type = "button";
+  retry.textContent = "Try again";
+  retry.addEventListener("click", () => location.reload());
+  container.append(logo, heading, copy, retry);
+  app.replaceChildren(container);
+}
+
 async function bootstrap(): Promise<void> {
-  let config: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: import.meta.env.VITE_BRAND_LOGO_PATH ?? "/brand/moneda-logo.svg", demo_mode: false, master_currency: "EUR", signup_email_domains: ["monedatechnologies.com", "chemo.in"] };
-  try { config = await api<PublicConfig>("/config"); }
+  let config: PublicConfig = { brand_name: "Moneda Technologies", brand_logo_path: import.meta.env.VITE_BRAND_LOGO_PATH ?? "/brand/image.png", demo_mode: false, master_currency: "EUR", signup_email_domains: ["monedatechnologies.com", "chemo.in"] };
+  try { config = await api<PublicConfig>("/config"); if (config.brand_logo_path.toLowerCase().endsWith(".svg")) config.brand_logo_path = "/brand/image.png"; }
   catch (error) {
     const message = error instanceof ApiError ? `${error.message} (${error.status})` : "The API did not return a valid response.";
-    app.innerHTML = `<div class="fatal-state"><img src="${config.brand_logo_path}" alt="${config.brand_name}"><h1>Moneda configuration could not be loaded.</h1><p>${message}</p><button class="button button-primary" onclick="location.reload()">Try again</button></div>`;
+    renderFatalState(config, "Moneda configuration could not be loaded.", message);
     return;
   }
   appStore.set({ brandName: config.brand_name, brandLogoPath: config.brand_logo_path });
@@ -114,7 +133,7 @@ async function bootstrap(): Promise<void> {
     const message = error instanceof ApiError
       ? `${error.message} (${error.status})`
       : "The Moneda API could not be reached. Check the connection and try again.";
-    app.innerHTML = `<div class="fatal-state"><img src="${config.brand_logo_path}" alt="${config.brand_name}"><h1>Workspace unavailable</h1><p>${message}</p><button class="button button-primary" onclick="location.reload()">Try again</button></div>`;
+    renderFatalState(config, "Workspace unavailable", message);
   }
 }
 

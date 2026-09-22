@@ -19,5 +19,26 @@
   --radius: 11px;
   --sidebar-width: 248px;
   --topbar-height: 70px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --text-4xl: 2.5rem;
+  --line-body: 1.55;
+  --control-height: 46px;
+  --control-height-sm: 40px;
+  --panel-padding: 24px;
+  --page-gutter: 32px;
 }
-

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 import csv
 import io
 import json
@@ -979,9 +979,6 @@ def list_user_devices(user_id: str):
         return failure("Only administrators can inspect trusted devices", status=403)
     if not store.find_one("users", {"_id": user_id}):
         return failure("User not found", status=404)
-    audit("DEVICE_DETAILS_VIEWED", "user", user_id, {
-        "actor_user_id": actor.get("_id"), "device_count": store.count("devices", {"user_id": user_id}),
-    })
     rows, total = store.list("devices", {"user_id": user_id}, limit=500, sort="registered_at", direction=-1)
     for row in rows:
         if not row.get("device_ref"):
@@ -1136,20 +1133,20 @@ def delete_denied_device(user_id: str, device_id: str):
     device = store.find_one("devices", {"device_ref": device_id, "user_id": user_id}) or store.find_one("devices", {"_id": device_id, "user_id": user_id})
     if not device:
         return failure("Device not found", status=404)
-    if str(device.get("device_status") or "").lower() != DENIED:
-        return failure("Only denied devices can be deleted", status=409, error="invalid_device_state")
+    if str(device.get("device_status") or "").lower() != REVOKED:
+        return failure("Only revoked devices can be deleted", status=409, error="invalid_device_state")
     reason = str((request.get_json(silent=True) or {}).get("reason") or "").strip()
     if not reason:
         return failure("A reason is required", status=422, error="decision_reason_required")
     audit("DEVICE_DELETED", "device", str(device.get("_id")), {
         "target_user_id": user_id, "device_id": device.get("device_ref") or device.get("_id"),
         "browser": device.get("browser"), "operating_system": device.get("operating_system"),
-        "device_type": device.get("device_type"), "previous_status": DENIED,
+        "device_type": device.get("device_type"), "previous_status": REVOKED,
         "actor_user_id": actor.get("_id"), "reason": reason,
     })
-    if not store.delete_one("devices", {"_id": device.get("_id"), "user_id": user_id, "device_status": DENIED}):
+    if not store.delete_one("devices", {"_id": device.get("_id"), "user_id": user_id, "device_status": REVOKED}):
         return failure("Device could not be deleted", status=409, error="device_delete_conflict")
-    return success({"deleted": True, "device_id": device.get("device_ref") or device.get("_id")}, "Denied device deleted")
+    return success({"deleted": True, "device_id": device.get("device_ref") or device.get("_id")}, "Revoked device deleted")
 
 
 @bp.post("/admin/users")
@@ -1381,6 +1378,12 @@ def update_user(user_id: str):
         # default when a user becomes eligible.
         changes.setdefault("incentive_rates", {})
     actor = current_user() or {}
+    if changes.get("active") is False and str(user_id) == str(actor.get("_id")):
+        return failure("You cannot deactivate your own account", status=403, error="self_deactivation_forbidden")
+    if changes.get("active") is False and existing.get("role_id") == "superadmin":
+        active_superadmins = store.count("users", {"role_id": "superadmin", "active": {"$ne": False}})
+        if active_superadmins <= 1:
+            return failure("At least one active Superadmin must remain", status=409, error="last_superadmin")
     if ("manager_id" in changes or "role_id" in changes) and str(actor.get("role_id") or "") not in {"admin", "superadmin"}:
         return failure("Only administrators can manage the user hierarchy", status=403, error="hierarchy_management_forbidden")
     if user_id == actor.get("_id") and "role_id" in changes and changes["role_id"] != existing.get("role_id"):
@@ -1707,8 +1710,33 @@ def set_user_password(user_id: str):
 @bp.get("/admin/roles")
 @superadmin_required
 def list_roles():
-    roles, total = current_app.extensions["store"].list("roles", limit=100, sort="display_name", direction=1)
+    store = current_app.extensions["store"]
+    roles, total = store.list("roles", limit=100, sort="display_name", direction=1)
+    for role in roles:
+        role["assigned_user_count"] = store.count("users", {"role_id": role.get("_id"), "active": {"$ne": False}})
     return success({"items": roles, "total": total})
+
+
+@bp.post("/admin/roles")
+@superadmin_required
+def create_role():
+    store = current_app.extensions["store"]
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("display_name") or payload.get("name") or "").strip()
+    key = str(payload.get("_id") or payload.get("key") or "").strip().casefold()
+    if not name or not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", key):
+        return failure("Role name and a valid role key are required", status=422, error="invalid_role")
+    if key in {"superadmin", "admin", "manager", "manager_sales_admin", "user"}:
+        return failure("Protected system role key cannot be used", status=422, error="protected_role")
+    if store.find_one("roles", {"_id": key}) or store.find_one("roles", {"display_name": name}):
+        return failure("A role with this key or name already exists", status=409, error="duplicate_role")
+    permissions = payload.get("permissions") or []
+    allowed = {row["_id"] for row in store.list("permissions", limit=1000)[0]}
+    if not isinstance(permissions, list) or not set(map(str, permissions)).issubset(allowed):
+        return failure("One or more permissions are invalid", status=422, error="invalid_permission")
+    row = store.insert_one("roles", {"_id": key, "display_name": name, "description": str(payload.get("description") or "").strip()[:500], "permissions": sorted(set(map(str, permissions))), "system": False})
+    audit("role.create", "role", key, {"permissions": row.get("permissions", []), "actor_user_id": (current_user() or {}).get("_id")})
+    return success(row, "Role created", 201)
 
 
 @bp.get("/admin/user-role-options")
@@ -2144,6 +2172,9 @@ def update_role(role_id: str):
     payload = request.get_json(silent=True) or {}
     allowed_permissions = {row["_id"] for row in current_app.extensions["store"].list("permissions", limit=1000)[0]}
     permissions = payload.get("permissions")
+    role = current_app.extensions["store"].find_one("roles", {"_id": role_id})
+    if not role:
+        return failure("Role not found", status=404)
     changes = {}
     if payload.get("display_name"):
         changes["display_name"] = str(payload["display_name"])[:100]
@@ -2151,6 +2182,10 @@ def update_role(role_id: str):
         if not isinstance(permissions, list) or not set(permissions).issubset(allowed_permissions):
             return failure("One or more permissions are invalid", status=422)
         changes["permissions"] = permissions
+    if role.get("system") and "display_name" in changes:
+        return failure("System role names cannot be changed", status=403)
+    if "description" in payload:
+        changes["description"] = str(payload.get("description") or "").strip()[:500]
     row = current_app.extensions["store"].update_one("roles", {"_id": role_id}, changes)
     if not row:
         return failure("Role not found", status=404)
@@ -2158,12 +2193,71 @@ def update_role(role_id: str):
     return success(row, "Role updated")
 
 
+@bp.delete("/admin/roles/<role_id>")
+@superadmin_required
+def delete_role(role_id: str):
+    store = current_app.extensions["store"]
+    role = store.find_one("roles", {"_id": role_id})
+    if not role:
+        return failure("Role not found", status=404)
+    if role.get("system") or role_id in {"superadmin", "admin", "manager", "manager_sales_admin", "user"}:
+        return failure("Protected system roles cannot be deleted", status=403, error="protected_role")
+    assigned = store.count("users", {"role_id": role_id})
+    if assigned:
+        return failure(f"This role cannot be deleted because it is assigned to {assigned} users", status=409, error="role_in_use", assigned_user_count=assigned)
+    if not store.delete_one("roles", {"_id": role_id}):
+        return failure("Role could not be deleted", status=409)
+    audit("role.delete", "role", role_id, {"actor_user_id": (current_user() or {}).get("_id")})
+    return success({"deleted": True, "role_id": role_id}, "Role deleted")
+
+
 @bp.get("/admin/audit-logs")
 @permission_required("audit_logs.view")
 def audit_logs():
-    page = max(int(request.args.get("page", 1)), 1)
-    rows, total = current_app.extensions["store"].list("audit_logs", page=page, limit=50)
-    return success({"items": rows, "total": total, "page": page})
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+        page_size = min(max(int(request.args.get("page_size", 25)), 25), 100)
+    except (TypeError, ValueError):
+        return failure("Page and page size must be valid integers", status=422)
+    user_id = str(request.args.get("user") or "").strip()
+    action = str(request.args.get("action") or "").strip()
+    resource = str(request.args.get("resource") or "").strip()
+    result = str(request.args.get("result") or "").strip()
+    search = str(request.args.get("search") or "").strip()
+    from_date = str(request.args.get("from_date") or "").strip()
+    to_date = str(request.args.get("to_date") or "").strip()
+    clauses: list[dict[str, Any]] = []
+    if user_id:
+        clauses.append({"$or": [{"user_id": user_id}, {"actor_id": user_id}]})
+    if action:
+        clauses.append({"action": action})
+    if resource:
+        clauses.append({"$or": [{"entity_type": resource}, {"resource_type": resource}]})
+    if result:
+        result_pattern = f"^{re.escape(result)}$"
+        result_clauses: list[dict[str, Any]] = [{"status": {"$regex": result_pattern, "$options": "i"}}, {"result": {"$regex": result_pattern, "$options": "i"}}]
+        if result.upper() == "RECORDED":
+            result_clauses.append({"$and": [{"status": {"$exists": False}}, {"result": {"$exists": False}}]})
+        clauses.append({"$or": result_clauses})
+    if from_date:
+        try:
+            start = datetime.combine(datetime.fromisoformat(from_date).date(), time.min, tzinfo=timezone.utc)
+        except ValueError:
+            return failure("From date must use YYYY-MM-DD", status=422)
+        clauses.append({"$or": [{"created_at": {"$gte": start}}, {"timestamp": {"$gte": from_date}}]})
+    if to_date:
+        try:
+            end = datetime.combine(datetime.fromisoformat(to_date).date() + timedelta(days=1), time.min, tzinfo=timezone.utc) - timedelta(microseconds=1)
+        except ValueError:
+            return failure("To date must use YYYY-MM-DD", status=422)
+        clauses.append({"$or": [{"created_at": {"$lte": end}}, {"timestamp": {"$lte": f"{to_date}T23:59:59.999999"}}]})
+    if search:
+        pattern = re.escape(search)
+        clauses.append({"$or": [{field: {"$regex": pattern, "$options": "i"}} for field in ("action", "entity_type", "resource_type", "entity_id", "user_id", "actor_id", "ip_address")]})
+    query = {"$and": clauses} if clauses else {}
+    rows, total = current_app.extensions["store"].list("audit_logs", query, page=page, limit=page_size, sort="created_at", direction=-1)
+    total_pages = (total + page_size - 1) // page_size if total else 0
+    return success({"items": rows, "total": total, "page": page, "page_size": page_size, "pages": total_pages, "has_next": page < total_pages})
 
 
 @bp.get("/settings")

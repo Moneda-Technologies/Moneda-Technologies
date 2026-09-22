@@ -111,9 +111,10 @@ def _line_configuration_lines(line: dict[str, Any]) -> list[str]:
 def _logo_path() -> Path:
     workspace_root = Path(current_app.root_path).parents[1]
     public_root = (workspace_root / "frontend" / "public").resolve()
-    default_logo = public_root / "brand" / "moneda-logo.svg"
+    default_logo = public_root / "brand" / "image.png"
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
-    configured = str(settings.get("brand_logo_path", "/brand/moneda-logo.svg")).lstrip("/\\")
+    configured_value = str(settings.get("brand_logo_path", "/brand/image.png"))
+    configured = ("brand/image.png" if configured_value.lower().endswith(".svg") else configured_value).lstrip("/\\")
     candidate = (public_root / configured).resolve()
     if not candidate.is_relative_to(public_root) or not candidate.is_file():
         candidate = default_logo
@@ -127,7 +128,7 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     palette = {
         "black": colors.HexColor("#1b1b1b"), "red": colors.HexColor("#df3731"),
@@ -175,14 +176,18 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     story: list[Any] = []
     logo: Any
     try:
-        from svglib.svglib import svg2rlg
-
-        logo = svg2rlg(str(logo_path))
         target_width = 62 * mm
-        scale = target_width / logo.width
-        logo.width *= scale
-        logo.height *= scale
-        logo.scale(scale, scale)
+        if logo_path.suffix.lower() == ".png":
+            logo = Image(str(logo_path), width=target_width, height=target_width * 0.24)
+        else:
+            from svglib.svglib import svg2rlg
+            logo = svg2rlg(str(logo_path))
+            if logo is None:
+                raise ValueError("Logo could not be loaded")
+            scale = target_width / logo.width
+            logo.width *= scale
+            logo.height *= scale
+            logo.scale(scale, scale)
     except (ImportError, OSError, ValueError):
         logo = Paragraph("<font size='22'><b>MONEDA</b></font><br/><font size='8'>T E C H N O L O G I E S</font>", normal)
     is_order_confirmation = str(quotation.get("document_type") or "").lower() == "order_confirmation"

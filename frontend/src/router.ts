@@ -4,7 +4,7 @@ import { customerDetailPage } from "./pages/customers";
 import { orderDetailPage } from "./pages/orders";
 import { quotationDetailPage } from "./pages/quotations";
 import { documentEditorPage } from "./pages/document-editor";
-import { element } from "./utils/dom";
+import { element, escapeHtml } from "./utils/dom";
 import { clearCustomerContextState, customerGuardMessage, CUSTOMER_SELECTION_PATH, hasCustomerContext, isCustomerProtectedRoute } from "./guards/customer-context";
 import { customerCompanyApi } from "./api";
 import { toast } from "./components/toast";
@@ -49,7 +49,7 @@ export async function navigate(path: string, push = true): Promise<void> {
     refreshIcons(main);
   } catch (error) {
     if (requestRevision !== navigationRevision) return;
-    main.innerHTML = `<section class="page"><div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Page could not be loaded</strong><p>${error instanceof Error ? error.message : "Please try again."}</p></div></div></section>`;
+    main.innerHTML = `<section class="page"><div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Page could not be loaded</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again.")}</p></div></div></section>`;
     refreshIcons(main);
   }
 }

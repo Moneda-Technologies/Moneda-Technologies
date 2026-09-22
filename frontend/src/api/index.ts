@@ -184,6 +184,8 @@ export const adminApi = {
   updateUser: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}`, patchBody(value)),
   setUserPassword: (id: string, password: string, confirm_password: string) => api<Record<string, unknown>>(`/admin/users/${encodeURIComponent(id)}/password`, jsonBody({ password, confirm_password })),
   roles: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/roles"),
+  createRole: (value: unknown) => api<Record<string, unknown>>("/admin/roles", jsonBody(value)),
+  deleteRole: (id: string) => api<Record<string, unknown>>(`/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" }),
   userRoleOptions: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/user-role-options"),
   updateRole: (id: string, value: unknown) => api<Record<string, unknown>>(`/admin/roles/${encodeURIComponent(id)}`, patchBody(value)),
   incentiveRules: () => api<{ items: Record<string, unknown>[]; total: number }>("/admin/incentive-rules"),
@@ -208,7 +210,10 @@ export const adminApi = {
   settings: () => api<Record<string, unknown>>("/settings"),
   customerIncentiveVisibility: () => api<{ show_customer_incentives_to_manager: boolean; show_customer_incentives_to_salesperson: boolean; can_manage: boolean }>("/admin/customer-incentive-visibility"),
   updateCustomerIncentiveVisibility: (value: unknown) => api<Record<string, unknown>>("/admin/customer-incentive-visibility", patchBody(value)),
-  auditLogs: () => api<{ items: Record<string, unknown>[]; total: number; page: number }>("/admin/audit-logs"),
+  auditLogs: (filters: Record<string, string> = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return api<{ items: Record<string, unknown>[]; total: number; page: number; page_size: number; pages: number; has_next: boolean }>(`/admin/audit-logs${params.size ? `?${params}` : ""}`);
+  },
   updateSettings: (value: unknown) => api<Record<string, unknown>>("/settings", patchBody(value)),
   routing: () => api<{ cc: Array<Record<string, unknown>>; bcc: Array<Record<string, unknown>> }>("/integrations/zoho/routing"),
   addRouting: (value: unknown) => api<Record<string, unknown>>("/integrations/zoho/routing", jsonBody(value)),

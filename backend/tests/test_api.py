@@ -1253,6 +1253,7 @@ def test_legacy_working_order_lines_compare_without_false_added_removed_changes(
 
 def test_superadmin_price_lists_use_real_server_assets_and_audit_delivery(app, authenticated):
     store = app.extensions["store"]
+    assert app.test_client().get("/api/v1/price-lists/blankets/document").status_code == 401
     listed = authenticated.get("/api/v1/price-lists")
     assert listed.status_code == 200
     assert {row["_id"] for row in listed.json["data"]["items"]} >= {"blankets", "underpacking-dealer", "underpacking-distributor"}
@@ -1279,12 +1280,14 @@ def test_superadmin_price_lists_use_real_server_assets_and_audit_delivery(app, a
     assert download.status_code == 200
     assert "attachment" in download.headers["Content-Disposition"]
     assert download.data == pdf.data
-    assert authenticated.get("/api/v1/price-lists/blankets/document").status_code == 404
-    missing_delivery = authenticated.post("/api/v1/price-lists/blankets/send", json={
-        "customer_id": "customer-demo-1", "to": ["procurement@example.com"],
-    })
-    assert missing_delivery.status_code == 409
-    assert missing_delivery.json["error"] == "PRICE_LIST_PDF_MISSING"
+    blanket_pdf = authenticated.get("/api/v1/price-lists/blankets/document")
+    assert blanket_pdf.status_code == 200
+    assert blanket_pdf.headers["Content-Type"].startswith("application/pdf")
+    assert blanket_pdf.data.startswith(b"%PDF")
+    blanket_download = authenticated.get("/api/v1/price-lists/blankets/document?download=1")
+    assert blanket_download.status_code == 200
+    assert "attachment" in blanket_download.headers["Content-Disposition"]
+    assert blanket_download.data == blanket_pdf.data
 
     sent = authenticated.post("/api/v1/price-lists/underpacking-dealer/send", json={
         "customer_id": "customer-demo-1", "to": ["procurement@example.com"],

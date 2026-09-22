@@ -201,10 +201,18 @@ def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
                 return False
             if "$regex" in expected and not re.search(str(expected["$regex"]), str(actual or ""), re.I):
                 return False
-            if "$gte" in expected and (actual is None or actual < expected["$gte"]):
-                return False
-            if "$lte" in expected and (actual is None or actual > expected["$lte"]):
-                return False
+            if "$gte" in expected:
+                try:
+                    if actual is None or actual < expected["$gte"]:
+                        return False
+                except TypeError:
+                    return False
+            if "$lte" in expected:
+                try:
+                    if actual is None or actual > expected["$lte"]:
+                        return False
+                except TypeError:
+                    return False
         elif isinstance(actual, list):
             if expected not in actual:
                 return False

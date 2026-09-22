@@ -247,6 +247,13 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
             return failure("Request origin is not allowed", status=403)
         return None
 
+    @app.before_request
+    def refresh_device_presence():
+        if session.get("user_id") and session.get("device_id"):
+            from app.devices.service import touch_current_device_activity
+            touch_current_device_activity()
+        return None
+
     @app.after_request
     def security_headers(response):
         device_token = getattr(g, "device_cookie_value", None)

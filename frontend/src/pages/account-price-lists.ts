@@ -14,6 +14,7 @@ import { openCustomerEditor } from "./customers";
     _id: "blankets", display_name: "Blankets", description: "Blanket commercial price list", category: "blankets",
     classification: "GLOBAL", client_type: null,
     document_url: "https://workdrive.zohoexternal.in/embed/dgl7a5a1296292fb94375948159d0621cc4af?toolbar=false&appearance=light&themecolor=green",
+    pdf_path: "data/price_lists/Blanket-Price-List.pdf", pdf_filename: "Moneda-Blanket-Price-List.pdf",
     active: true, sort_order: 10, metadata: { title: "Blankets Price List" },
   },
   {
@@ -57,6 +58,20 @@ function priceListType(list: PriceListDefinition): string {
 function priceListOrientation(list: PriceListDefinition): "portrait" | "landscape" | "mixed" {
   const value = String(list.metadata?.page_orientation ?? "").toLowerCase();
   return value === "portrait" || value === "mixed" ? value : "landscape";
+}
+
+function externalViewerUrl(list: PriceListDefinition): string {
+  const source = String(list.document_url ?? "").trim();
+  if (!source) return "";
+  try {
+    const url = new URL(source);
+    // WorkDrive hides its dark document controls when toolbar=false. Keep the
+    // official remote document, but present it consistently with local PDFs.
+    url.searchParams.set("toolbar", "true");
+    return url.toString();
+  } catch {
+    return source.replace(/([?&])toolbar=false(?=&|$)/i, "$1toolbar=true");
+  }
 }
 
 function customerEmail(customer: Customer): string {
@@ -230,7 +245,7 @@ export async function accountPriceListsPage(): Promise<HTMLElement> {
     if (selected) selectedId = selected._id;
     const viewerUrl = selected?.pdf_path
       ? `${priceListApi.documentUrl(selected._id)}#view=FitH&toolbar=1&navpanes=0`
-      : String(selected?.document_url ?? "");
+      : selected ? externalViewerUrl(selected) : "";
     const documentActions = selected?.pdf_path
       ? `<a class="button button-secondary" href="${escapeHtml(priceListApi.documentUrl(selected._id))}" target="_blank" rel="noopener" data-price-list-open><i data-lucide="external-link"></i>Open PDF</a><a class="button button-secondary" href="${escapeHtml(priceListApi.documentUrl(selected._id, true))}" download="${escapeHtml(selected.pdf_filename ?? "price-list.pdf")}" data-price-list-download><i data-lucide="download"></i>Download PDF</a>`
       : '<span class="price-list-asset-note"><i data-lucide="info"></i>Viewer available · PDF delivery asset not configured</span>';

@@ -599,6 +599,42 @@ export async function incentivesPage(): Promise<HTMLElement> {
     const snapshot = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
     return String(snapshot.name ?? snapshot.email ?? fallback);
   };
+  const decorateOverviewProducts = () => {
+    body.querySelectorAll<HTMLElement>(".incentive-overview-table tbody tr").forEach((row) => {
+      const cell = row.children[3] as HTMLElement | undefined;
+      if (!cell || cell.dataset.productsDecorated === "true") return;
+      cell.dataset.productsDecorated = "true";
+      const parts = cell.innerHTML.split(/<br\s*\/?\s*>/i).filter((part) => part.trim());
+      if (!parts.length) return;
+      const summary = document.createElement("div");
+      summary.className = "incentive-product-summary";
+      parts.forEach((part, index) => {
+        const line = document.createElement("div");
+        line.className = `incentive-product-line${index > 2 ? " is-collapsed" : ""}`;
+        const decoded = document.createElement("span");
+        decoded.innerHTML = part;
+        const text = decoded.textContent ?? part;
+        const fields = text.split(/\s+(?:·|Â·)\s+/);
+        line.innerHTML = `<strong>${escapeHtml(fields.shift() ?? text)}</strong><small>${escapeHtml(fields.join(" · "))}</small>`;
+        summary.append(line);
+      });
+      if (parts.length > 3) {
+        const toggle = document.createElement("button");
+        toggle.className = "incentive-product-toggle";
+        toggle.type = "button";
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.textContent = `+${parts.length - 3} more`;
+        toggle.addEventListener("click", () => {
+          const expanded = toggle.getAttribute("aria-expanded") === "true";
+          summary.classList.toggle("is-expanded", !expanded);
+          toggle.setAttribute("aria-expanded", String(!expanded));
+          toggle.textContent = expanded ? `+${parts.length - 3} more` : "Show less";
+        });
+        summary.append(toggle);
+      }
+      cell.replaceChildren(summary);
+    });
+  };
   const renderUserRows = (items: Record<string, unknown>[]) => {
     if (!items.length) return emptyState("badge-euro", "No user incentives yet", "Internal incentive allocations are captured when an eligible user or manager creates an Order Confirmation.");
     return `<div class="data-table panel user-incentive-table"><table><thead><tr><th>OC Number</th><th>Customer</th><th>Created By</th><th>Creator Role</th><th>Manager</th><th>Recipient</th><th>Recipient Role</th><th>Product / Category</th><th>Order Amount</th><th>Incentive %</th><th>Incentive Amount</th><th>Payment Status</th><th>Incentive Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${items.map((item) => {
@@ -814,7 +850,7 @@ export async function incentivesPage(): Promise<HTMLElement> {
     const params = new URLSearchParams();
     ["search", "salesperson_id", "customer_id", "category_id", "product_id", "recipient_role", "payment_status", "status", "from_date", "to_date", "order_id"].forEach((name) => { const value = body.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value.trim(); if (value) params.set(name, value); });
     const result = await financeApi.incentives(params.toString());
-    const table = body.querySelector<HTMLElement>("[data-incentive-results]"); if (table) table.innerHTML = renderRows(result.items);
+    const table = body.querySelector<HTMLElement>("[data-incentive-results]"); if (table) { table.innerHTML = renderRows(result.items); table.querySelector<HTMLElement>(".data-table.panel")?.classList.add("incentive-overview-table"); decorateOverviewProducts(); }
     if (requestedView === "user" && table) table.innerHTML = renderUserRows(result.items);
     if (requestedView !== "user" && canDeleteIncentives && table) {
       table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row, index) => {

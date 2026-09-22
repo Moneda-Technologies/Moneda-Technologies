@@ -10,6 +10,7 @@ DEFAULT_PRICE_LISTS: tuple[dict[str, Any], ...] = (
         "_id": "blankets", "display_name": "Blankets", "description": "Blanket commercial price list",
         "category": "blankets", "classification": "GLOBAL", "client_type": None,
         "document_url": "https://workdrive.zohoexternal.in/embed/dgl7a5a1296292fb94375948159d0621cc4af?toolbar=false&appearance=light&themecolor=green",
+        "pdf_path": "data/price_lists/Blanket-Price-List.pdf", "pdf_filename": "Moneda-Blanket-Price-List.pdf",
         "active": True, "sort_order": 10,
         "metadata": {"title": "Blankets Price List", "page_orientation": "portrait"},
     },
@@ -41,6 +42,11 @@ def list_price_lists(store: Any, *, active_only: bool = True) -> list[dict[str, 
             merged[str(row["_id"])] = {
                 **base, **row,
                 "metadata": {**(base.get("metadata") or {}), **(row.get("metadata") or {})},
+                # Server asset paths are code-controlled and deliberately not
+                # editable through the price-list API. Preserve canonical
+                # assets when older persisted definitions contain nulls.
+                **({"pdf_path": base["pdf_path"]} if base.get("pdf_path") else {}),
+                **({"pdf_filename": base["pdf_filename"]} if base.get("pdf_filename") else {}),
             }
     rows = list(merged.values())
     if active_only:

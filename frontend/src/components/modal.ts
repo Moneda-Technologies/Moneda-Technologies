@@ -1,4 +1,5 @@
 import { refreshIcons } from "./icons";
+import { escapeHtml } from "../utils/dom";
 
 export interface ModalOptions {
   /** Keep the dialog's default first-control focus unless a caller opts out. */
@@ -11,7 +12,7 @@ export function openModal(title: string, content: HTMLElement, size: "normal" | 
   dialog.className = `modal ${size === "wide" ? "modal-wide" : ""}`;
   dialog.setAttribute("aria-modal", "true");
   dialog.setAttribute("aria-labelledby", titleId);
-  dialog.innerHTML = `<div class="modal-head"><div><span class="eyebrow">Moneda workspace</span><h2 id="${titleId}">${title}</h2></div><button class="icon-button" data-close aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button></div>`;
+  dialog.innerHTML = `<div class="modal-head"><div><span class="eyebrow">Moneda workspace</span><h2 id="${titleId}">${escapeHtml(title)}</h2></div><button class="icon-button" data-close aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button></div>`;
   const body = document.createElement("div");
   body.className = "modal-body";
   body.append(content);

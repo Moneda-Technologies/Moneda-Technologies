@@ -46,7 +46,9 @@ def health():
 def public_config():
     settings = current_app.extensions["store"].find_one("app_settings", {"_id": "system"}) or {}
     brand_name = settings.get("brand_name") or "Moneda Technologies"
-    brand_logo_path = settings.get("brand_logo_path") or "/brand/moneda-logo.svg"
+    brand_logo_path = settings.get("brand_logo_path") or "/brand/image.png"
+    if str(brand_logo_path).lower().endswith(".svg"):
+        brand_logo_path = "/brand/image.png"
     currencies = settings.get("supported_currencies") or ["EUR", "USD", "INR"]
     email_otp_enabled = bool(
         current_app.config.get("DEMO_MODE") or current_app.config.get("TESTING")
