@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.services.workdrive import WorkDriveError, WorkDriveService
+from app.account.profile_sync import profile_asset_state
 from app.communication.zoho import ZohoMailOAuth
 from app.repositories.store import MemoryStore
 
@@ -23,6 +24,20 @@ def upload_dir():
     path.mkdir(parents=True, exist_ok=False)
     yield path
     shutil.rmtree(path, ignore_errors=True)
+
+
+def test_profile_asset_state_requires_a_real_local_file(upload_dir):
+    service = WorkDriveService({"ZOHO_WORKDRIVE_ENABLED": True}, None)
+    user = {"_id": "u1", "signature_path": "signatures/u1.png", "signature_workdrive_sync_status": "PENDING"}
+    assert profile_asset_state(user, "signature", upload_dir, service) == "MISSING_LOCAL"
+    (upload_dir / "signatures").mkdir()
+    (upload_dir / "signatures" / "u1.png").write_bytes(png())
+    assert profile_asset_state(user, "signature", upload_dir, service) == "PENDING"
+    user["signature_workdrive_sync_status"] = "SYNCED"
+    assert profile_asset_state(user, "signature", upload_dir, service) == "SYNCED"
+    user["signature_workdrive_sync_status"] = "FAILED"
+    assert profile_asset_state(user, "signature", upload_dir, service) == "FAILED"
+    assert profile_asset_state({"_id": "u1"}, "signature", upload_dir, service) == "NO_LOCAL_ASSET"
 
 
 class SuccessfulWorkDrive:
@@ -159,7 +174,10 @@ def test_workdrive_connection_test_returns_safe_health_result(app, authenticated
     app.extensions["workdrive"] = HealthyService()
     response = authenticated.post("/api/v1/admin/workdrive/test", json={})
     assert response.status_code == 200
-    assert response.json["data"] == {"healthy": True, "root_folder_name": "Moneda"}
+    assert response.json["data"] == {
+        "healthy": True, "connected": True, "root_folder": None,
+        "root_folder_name": "Moneda",
+    }
     assert "token" not in response.get_data(as_text=True).lower()
 
 
@@ -173,6 +191,47 @@ def test_workdrive_connection_test_reports_configuration_error_clearly(app, auth
     assert response.status_code == 503
     assert response.json["error"] == "WORKDRIVE_CONFIGURATION_ERROR"
     assert "missing secret detail" not in response.get_data(as_text=True)
+
+
+def test_workdrive_missing_root_folder_reports_specific_safe_error(app, authenticated):
+    service = WorkDriveService({
+        "ZOHO_WORKDRIVE_ENABLED": True,
+        "ZOHO_WORKDRIVE_CLIENT_ID": "client",
+        "ZOHO_WORKDRIVE_CLIENT_SECRET": "secret",
+        "ZOHO_WORKDRIVE_REFRESH_TOKEN": "refresh",
+        "ZOHO_WORKDRIVE_ACCOUNT_REGION": "in",
+        "ZOHO_WORKDRIVE_API_BASE_URL": "https://www.zohoapis.in/workdrive/api/v1",
+    }, app.extensions["store"])
+    app.extensions["workdrive"] = service
+    response = authenticated.post("/api/v1/admin/workdrive/test", json={})
+    assert response.status_code == 503
+    assert response.json["error"] == "WORKDRIVE_ROOT_FOLDER_REQUIRED"
+    assert "root folder ID is not configured" in response.json["message"]
+
+
+def test_workdrive_connection_test_returns_safe_diagnostic_metadata(app, authenticated):
+    class UnauthorizedService:
+        def test_connection(self):
+            raise WorkDriveError(
+                "WORKDRIVE_AUTHENTICATION_FAILED",
+                "WorkDrive authentication failed. Reconnect the WorkDrive integration.",
+                stage="root_folder", http_status=401, provider_code="R008",
+                endpoint_host="www.zohoapis.in",
+                endpoint_path="/workdrive/api/v1/files/[RESOURCE_ID]",
+                diagnostic_id="workdrive-safe-test",
+            )
+
+    app.extensions["workdrive"] = UnauthorizedService()
+    response = authenticated.post("/api/v1/admin/workdrive/test", json={})
+    assert response.status_code == 503
+    assert response.json["error"] == "WORKDRIVE_AUTHENTICATION_FAILED"
+    assert response.json["error_code"] == "WORKDRIVE_AUTHENTICATION_FAILED"
+    assert response.json["stage"] == "root_folder"
+    assert response.json["diagnostic_id"] == "workdrive-safe-test"
+    text = response.get_data(as_text=True).lower()
+    assert "access_token" not in text
+    assert "refresh_token" not in text
+    assert "authorization" not in text
 
 
 class Response:

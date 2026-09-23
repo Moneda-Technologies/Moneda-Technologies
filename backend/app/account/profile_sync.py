@@ -15,6 +15,17 @@ def workdrive_public_status(user: dict[str, Any], asset: str, service: WorkDrive
     return str(user.get(f"{asset}_workdrive_sync_status") or PENDING)
 
 
+def profile_asset_state(user: dict[str, Any], asset: str, upload_directory: str | Path,
+                        service: WorkDriveService) -> str:
+    """Classify an asset using persisted metadata and the physical file."""
+    if not user.get(f"{asset}_path"):
+        return "NO_LOCAL_ASSET"
+    path = photo_path(user, upload_directory) if asset == "photo" else signature_path(user, upload_directory)
+    if not path:
+        return "MISSING_LOCAL"
+    return workdrive_public_status(user, asset, service)
+
+
 def synchronize_profile_asset(store: Any, service: WorkDriveService, user: dict[str, Any],
                               asset: str, upload_directory: str | Path) -> dict[str, Any]:
     """Synchronize one already-persisted local asset without risking local data."""

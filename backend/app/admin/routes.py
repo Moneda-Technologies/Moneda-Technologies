@@ -42,7 +42,7 @@ from app.services.business_logic import (
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 from app.account.signature import SignatureValidationError, save_signature
 from app.account.photo import save_photo
-from app.account.profile_sync import synchronize_profile_asset, workdrive_public_status
+from app.account.profile_sync import profile_asset_state, synchronize_profile_asset, workdrive_public_status
 from app.services.workdrive import WorkDriveError, FAILED as WORKDRIVE_FAILED, PENDING as WORKDRIVE_PENDING, SYNCED as WORKDRIVE_SYNCED
 
 
@@ -2511,21 +2511,29 @@ def workdrive_status():
     store = current_app.extensions["store"]
     service = current_app.extensions["workdrive"]
     integration = store.find_one("integrations", {"_id": "zoho_workdrive"}) or {}
+    configuration_issue = service.configuration_issue()
     users, _ = store.list("users", {}, limit=5000)
-    statuses = [
-        str(user.get(f"{asset}_workdrive_sync_status") or WORKDRIVE_PENDING)
-        for user in users for asset in ("photo", "signature")
-        if user.get(f"{asset}_path")
-    ]
+    states = {
+        asset: {"SYNCED": 0, "PENDING": 0, "FAILED": 0, "MISSING_LOCAL": 0, "NO_LOCAL_ASSET": 0}
+        for asset in ("photo", "signature")
+    }
+    for user in users:
+        for asset in ("photo", "signature"):
+            state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
+            states[asset][state] = states[asset].get(state, 0) + 1
+    statuses = [state for values in states.values() for state, count in values.items() for _ in range(count)]
     return success({
         "status": "connected" if integration.get("status") == "connected" else "not_connected",
         "connected": integration.get("status") == "connected",
         "enabled": bool(current_app.config.get("ZOHO_WORKDRIVE_ENABLED")),
         "configured": service.configured(),
+        "configuration_error": configuration_issue[0] if configuration_issue else None,
         "account_email": integration.get("account_email"),
         "connected_at": integration.get("connected_at"),
         "last_tested_at": integration.get("last_tested_at"),
         "last_test_status": integration.get("last_test_status"),
+        "last_test_error_code": integration.get("last_test_error_code"),
+        "last_test_diagnostic_id": integration.get("last_test_diagnostic_id"),
         "root_folder_name": integration.get("root_folder_name"),
         "root_folder_configured": bool(current_app.config.get("ZOHO_WORKDRIVE_ROOT_FOLDER_ID")),
         "sync": {
@@ -2534,6 +2542,10 @@ def workdrive_status():
             "status": ("failed" if WORKDRIVE_FAILED in statuses else "pending" if WORKDRIVE_PENDING in statuses else "synced"),
             "last_successful_at": integration.get("last_successful_sync_at"),
             "pending": statuses.count(WORKDRIVE_PENDING), "failed": statuses.count(WORKDRIVE_FAILED),
+            "missing_local": sum(values["MISSING_LOCAL"] for values in states.values()),
+            "no_local_asset": sum(values["NO_LOCAL_ASSET"] for values in states.values()),
+            "by_asset": {asset: {key: value for key, value in values.items() if key != "NO_LOCAL_ASSET"}
+                         for asset, values in states.items()},
         },
     }, "WorkDrive status")
 
@@ -2550,16 +2562,71 @@ def workdrive_test():
             changes["root_folder_name"] = result["root_folder_name"]
         store.update_one("integrations", {"_id": "zoho_workdrive"}, changes)
         audit("workdrive.connection_test", "integration", "zoho_workdrive", {"result": "healthy"})
-        return success({"healthy": True, "root_folder_name": result.get("root_folder_name")}, "WorkDrive connection is healthy")
+        return success({
+            "healthy": True, "connected": True,
+            "root_folder": result.get("root_folder"),
+            "root_folder_name": result.get("root_folder_name"),
+        }, "WorkDrive connection is healthy")
     except WorkDriveError as exc:
-        store.update_one("integrations", {"_id": "zoho_workdrive"}, {"last_tested_at": utcnow(), "last_test_status": "error"}, upsert=True)
-        audit("workdrive.connection_test", "integration", "zoho_workdrive", {"result": "error", "error_code": exc.code})
+        safe_failure = {
+            "last_tested_at": utcnow(), "last_test_status": "error",
+            "last_test_error_code": exc.code, "last_test_diagnostic_id": exc.diagnostic_id,
+        }
+        store.update_one("integrations", {"_id": "zoho_workdrive"}, safe_failure, upsert=True)
+        audit("workdrive.connection_test", "integration", "zoho_workdrive", {
+            "result": "error", "error_code": exc.code, "stage": exc.stage,
+            "diagnostic_id": exc.diagnostic_id,
+        })
+        current_app.logger.error(
+            "workdrive_test_failed stage=%s http_status=%s error_code=%s "
+            "response_status=%s provider_code=%s endpoint_host=%s endpoint_path=%s "
+            "diagnostic_id=%s",
+            exc.stage, exc.http_status or "none", exc.code, exc.http_status or "none",
+            exc.provider_code or "none", exc.endpoint_host or "none",
+            exc.endpoint_path or "none", exc.diagnostic_id,
+        )
         if exc.code == "CONFIGURATION_ERROR":
             return failure(
                 "Zoho WorkDrive configuration is incomplete", status=503,
-                error="WORKDRIVE_CONFIGURATION_ERROR",
+                error="WORKDRIVE_CONFIGURATION_ERROR", error_code="WORKDRIVE_CONFIGURATION_ERROR",
+                stage=exc.stage, diagnostic_id=exc.diagnostic_id,
             )
-        return failure("WorkDrive connection requires attention", status=503, error="WORKDRIVE_CONNECTION_ERROR")
+        safe_codes = {
+            "WORKDRIVE_DISABLED", "WORKDRIVE_OAUTH_CONFIGURATION_ERROR",
+            "WORKDRIVE_AUTHORIZATION_INVALID", "WORKDRIVE_AUTHORIZATION_REQUIRED",
+            "WORKDRIVE_ROOT_FOLDER_REQUIRED", "WORKDRIVE_API_CONFIGURATION_ERROR",
+            "WORKDRIVE_TOKEN_REFRESH_UNAVAILABLE", "WORKDRIVE_TOKEN_REFRESH_FAILED",
+            "WORKDRIVE_TOKEN_RESPONSE_INVALID", "WORKDRIVE_API_TIMEOUT",
+            "WORKDRIVE_API_UNAVAILABLE", "WORKDRIVE_AUTHENTICATION_FAILED",
+            "WORKDRIVE_API_ERROR", "WORKDRIVE_RESPONSE_INVALID",
+            "ROOT_FOLDER_NOT_FOUND", "ROOT_FOLDER_ACCESS_DENIED", "ROOT_RESOURCE_NOT_FOLDER",
+        }
+        code = exc.code if exc.code in safe_codes else "WORKDRIVE_CONNECTION_ERROR"
+        message = str(exc) if exc.code in safe_codes else "WorkDrive connection requires attention"
+        return failure(
+            message, status=503, error=code, error_code=code,
+            stage=exc.stage, diagnostic_id=exc.diagnostic_id,
+        )
+
+
+@bp.get("/admin/workdrive/diagnostic")
+@permission_required("settings.manage")
+def workdrive_diagnostic():
+    """Expose non-secret WorkDrive identity, scope, and membership diagnostics."""
+    service = current_app.extensions["workdrive"]
+    try:
+        return success(service.diagnose_access(), "WorkDrive diagnostic")
+    except WorkDriveError as exc:
+        current_app.logger.error(
+            "workdrive_diagnostic_failed stage=%s http_status=%s error_code=%s "
+            "provider_code=%s endpoint_host=%s endpoint_path=%s diagnostic_id=%s",
+            exc.stage, exc.http_status or "none", exc.code, exc.provider_code or "none",
+            exc.endpoint_host or "none", exc.endpoint_path or "none", exc.diagnostic_id,
+        )
+        return failure(
+            str(exc), status=503, error=exc.code, error_code=exc.code,
+            stage=exc.stage, diagnostic_id=exc.diagnostic_id,
+        )
 @bp.post("/admin/workdrive/resync-user/<user_id>")
 @superadmin_required
 def resync_workdrive_user(user_id: str):
@@ -2589,11 +2656,17 @@ def resync_workdrive_all():
         return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
     store = current_app.extensions["store"]
     users, _ = store.list("users", {}, limit=5000)
-    report = {"users": len(users), "assets": 0, "synced": 0, "failed": 0, "skipped": 0}
+    report = {"users": len(users), "assets": 0, "synced": 0, "failed": 0, "skipped": 0,
+              "skipped_no_local_asset": 0, "stale_missing_local": 0}
     for user in users:
         for asset in ("photo", "signature"):
-            if not user.get(f"{asset}_path"):
+            state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
+            if state == "NO_LOCAL_ASSET":
                 report["skipped"] += 1
+                report["skipped_no_local_asset"] += 1
+                continue
+            if state == "MISSING_LOCAL":
+                report["stale_missing_local"] += 1
                 continue
             report["assets"] += 1
             user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
@@ -2613,11 +2686,17 @@ def resync_workdrive_failed():
         return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
     store = current_app.extensions["store"]
     users, _ = store.list("users", {}, limit=5000)
-    report = {"assets": 0, "synced": 0, "failed": 0, "skipped": 0}
+    report = {"assets": 0, "synced": 0, "failed": 0, "skipped": 0,
+              "skipped_no_local_asset": 0, "stale_missing_local": 0}
     for user in users:
         for asset in ("photo", "signature"):
-            if not user.get(f"{asset}_path") or user.get(f"{asset}_workdrive_sync_status") != WORKDRIVE_FAILED:
+            state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
+            if state in {"NO_LOCAL_ASSET", "MISSING_LOCAL"} or user.get(f"{asset}_workdrive_sync_status") != WORKDRIVE_FAILED:
                 report["skipped"] += 1
+                if state == "NO_LOCAL_ASSET":
+                    report["skipped_no_local_asset"] += 1
+                elif state == "MISSING_LOCAL":
+                    report["stale_missing_local"] += 1
                 continue
             report["assets"] += 1
             user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])

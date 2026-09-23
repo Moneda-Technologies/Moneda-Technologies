@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 ZOHO_SCOPES = ("ZohoMail.messages.CREATE", "ZohoMail.accounts.READ")
 ZOHO_SCOPE = ",".join(ZOHO_SCOPES)
 WORKDRIVE_SCOPES = (
+    "WorkDrive.team.READ", "WorkDrive.teamfolders.READ",
     "WorkDrive.files.CREATE", "WorkDrive.files.READ",
     "WorkDrive.files.UPDATE", "WorkDrive.files.DELETE",
 )

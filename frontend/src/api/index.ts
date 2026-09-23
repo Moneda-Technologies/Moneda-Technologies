@@ -241,13 +241,15 @@ export const adminApi = {
   zohoDisconnect: () => api<{ connected: boolean; revoked: boolean; diagnostic_id: string }>("/integrations/zoho/disconnect", jsonBody({})),
   workdriveStatus: () => api<{
     status: "connected" | "not_connected"; connected: boolean; enabled: boolean; configured: boolean;
+    configuration_error?: string | null;
     account_email?: string | null; connected_at?: string | null; last_tested_at?: string | null;
-    last_test_status?: string | null; root_folder_name?: string | null; root_folder_configured: boolean;
-    sync: { photos: string; signatures: string; status: "synced" | "pending" | "failed"; last_successful_at?: string | null; pending: number; failed: number };
+    last_test_status?: string | null; last_test_error_code?: string | null; last_test_diagnostic_id?: string | null;
+    root_folder_name?: string | null; root_folder_configured: boolean;
+    sync: { photos: string; signatures: string; status: "synced" | "pending" | "failed"; last_successful_at?: string | null; pending: number; failed: number; missing_local: number; no_local_asset: number; by_asset?: Record<"photo" | "signature", Record<string, number>> };
   }>("/admin/workdrive/status"),
-  workdriveTest: () => api<{ healthy: boolean; root_folder_name?: string | null }>("/admin/workdrive/test", jsonBody({})),
+  workdriveTest: () => api<{ healthy: boolean; connected: boolean; root_folder?: { id: string; accessible: boolean }; root_folder_name?: string | null }>("/admin/workdrive/test", jsonBody({})),
   workdriveResyncFailed: () => api<{ assets: number; synced: number; failed: number; skipped: number }>("/admin/workdrive/resync-failed", jsonBody({})),
-  workdriveResyncAll: () => api<{ users: number; assets: number; synced: number; failed: number; skipped: number }>("/admin/workdrive/resync-all", jsonBody({})),
+  workdriveResyncAll: () => api<{ users: number; assets: number; synced: number; failed: number; skipped: number; skipped_no_local_asset: number; stale_missing_local: number }>("/admin/workdrive/resync-all", jsonBody({})),
   pricingProducts: (query = "") => api<{ items: PricingResource[]; total: number }>(`/admin/pricing/products${query ? `?${query}` : ""}`),
   priceLists: (accountType = "", category = "", machine = "", manufacturer = "") => {
     const query = new URLSearchParams();
