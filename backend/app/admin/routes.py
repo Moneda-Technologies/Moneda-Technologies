@@ -40,6 +40,10 @@ from app.services.business_logic import (
     valid_manager,
 )
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
+from app.account.signature import SignatureValidationError, save_signature
+from app.account.photo import save_photo
+from app.account.profile_sync import synchronize_profile_asset, workdrive_public_status
+from app.services.workdrive import WorkDriveError, FAILED as WORKDRIVE_FAILED, PENDING as WORKDRIVE_PENDING, SYNCED as WORKDRIVE_SYNCED
 
 
 bp = Blueprint("admin", __name__, url_prefix="/api")
@@ -2465,3 +2469,161 @@ def commit_product_import():
         inserted.append(store.insert_one("products", {"_id": product_id, "article_no": str(raw.get("article_no", "")).strip(), "sku": str(raw.get("sku") or product_id.upper().replace("-", "_")), "name": str(raw["name"]).strip(), "category_id": str(raw["category_id"]).strip(), "description": str(raw.get("description", "")), "pricing": {"master_currency": "EUR", "price": price, "pricing_type": str(raw["pricing_type"]).strip(), "unit": str(raw["unit"]).strip()}, "tax": {"mode": None, "rate": None, "override_enabled": False}, "discount_rules": {"enabled": True, "step": 0.5, "default_max_percent": 5, "privileged_max_percent": 10}, "configuration": {}, "pricing_status": "configured" if price is not None else "pending", "active": True, "source": "admin_import"}))
     audit("product.import", "product", "bulk", {"count": len(inserted)})
     return success({"inserted": inserted, "summary": {"inserted": len(inserted), "warnings": len(validation["warnings"])}}, "Product import committed", 201)
+
+
+@bp.post("/admin/users/<user_id>/profile/<asset>")
+@superadmin_required
+def admin_upload_profile_asset(user_id: str, asset: str):
+    """Superadmin-only repair/management path; normal users remain self-only."""
+    if asset not in {"photo", "signature"}:
+        return failure("Unsupported profile asset", status=404)
+    store = current_app.extensions["store"]
+    target = store.find_one("users", {"_id": user_id})
+    if not target:
+        return failure("User not found", status=404)
+    upload = request.files.get("file")
+    if not upload:
+        return failure("Choose an image", status=422, error="PROFILE_ASSET_REQUIRED")
+    try:
+        changes = (save_photo if asset == "photo" else save_signature)(
+            user_id, current_app.config["UPLOAD_DIRECTORY"], upload,
+        )
+    except SignatureValidationError as exc:
+        return failure(str(exc), status=422, error="INVALID_PROFILE_ASSET")
+    changes[f"{asset}_updated_at"] = utcnow()
+    row = store.update_one("users", {"_id": user_id}, changes)
+    row = synchronize_profile_asset(
+        store, current_app.extensions["workdrive"], row or {**target, **changes},
+        asset, current_app.config["UPLOAD_DIRECTORY"],
+    )
+    audit(f"profile.{asset}.update_by_superadmin", "user", user_id, {
+        "actor_user_id": (current_user() or {}).get("_id"), "filename": changes.get(f"{asset}_filename"),
+    })
+    return success({
+        "asset": asset, "configured": True,
+        "workdrive_sync_status": workdrive_public_status(row, asset, current_app.extensions["workdrive"]),
+    }, f"User {asset} saved")
+
+
+@bp.get("/admin/workdrive/status")
+@permission_required("settings.view")
+def workdrive_status():
+    store = current_app.extensions["store"]
+    service = current_app.extensions["workdrive"]
+    integration = store.find_one("integrations", {"_id": "zoho_workdrive"}) or {}
+    users, _ = store.list("users", {}, limit=5000)
+    statuses = [
+        str(user.get(f"{asset}_workdrive_sync_status") or WORKDRIVE_PENDING)
+        for user in users for asset in ("photo", "signature")
+        if user.get(f"{asset}_path")
+    ]
+    return success({
+        "status": "connected" if integration.get("status") == "connected" else "not_connected",
+        "connected": integration.get("status") == "connected",
+        "enabled": bool(current_app.config.get("ZOHO_WORKDRIVE_ENABLED")),
+        "configured": service.configured(),
+        "account_email": integration.get("account_email"),
+        "connected_at": integration.get("connected_at"),
+        "last_tested_at": integration.get("last_tested_at"),
+        "last_test_status": integration.get("last_test_status"),
+        "root_folder_name": integration.get("root_folder_name"),
+        "root_folder_configured": bool(current_app.config.get("ZOHO_WORKDRIVE_ROOT_FOLDER_ID")),
+        "sync": {
+            "photos": "Synced to WorkDrive",
+            "signatures": "Synced to WorkDrive",
+            "status": ("failed" if WORKDRIVE_FAILED in statuses else "pending" if WORKDRIVE_PENDING in statuses else "synced"),
+            "last_successful_at": integration.get("last_successful_sync_at"),
+            "pending": statuses.count(WORKDRIVE_PENDING), "failed": statuses.count(WORKDRIVE_FAILED),
+        },
+    }, "WorkDrive status")
+
+
+@bp.post("/admin/workdrive/test")
+@permission_required("settings.manage")
+def workdrive_test():
+    service = current_app.extensions["workdrive"]
+    store = current_app.extensions["store"]
+    try:
+        result = service.test_connection()
+        changes = {"last_tested_at": utcnow(), "last_test_status": "healthy"}
+        if result.get("root_folder_name"):
+            changes["root_folder_name"] = result["root_folder_name"]
+        store.update_one("integrations", {"_id": "zoho_workdrive"}, changes)
+        audit("workdrive.connection_test", "integration", "zoho_workdrive", {"result": "healthy"})
+        return success({"healthy": True, "root_folder_name": result.get("root_folder_name")}, "WorkDrive connection is healthy")
+    except WorkDriveError as exc:
+        store.update_one("integrations", {"_id": "zoho_workdrive"}, {"last_tested_at": utcnow(), "last_test_status": "error"}, upsert=True)
+        audit("workdrive.connection_test", "integration", "zoho_workdrive", {"result": "error", "error_code": exc.code})
+        if exc.code == "CONFIGURATION_ERROR":
+            return failure(
+                "Zoho WorkDrive configuration is incomplete", status=503,
+                error="WORKDRIVE_CONFIGURATION_ERROR",
+            )
+        return failure("WorkDrive connection requires attention", status=503, error="WORKDRIVE_CONNECTION_ERROR")
+@bp.post("/admin/workdrive/resync-user/<user_id>")
+@superadmin_required
+def resync_workdrive_user(user_id: str):
+    store = current_app.extensions["store"]
+    user = store.find_one("users", {"_id": user_id})
+    if not user:
+        return failure("User not found", status=404)
+    service = current_app.extensions["workdrive"]
+    if not service.enabled():
+        return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
+    results = {}
+    for asset in ("photo", "signature"):
+        if user.get(f"{asset}_path"):
+            user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
+            results[asset] = workdrive_public_status(user, asset, service)
+        else:
+            results[asset] = "SKIPPED"
+    audit("workdrive.resync_user", "user", user_id, {"results": results})
+    return success({"user_id": user_id, "results": results}, "WorkDrive synchronization completed")
+
+
+@bp.post("/admin/workdrive/resync-all")
+@superadmin_required
+def resync_workdrive_all():
+    service = current_app.extensions["workdrive"]
+    if not service.enabled():
+        return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
+    store = current_app.extensions["store"]
+    users, _ = store.list("users", {}, limit=5000)
+    report = {"users": len(users), "assets": 0, "synced": 0, "failed": 0, "skipped": 0}
+    for user in users:
+        for asset in ("photo", "signature"):
+            if not user.get(f"{asset}_path"):
+                report["skipped"] += 1
+                continue
+            report["assets"] += 1
+            user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
+            if workdrive_public_status(user, asset, service) == "SYNCED":
+                report["synced"] += 1
+            else:
+                report["failed"] += 1
+    audit("workdrive.resync_all", "users", "all", report)
+    return success(report, "WorkDrive synchronization completed")
+
+
+@bp.post("/admin/workdrive/resync-failed")
+@permission_required("settings.manage")
+def resync_workdrive_failed():
+    service = current_app.extensions["workdrive"]
+    if not service.enabled():
+        return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
+    store = current_app.extensions["store"]
+    users, _ = store.list("users", {}, limit=5000)
+    report = {"assets": 0, "synced": 0, "failed": 0, "skipped": 0}
+    for user in users:
+        for asset in ("photo", "signature"):
+            if not user.get(f"{asset}_path") or user.get(f"{asset}_workdrive_sync_status") != WORKDRIVE_FAILED:
+                report["skipped"] += 1
+                continue
+            report["assets"] += 1
+            user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
+            if workdrive_public_status(user, asset, service) == WORKDRIVE_SYNCED:
+                report["synced"] += 1
+            else:
+                report["failed"] += 1
+    audit("workdrive.resync_failed", "users", "failed", report)
+    return success(report, "Failed WorkDrive synchronizations retried")

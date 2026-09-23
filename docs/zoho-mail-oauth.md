@@ -9,6 +9,7 @@ Create or edit the application at the India Zoho API Console with:
 - Client type: **Server-based Application**
 - Data center: **India**
 - Local authorized redirect URI: `http://localhost:5005/api/v1/integrations/zoho/callback`
+- WorkDrive authorized redirect URI on the same client: `http://localhost:5005/api/v1/integrations`
 - OAuth scopes: `ZohoMail.messages.CREATE,ZohoMail.accounts.READ`
 
 `ZohoMail.messages.CREATE` is the minimum send/upload permission. Moneda also needs the read-only `ZohoMail.accounts.READ` permission because Zoho's `/api/accounts` endpoint is the documented way to discover and validate the authenticated mailbox account ID. `ZohoMail.messages.ALL` is not requested.
@@ -50,7 +51,7 @@ After the authorization code exchange succeeds, the backend discovers the Mail a
 7. Enter a recipient and select **Test Email**. Confirm the single message arrives.
 8. Exercise signup OTP, login OTP, quotation send, order confirmation, and order status email.
 
-The backend generates a fresh state for every authorization URL and includes it in the Zoho request, but does not assume Zoho will echo that optional parameter in the server-based callback. Each attempt also uses Zoho's server-based PKCE extension: the S256 verifier is encrypted in MongoDB and only the challenge is sent to Zoho. MongoDB stores a one-time, user-bound OAuth transaction; the signed Flask session holds only its opaque transaction pointer. A returned state must match the transaction, while a callback without state is accepted only through that unexpired, one-time server transaction and the PKCE verifier. OAuth codes and tokens never appear in the frontend response or logs. Disconnect attempts remote token revocation and always removes the local encrypted credential.
+The backend generates a fresh provider-bound state for every authorization URL. Mail callbacks accept only a one-time `zoho_mail` state; WorkDrive callbacks accept only a one-time `zoho_workdrive` state. Each attempt also uses PKCE: the S256 verifier is encrypted in MongoDB and only the challenge is sent to Zoho. OAuth codes and tokens never appear in frontend responses or logs. Disconnect attempts remote token revocation and always removes the local encrypted Mail credential.
 
 ## Production migration
 

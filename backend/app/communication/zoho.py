@@ -9,6 +9,7 @@ import logging
 import re
 import secrets
 import threading
+import time
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 # least-privilege scopes required for both operations; messages.ALL is not used.
 ZOHO_SCOPES = ("ZohoMail.messages.CREATE", "ZohoMail.accounts.READ")
 ZOHO_SCOPE = ",".join(ZOHO_SCOPES)
+WORKDRIVE_SCOPES = (
+    "WorkDrive.files.CREATE", "WorkDrive.files.READ",
+    "WorkDrive.files.UPDATE", "WorkDrive.files.DELETE",
+)
+WORKDRIVE_SCOPE = ",".join(WORKDRIVE_SCOPES)
 INTEGRATION_ID = "zoho_mail"
 
 ALLOWED_ACCOUNTS_HOSTS = {
@@ -251,8 +257,16 @@ class ZohoMailOAuth:
             "last_error": last_error,
         }
 
-    def authorization_url(self, state: str, *, code_challenge: str | None = None) -> str:
-        if not self.configured():
+    def authorization_url(self, state: str, *, code_challenge: str | None = None,
+                          scope: str = ZOHO_SCOPE, redirect_uri: str | None = None,
+                          client_id: str | None = None,
+                          accounts_base_url: str | None = None) -> str:
+        selected_client_id = str(client_id or self.client_id).strip()
+        selected_accounts_base = _https_base(
+            accounts_base_url or self.accounts_base_url,
+            allowed_hosts=ALLOWED_ACCOUNTS_HOSTS, label="Zoho accounts base URL",
+        )
+        if not selected_client_id or not selected_accounts_base:
             raise ZohoIntegrationError(
                 "OAUTH_CONFIGURATION_ERROR",
                 "Zoho OAuth client configuration is incomplete",
@@ -266,9 +280,9 @@ class ZohoMailOAuth:
             )
         query_params = {
             "response_type": "code",
-            "client_id": self.client_id,
-            "scope": ZOHO_SCOPE,
-            "redirect_uri": self.redirect_uri,
+            "client_id": selected_client_id,
+            "scope": scope,
+            "redirect_uri": redirect_uri or self.redirect_uri,
             "access_type": "offline",
             "prompt": "consent",
             "state": state,
@@ -276,10 +290,10 @@ class ZohoMailOAuth:
         if code_challenge:
             query_params.update({"code_challenge": code_challenge, "code_challenge_method": "S256"})
         query = urlencode(query_params)
-        return f"{self.accounts_base_url}/oauth/v2/auth?{query}"
+        return f"{selected_accounts_base}/oauth/v2/auth?{query}"
 
     def create_state(self, user_id: str, *, lifetime_seconds: int = 600,
-                     return_path: str = "/settings") -> str:
+                     return_path: str = "/settings", provider: str = "zoho_mail") -> str:
         """Create a Zoho state value and persist its transaction server-side.
 
         This method remains as a backwards-compatible convenience for callers
@@ -290,11 +304,13 @@ class ZohoMailOAuth:
         """
         state, _transaction_id, _code_challenge = self.create_state_transaction(
             user_id, lifetime_seconds=lifetime_seconds, return_path=return_path,
+            provider=provider,
         )
         return state
 
     def create_state_transaction(self, user_id: str, *, lifetime_seconds: int = 600,
-                                 return_path: str = "/settings") -> tuple[str, str, str]:
+                                 return_path: str = "/settings",
+                                 provider: str = "zoho_mail") -> tuple[str, str, str]:
         """Create state, a session-bound transaction id, and a PKCE challenge.
 
         Neither replayable value is stored in plaintext.  The transaction id
@@ -314,7 +330,7 @@ class ZohoMailOAuth:
         self.store.insert_one("oauth_states", {
             # Store only a hash. The browser receives the opaque state, but the
             # database never needs the replayable value in plaintext.
-            "_id": f"zoho:{state_hash}", "state_hash": state_hash, "provider": "zoho",
+            "_id": f"{provider}:{state_hash}", "state_hash": state_hash, "provider": provider,
             "transaction_hash": transaction_hash,
             "code_verifier_encrypted": self._cipher().encrypt(code_verifier),
             "user_id": user_id, "return_path": return_path,
@@ -324,16 +340,19 @@ class ZohoMailOAuth:
         })
         return state, transaction_id, code_challenge
 
-    def consume_state(self, state: str, user_id: str | None) -> bool:
-        return self.consume_state_record(state, user_id) is not None
+    def consume_state(self, state: str, user_id: str | None,
+                      *, provider: str = "zoho_mail") -> bool:
+        return self.consume_state_record(state, user_id, provider=provider) is not None
 
     def consume_state_record(self, state: str, user_id: str | None,
-                             *, transaction_id: str | None = None) -> dict[str, Any] | None:
+                             *, transaction_id: str | None = None,
+                             provider: str = "zoho_mail") -> dict[str, Any] | None:
         if not state or not user_id:
             return None
         state_hash = hashlib.sha256(state.encode("utf-8")).hexdigest()
         query: dict[str, Any] = {
-            "_id": f"zoho:{state_hash}", "user_id": user_id, "consumed": False,
+            "_id": f"{provider}:{state_hash}", "provider": provider,
+            "user_id": user_id, "consumed": False,
         }
         if transaction_id:
             query["transaction_hash"] = hashlib.sha256(transaction_id.encode("utf-8")).hexdigest()
@@ -347,7 +366,8 @@ class ZohoMailOAuth:
         return self._validated_consumed_state(row)
 
     def consume_transaction_record(self, transaction_id: str | None,
-                                   user_id: str | None) -> dict[str, Any] | None:
+                                   user_id: str | None, *,
+                                   provider: str = "zoho_mail") -> dict[str, Any] | None:
         """Consume an initiated OAuth transaction when Zoho omits ``state``.
 
         The transaction pointer comes from the signed Flask session, while the
@@ -360,7 +380,8 @@ class ZohoMailOAuth:
         transaction_hash = hashlib.sha256(transaction_id.encode("utf-8")).hexdigest()
         row = self.store.update_one(
             "oauth_states",
-            {"transaction_hash": transaction_hash, "user_id": user_id, "consumed": False},
+            {"transaction_hash": transaction_hash, "provider": provider,
+             "user_id": user_id, "consumed": False},
             {"consumed": True, "consumed_at": datetime.now(timezone.utc)},
         )
         return self._validated_consumed_state(row)
@@ -388,10 +409,14 @@ class ZohoMailOAuth:
             return None
         return row
 
-    def callback_context_valid(self, *, location: str | None, accounts_server: str | None) -> bool:
+    def callback_context_valid(self, *, location: str | None, accounts_server: str | None,
+                               expected_accounts_base_url: str | None = None) -> bool:
         """Validate Zoho's regional callback hints when they are supplied."""
         try:
-            expected_accounts = self.accounts_base_url
+            expected_accounts = _https_base(
+                expected_accounts_base_url or self.accounts_base_url,
+                allowed_hosts=ALLOWED_ACCOUNTS_HOSTS, label="Zoho accounts base URL",
+            )
         except ValueError:
             return False
         if accounts_server:
@@ -452,7 +477,17 @@ class ZohoMailOAuth:
                 )
         else:
             mail_api_base = self.mail_api_base_url()
-        account = self.lookup_account(access_token, mail_api_base=mail_api_base, diagnostic_id=diagnostic_id)
+        existing = self.integration() or {}
+        logger.info(
+            "mail oauth validation provider=zoho_mail token_source=authorization_code_exchange "
+            "token_record_exists=%s token_expiry_known=%s api_domain=%s diagnostic_id=%s",
+            bool(existing.get("refresh_token_encrypted") or existing.get("refresh_token") or self.config.get("ZOHO_REFRESH_TOKEN")),
+            bool(payload.get("expires_in")), urlparse(mail_api_base).hostname or "unknown", diagnostic_id,
+        )
+        account = self.lookup_account(
+            access_token, mail_api_base=mail_api_base, diagnostic_id=diagnostic_id,
+            transient_retries=2,
+        )
         now = datetime.now(timezone.utc)
         document = {
             "provider": "zoho_mail_api", "status": "connected",
@@ -471,8 +506,79 @@ class ZohoMailOAuth:
         )
         return self.status()
 
+    def exchange_workdrive_code(self, code: str, *, redirect_uri: str,
+                                code_verifier: str | None = None,
+                                diagnostic_id: str | None = None,
+                                client_id: str | None = None,
+                                client_secret: str | None = None,
+                                accounts_base_url: str | None = None) -> str:
+        """Exchange a WorkDrive grant without changing the Mail integration."""
+        diagnostic_id = diagnostic_id or integration_diagnostic_id()
+        selected_client_id = str(client_id or self.client_id).strip()
+        selected_client_secret = str(client_secret or self.client_secret).strip()
+        selected_accounts_base = _https_base(
+            accounts_base_url or self.accounts_base_url,
+            allowed_hosts=ALLOWED_ACCOUNTS_HOSTS, label="Zoho accounts base URL",
+        )
+        if not selected_client_id or not selected_client_secret or not selected_accounts_base:
+            raise ZohoIntegrationError(
+                "OAUTH_CONFIGURATION_ERROR", "Zoho OAuth client configuration is incomplete",
+                stage="oauth_configuration", diagnostic_id=diagnostic_id,
+            )
+        token_data = {
+            "code": code, "grant_type": "authorization_code", "client_id": selected_client_id,
+            "client_secret": selected_client_secret, "redirect_uri": redirect_uri,
+        }
+        if code_verifier:
+            token_data["code_verifier"] = code_verifier
+        try:
+            response = requests.post(
+                f"{selected_accounts_base}/oauth/v2/token", data=token_data, timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise ZohoIntegrationError(
+                "OAUTH_TOKEN_EXCHANGE_ERROR", "Zoho token exchange could not be reached",
+                stage="token_exchange", diagnostic_id=diagnostic_id,
+            ) from exc
+        payload = self._json_response(
+            response, code="OAUTH_TOKEN_EXCHANGE_ERROR", stage="token_exchange",
+            diagnostic_id=diagnostic_id,
+        )
+        refresh_token = str(payload.get("refresh_token") or "").strip()
+        access_token = str(payload.get("access_token") or "").strip()
+        if not refresh_token or not access_token:
+            raise ZohoIntegrationError(
+                "OAUTH_TOKEN_EXCHANGE_ERROR", "Zoho did not return the required OAuth tokens",
+                stage="token_exchange", diagnostic_id=diagnostic_id,
+            )
+        now = datetime.now(timezone.utc)
+        self.store.update_one("integrations", {"_id": "zoho_workdrive"}, {
+            "provider": "zoho_workdrive", "status": "connected",
+            "refresh_token_encrypted": self._cipher().encrypt(refresh_token),
+            "refresh_token": None, "scopes": list(WORKDRIVE_SCOPES),
+            "connected_at": now, "last_error": None,
+        }, upsert=True)
+        return "connected"
+
+    def workdrive_refresh_token(self) -> str:
+        """Return only the WorkDrive grant, preferring encrypted MongoDB storage."""
+        row = self.store.find_one("integrations", {"_id": "zoho_workdrive"}) or {}
+        encrypted = str(row.get("refresh_token_encrypted") or "").strip()
+        if encrypted:
+            return self._cipher().decrypt(encrypted, "ZOHO_WORKDRIVE_REFRESH_TOKEN")
+        legacy = str(row.get("refresh_token") or "").strip()
+        if legacy:
+            encrypted = self._cipher().encrypt(legacy)
+            self.store.update_one(
+                "integrations", {"_id": "zoho_workdrive"},
+                {"refresh_token_encrypted": encrypted, "refresh_token": None},
+            )
+            return legacy
+        return str(self.config.get("ZOHO_WORKDRIVE_REFRESH_TOKEN") or "").strip()
+
     def lookup_account(self, access_token: str, *, mail_api_base: str | None = None,
-                       diagnostic_id: str | None = None) -> dict[str, Any]:
+                       diagnostic_id: str | None = None,
+                       transient_retries: int = 0) -> dict[str, Any]:
         diagnostic_id = diagnostic_id or integration_diagnostic_id()
         api_base = mail_api_base or self.mail_api_base_url()
         endpoint = f"{api_base}/api/accounts"
@@ -481,21 +587,32 @@ class ZohoMailOAuth:
             "account_lookup_started diagnostic_id=%s account_lookup_endpoint_host=%s",
             diagnostic_id, endpoint_host,
         )
-        try:
-            response = requests.get(
-                endpoint,
-                headers={"Accept": "application/json", "Authorization": f"Zoho-oauthtoken {access_token}"},
-                timeout=20,
+        response = None
+        for attempt in range(max(0, int(transient_retries)) + 1):
+            try:
+                response = requests.get(
+                    endpoint,
+                    headers={"Accept": "application/json", "Authorization": f"Zoho-oauthtoken {access_token}"},
+                    timeout=20,
+                )
+            except requests.RequestException as exc:
+                logger.error(
+                    "account_lookup_result=unreachable account_lookup_success=false diagnostic_id=%s account_lookup_endpoint_host=%s exception_class=%s",
+                    diagnostic_id, endpoint_host, type(exc).__name__,
+                )
+                raise ZohoIntegrationError(
+                    "ZOHO_ACCOUNT_LOOKUP_ERROR", "Zoho account lookup could not be reached",
+                    stage="account_lookup", diagnostic_id=diagnostic_id,
+                ) from exc
+            if response.status_code not in {500, 502, 503, 504} or attempt >= transient_retries:
+                break
+            logger.warning(
+                "account_lookup_transient provider=zoho_mail token_source=authorization_code_exchange "
+                "account_lookup_http_status=%s retry_attempt=%s diagnostic_id=%s account_lookup_endpoint_host=%s",
+                response.status_code, attempt + 1, diagnostic_id, endpoint_host,
             )
-        except requests.RequestException as exc:
-            logger.error(
-                "account_lookup_result=unreachable account_lookup_success=false diagnostic_id=%s account_lookup_endpoint_host=%s exception_class=%s",
-                diagnostic_id, endpoint_host, type(exc).__name__,
-            )
-            raise ZohoIntegrationError(
-                "ZOHO_ACCOUNT_LOOKUP_ERROR", "Zoho account lookup could not be reached",
-                stage="account_lookup", diagnostic_id=diagnostic_id,
-            ) from exc
+            time.sleep(0.2 * (attempt + 1))
+        assert response is not None
         try:
             payload = self._json_response(
                 response, code="ZOHO_ACCOUNT_LOOKUP_ERROR", stage="account_lookup", diagnostic_id=diagnostic_id

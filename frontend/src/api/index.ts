@@ -20,13 +20,20 @@ export const authApi = {
 };
 export const profileApi = {
   update: (value: unknown) => api<SessionPayload["user"]>("/me", patchBody(value)),
-  signature: () => api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null }>("/profile/signature"),
+  signature: () => api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null; workdrive_sync_status?: string }>("/profile/signature"),
   uploadSignature: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null }>("/profile/signature", { method: "POST", body });
+    return api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null; workdrive_sync_status?: string }>("/profile/signature", { method: "POST", body });
   },
   removeSignature: () => api<{ configured: boolean; metadata: null; url?: string | null }>("/profile/signature", { method: "DELETE" }),
+  photo: () => api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null; workdrive_sync_status?: string }>("/profile/photo"),
+  uploadPhoto: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return api<{ configured: boolean; metadata: { filename: string; mime_type: string; size: number; width: number; height: number; updated_at?: string | null } | null; url?: string | null; workdrive_sync_status?: string }>("/profile/photo", { method: "POST", body });
+  },
+  removePhoto: () => api<{ configured: boolean; metadata: null; url?: string | null }>("/profile/photo", { method: "DELETE" }),
   requestEmailChange: (email: string) => api<{ pending_email: string; expires_at: string }>("/profile/email-change/request", jsonBody({ email })),
   resendEmailChange: () => api<{ pending_email: string; expires_at: string }>("/profile/email-change/resend", jsonBody({})),
   verifyEmailChange: (code: string) => api<SessionPayload["user"]>("/profile/email-change/verify", jsonBody({ code })),
@@ -232,6 +239,15 @@ export const adminApi = {
   }>("/integrations/zoho/status"),
   zohoTest: (to: string) => api<{ sent: boolean; diagnostic_id?: string; stage?: string; checks: Array<{ stage: string; result: string; source?: string }> }>("/integrations/zoho/test", jsonBody({ to })),
   zohoDisconnect: () => api<{ connected: boolean; revoked: boolean; diagnostic_id: string }>("/integrations/zoho/disconnect", jsonBody({})),
+  workdriveStatus: () => api<{
+    status: "connected" | "not_connected"; connected: boolean; enabled: boolean; configured: boolean;
+    account_email?: string | null; connected_at?: string | null; last_tested_at?: string | null;
+    last_test_status?: string | null; root_folder_name?: string | null; root_folder_configured: boolean;
+    sync: { photos: string; signatures: string; status: "synced" | "pending" | "failed"; last_successful_at?: string | null; pending: number; failed: number };
+  }>("/admin/workdrive/status"),
+  workdriveTest: () => api<{ healthy: boolean; root_folder_name?: string | null }>("/admin/workdrive/test", jsonBody({})),
+  workdriveResyncFailed: () => api<{ assets: number; synced: number; failed: number; skipped: number }>("/admin/workdrive/resync-failed", jsonBody({})),
+  workdriveResyncAll: () => api<{ users: number; assets: number; synced: number; failed: number; skipped: number }>("/admin/workdrive/resync-all", jsonBody({})),
   pricingProducts: (query = "") => api<{ items: PricingResource[]; total: number }>(`/admin/pricing/products${query ? `?${query}` : ""}`),
   priceLists: (accountType = "", category = "", machine = "", manufacturer = "") => {
     const query = new URLSearchParams();

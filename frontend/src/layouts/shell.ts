@@ -104,6 +104,7 @@ const navGroups: NavGroup[] = [
     { id: "price-lists", label: "Price Lists", path: "/price-lists", icon: "badge-euro", permission: "pricing.history", roles: ["superadmin"] },
     { id: "currencies", label: "Currencies", path: "/settings/currencies", icon: "euro", permission: "settings.view" },
     { id: "communication", label: "Communication", path: "/settings/communication", icon: "mail", permission: "settings.view" },
+    { id: "zoho-workdrive", label: "Zoho WorkDrive", path: "/settings/workdrive", icon: "cloud", permission: "settings.view" },
   ] },
 ];
 
@@ -117,7 +118,8 @@ export function renderShell(): HTMLElement {
   const watermark = createWatermark(state.user, state.watermarkEnabled);
   const renderNavLink = (item: NavItem, child = false, leaf = false) => {
     const customerLocked = ["/cart"].includes(item.path) && !hasCustomerContext();
-    return `<a href="${item.path}" data-route="${item.path}" data-nav-id="${item.id}" class="nav-link${child ? " nav-child" : ""}${customerLocked ? " nav-link-locked" : ""}" aria-label="${item.label}"${leaf ? ` data-nav-leaf="true"` : ""}${customerLocked ? ` aria-disabled="true" data-customer-guard="true" title="Select a customer first"` : ""}><span class="nav-icon" aria-hidden="true"><i data-lucide="${customerLocked ? "lock-keyhole" : item.icon}"></i></span><span class="nav-label">${item.label}</span>${item.path === "/cart" ? `<b data-cart-count>${state.cartCount || ""}</b>` : ""}</a>`;
+    const tooltip = item.id === "zoho-workdrive" ? ` title="Zoho WorkDrive"` : "";
+    return `<a href="${item.path}" data-route="${item.path}" data-nav-id="${item.id}" class="nav-link${child ? " nav-child" : ""}${customerLocked ? " nav-link-locked" : ""}" aria-label="${item.label}"${leaf || item.id === "zoho-workdrive" ? ` data-nav-leaf="true"` : ""}${tooltip}${customerLocked ? ` aria-disabled="true" data-customer-guard="true" title="Select a customer first"` : ""}><span class="nav-icon" aria-hidden="true"><i data-lucide="${customerLocked ? "lock-keyhole" : item.icon}"></i></span><span class="nav-label">${item.label}</span>${item.path === "/cart" ? `<b data-cart-count>${state.cartCount || ""}</b>` : ""}</a>`;
   };
   const renderDirect = (item: NavItem) => appStore.can(item.permission) ? renderNavLink(item, false, true) : "";
   const renderGroup = (group: NavGroup) => {
@@ -195,7 +197,7 @@ export function renderShell(): HTMLElement {
   };
   const showLeafTooltip = (link: HTMLAnchorElement) => {
     if (!root.classList.contains("sidebar-collapsed")) return;
-    const item = directNav.find((candidate) => candidate.id === link.dataset.navId);
+    const item = [...directNav, ...navGroups.flatMap((group) => group.items)].find((candidate) => candidate.id === link.dataset.navId);
     if (!item) return;
     hoveredItemId = item.id;
     window.clearTimeout(leafTooltipTimer);
@@ -520,7 +522,7 @@ export function updateActiveNav(path: string): void {
     const routeQuery = path.includes("?") ? path.slice(path.indexOf("?") + 1) : "";
     if (targetQuery) return routePath === target && routeQuery === targetQuery;
     if (target === "/users" && routeQuery) return false;
-    if (target === "/settings") return routePath === target || routePath.startsWith(`${target}/`);
+    if (target === "/settings") return routePath === target;
     if (target === "/calculator") return routePath === target || routePath === "/products" || routePath.startsWith("/products/");
     if (target === "/quotations") return routePath === target || routePath.startsWith("/quotations/") || routePath.startsWith("/quotation");
     if (target === "/incentives/overview") return routePath === target || (routePath === "/incentives" && !routeQuery.includes("view=rules") && !routeQuery.includes("view=payouts"));

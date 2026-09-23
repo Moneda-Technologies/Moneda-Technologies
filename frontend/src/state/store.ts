@@ -138,6 +138,7 @@ export const routes: Record<string, PageFactory> = {
   "/settings": settingsPage,
   "/settings/currencies": () => settingsPage("currencies"),
   "/settings/communication": () => settingsPage("communication"),
+  "/settings/workdrive": () => settingsPage("workdrive"),
   "/settings/security": () => settingsPage("security"),
   "/profile": profilePage,
   "/my-bank-details": myBankDetailsPage,

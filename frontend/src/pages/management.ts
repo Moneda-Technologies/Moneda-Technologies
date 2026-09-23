@@ -392,13 +392,14 @@ function pricingRow(product: Product): string {
   */
 }
 
-export async function settingsPage(section: "brand" | "currencies" | "communication" | "security" = "brand"): Promise<HTMLElement> {
+export async function settingsPage(section: "brand" | "currencies" | "communication" | "workdrive" | "security" = "brand"): Promise<HTMLElement> {
   const page = pageScaffold("Management", "System settings", "Govern branding, EUR quotation policy, and communication settings.", '<button class="button button-primary"><i data-lucide="save"></i>Save changes</button>');
   const body = page.querySelector<HTMLElement>(".page-body")!; body.innerHTML = skeleton(5);
   try {
     const settings = await adminApi.settings();
     const watermarkEnabled = settings.watermark_enabled !== false;
     let zohoMarkup = "";
+    let workdriveMarkup = "";
     let routingPolicy: { cc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null; price_list_ids?: string[] }>; bcc: Array<{ address: string; email?: string; enabled: boolean; source?: string; display_name?: string | null; price_list_ids?: string[] }> } | null = null;
     const securityMarkup = appStore.state.user?.role_id === "superadmin"
       ? `<section class="panel settings-panel watermark-settings"><span class="eyebrow">Security</span><h2>Protected workspace view</h2><p>Show a light, non-interactive watermark on authenticated workspace pages. It never appears in quotation PDFs or emails.</p><label class="setting-toggle"><input type="checkbox" data-watermark-toggle ${watermarkEnabled ? "checked" : ""}><span><strong>Workspace watermark</strong><small>Include the current user and local date/time.</small></span></label><button type="button" class="button button-secondary" data-watermark-save>Save watermark setting</button></section>`
@@ -432,9 +433,23 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
         page.dataset.zohoConnected = String(status.connected);
       } catch (_error) { /* settings remains usable when the integration permission is absent */ }
     }
+    if (appStore.can("settings.view")) {
+      workdriveMarkup = '<section class="panel settings-panel workdrive-integration"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><p>Manage profile photo and email signature synchronization with Zoho WorkDrive.</p><div class="notice compact"><i data-lucide="loader-circle"></i><div><strong>Loading WorkDrive status…</strong></div></div></section>';
+      try {
+        const status = await adminApi.workdriveStatus();
+        const state = status.connected ? "Connected" : status.last_test_status === "error" ? "Connection error" : "Not connected";
+        const syncState = status.sync.status === "synced" ? "Synced" : status.sync.status === "failed" ? "Failed" : "Pending";
+        const connectButton = status.connected ? '<button class="button button-secondary" type="button" data-workdrive-connect>Reconnect</button>' : '<button class="button button-primary" type="button" data-workdrive-connect>Connect Zoho WorkDrive</button>';
+        const adminActions = appStore.can("settings.manage") ? `<button class="button button-quiet" type="button" data-workdrive-test>Test Connection</button><button class="button button-quiet" type="button" data-workdrive-resync-failed>Resync Failed Files</button>${appStore.state.user?.role_id === "superadmin" ? '<button class="button button-secondary" type="button" data-workdrive-resync-all>Resync All User Assets</button>' : ""}` : "";
+        workdriveMarkup = `<section class="panel settings-panel workdrive-integration" data-settings-section="workdrive"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><p>Manage profile photo and email signature synchronization with Zoho WorkDrive.</p><div class="integration-status"><span class="status-dot ${status.connected ? "is-live" : status.last_test_status === "error" ? "is-error" : ""}"></span><strong>${escapeHtml(state)}</strong><small>Profile assets remain available locally if WorkDrive is unavailable.</small></div><dl class="integration-details"><div><dt>Zoho account</dt><dd>${escapeHtml(status.account_email || "Not available")}</dd></div><div><dt>Connected</dt><dd>${escapeHtml(status.connected_at ? formatDate(status.connected_at) : "—")}</dd></div><div><dt>Root folder</dt><dd>${escapeHtml(status.root_folder_name || (status.root_folder_configured ? "Configured" : "Not configured"))}</dd></div><div><dt>Last test</dt><dd>${escapeHtml(status.last_tested_at ? formatDate(status.last_tested_at) : "Not tested")}</dd></div></dl><section class="workdrive-tree"><strong>Storage structure</strong><code>Moneda / Users / &lt;User&gt; / Profile / Photo | Signature</code></section><section class="workdrive-sync"><h3>Synchronization</h3><div><span>Profile Photos</span><strong>Synced to WorkDrive</strong></div><div><span>Email Signatures</span><strong>Synced to WorkDrive</strong></div><div class="workdrive-sync-summary"><span>Status <b>${escapeHtml(syncState)}</b></span><span>Pending ${status.sync.pending}</span><span>Failed ${status.sync.failed}</span></div></section><div class="settings-actions">${connectButton}${adminActions}</div><div data-workdrive-result></div></section>`;
+        page.dataset.workdriveConnected = String(status.connected);
+      } catch (_error) {
+        workdriveMarkup = '<section class="panel settings-panel workdrive-integration" data-settings-section="workdrive"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><div class="notice error compact"><i data-lucide="circle-alert"></i><div><strong>Connection error</strong><p>WorkDrive status could not be loaded.</p></div></div></section>';
+      }
+    }
     const configuredLogo = String(settings.brand_logo_path ?? "");
     const logoPath = configuredLogo.toLowerCase().endsWith(".svg") || !configuredLogo ? "/brand/image.png" : configuredLogo;
-    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><a class="${section === "brand" ? "active" : ""}" href="/settings" data-route="/settings"><i data-lucide="palette"></i>Brand & company</a><a class="${section === "currencies" ? "active" : ""}" href="/settings/currencies" data-route="/settings/currencies"><i data-lucide="euro"></i>Currencies</a><a class="${section === "communication" ? "active" : ""}" href="/settings/communication" data-route="/settings/communication"><i data-lucide="mail"></i>Communication</a><a class="${section === "security" ? "active" : ""}" href="/settings/security" data-route="/settings/security"><i data-lucide="shield-check"></i>Security</a></nav><div class="settings-stack"><section class="panel settings-panel" data-settings-section="brand"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(logoPath)}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="/brand/image.png"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${securityMarkup}${zohoMarkup}<section class="panel settings-panel" data-settings-section="currencies"><span class="eyebrow">Currencies</span><h2>EUR master pricing</h2><p>All catalogue and quotation values remain in EUR. USD and INR are display/reference currencies only.</p><div class="master-currency-card"><strong>Master currency</strong><b>EUR</b><span>Locked · quotations always EUR</span></div><div class="currency-rates" data-currency-rates><p class="form-hint">Loading latest reference rates…</p></div></section></div></div>`;
+    body.innerHTML = `<div class="settings-layout"><nav class="settings-nav"><a class="${section === "brand" ? "active" : ""}" href="/settings" data-route="/settings"><i data-lucide="palette"></i>Brand & company</a><a class="${section === "currencies" ? "active" : ""}" href="/settings/currencies" data-route="/settings/currencies"><i data-lucide="euro"></i>Currencies</a><a class="${section === "communication" ? "active" : ""}" href="/settings/communication" data-route="/settings/communication"><i data-lucide="mail"></i>Communication</a><a class="${section === "workdrive" ? "active" : ""}" href="/settings/workdrive" data-route="/settings/workdrive"><i data-lucide="cloud"></i>Zoho WorkDrive</a><a class="${section === "security" ? "active" : ""}" href="/settings/security" data-route="/settings/security"><i data-lucide="shield-check"></i>Security</a></nav><div class="settings-stack"><section class="panel settings-panel" data-settings-section="brand"><span class="eyebrow">Brand identity</span><h2>Moneda Technologies</h2><p>Logo paths stay configurable so the official artwork can be replaced without a frontend release.</p><div class="logo-preview"><img src="${escapeHtml(logoPath)}" alt="Configured Moneda logo"></div><div class="form-grid"><label>Brand name<input value="${escapeHtml(String(settings.brand_name ?? "Moneda Technologies"))}"></label><label>Logo path<input value="/brand/image.png"></label><label>Master currency<input value="EUR" disabled></label><label>Quotation prefix<input value="${escapeHtml(String(settings.quotation_prefix ?? "MON_Q"))}" disabled></label></div><div class="notice compact"><i data-lucide="lock-keyhole"></i><div><strong>Protected business constants</strong><p>EUR master pricing and the MON_Q numbering namespace are migration-controlled.</p></div></div></section>${securityMarkup}${zohoMarkup}${workdriveMarkup}<section class="panel settings-panel" data-settings-section="currencies"><span class="eyebrow">Currencies</span><h2>EUR master pricing</h2><p>All catalogue and quotation values remain in EUR. USD and INR are display/reference currencies only.</p><div class="master-currency-card"><strong>Master currency</strong><b>EUR</b><span>Locked · quotations always EUR</span></div><div class="currency-rates" data-currency-rates><p class="form-hint">Loading latest reference rates…</p></div></section></div></div>`;
     [...body.querySelectorAll<HTMLElement>(".settings-nav button")].find((button) => button.textContent?.trim() === "Taxes")?.remove();
     [...body.querySelectorAll<HTMLElement>(".settings-panel label")].filter((label) => ["Default tax", "Tax mode"].some((text) => label.textContent?.trim().startsWith(text))).forEach((label) => label.remove());
     const policyGrid = body.querySelector<HTMLElement>(".settings-panel .form-grid");
@@ -444,9 +459,10 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
     const brandPanel = body.querySelector<HTMLElement>('[data-settings-section="brand"]');
     const currencyPanel = body.querySelector<HTMLElement>('[data-settings-section="currencies"]');
     const securityPanel = body.querySelector<HTMLElement>(".watermark-settings");
+    const workdrivePanel = body.querySelector<HTMLElement>('[data-settings-section="workdrive"]');
     const communicationPanel = body.querySelector<HTMLElement>(".zoho-integration");
-    [brandPanel, currencyPanel, securityPanel, communicationPanel].forEach((panel) => { if (panel) panel.hidden = true; });
-    ({ brand: brandPanel, currencies: currencyPanel, communication: communicationPanel, security: securityPanel }[section])?.removeAttribute("hidden");
+    [brandPanel, currencyPanel, securityPanel, communicationPanel, workdrivePanel].forEach((panel) => { if (panel) panel.hidden = true; });
+    ({ brand: brandPanel, currencies: currencyPanel, communication: communicationPanel, workdrive: workdrivePanel, security: securityPanel }[section])?.removeAttribute("hidden");
     if (section === "currencies") {
       const rates = body.querySelector<HTMLElement>("[data-currency-rates]");
       currencyPanel?.insertAdjacentHTML("afterbegin", '<fieldset class="currency-preferences"><legend>Display/reference currencies</legend><label><input type="checkbox" checked disabled> EUR</label><label><input type="checkbox" checked disabled> USD</label><label><input type="checkbox" checked disabled> INR</label><small>Display preference is controlled from the workspace header.</small></fieldset>');
@@ -528,6 +544,25 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
       });
     }
     page.querySelector<HTMLButtonElement>("[data-zoho-connect]")?.addEventListener("click", () => { window.location.href = apiEndpoint("/integrations/zoho/connect"); });
+    page.querySelector<HTMLButtonElement>("[data-workdrive-connect]")?.addEventListener("click", () => { window.location.href = apiEndpoint("/integrations/workdrive/connect"); });
+    page.querySelector<HTMLButtonElement>("[data-workdrive-test]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement; const result = page.querySelector<HTMLElement>("[data-workdrive-result]");
+      button.disabled = true;
+      try { await adminApi.workdriveTest(); if (result) result.innerHTML = '<div class="notice compact"><i data-lucide="circle-check"></i><div><strong>WorkDrive connection is healthy</strong></div></div>'; toast("WorkDrive connection is healthy"); refreshIcons(result ?? page); }
+      catch (error) { if (result) result.innerHTML = '<div class="notice error compact"><i data-lucide="circle-alert"></i><div><strong>WorkDrive connection requires attention</strong></div></div>'; toast(error instanceof Error ? error.message : "WorkDrive test failed", "error"); }
+      finally { button.disabled = false; }
+    });
+    page.querySelector<HTMLButtonElement>("[data-workdrive-resync-failed]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
+      try { const report = await adminApi.workdriveResyncFailed(); toast(`Resync complete: ${report.synced} synced, ${report.failed} failed, ${report.skipped} skipped`); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings/workdrive" })); }
+      catch (error) { toast(error instanceof Error ? error.message : "Resync failed", "error"); button.disabled = false; }
+    });
+    page.querySelector<HTMLButtonElement>("[data-workdrive-resync-all]")?.addEventListener("click", async (event) => {
+      if (!window.confirm("Resync all user profile photos and signatures to WorkDrive?")) return;
+      const button = event.currentTarget as HTMLButtonElement; button.disabled = true; button.textContent = "Resyncing…";
+      try { const report = await adminApi.workdriveResyncAll(); toast(`Resync complete: ${report.synced} synced, ${report.failed} failed, ${report.skipped} skipped`); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: "/settings/workdrive" })); }
+      catch (error) { toast(error instanceof Error ? error.message : "Resync failed", "error"); button.disabled = false; button.textContent = "Resync All User Assets"; }
+    });
     page.querySelector<HTMLButtonElement>("[data-zoho-disconnect]")?.addEventListener("click", async (event) => {
       if (!window.confirm("Disconnect Zoho Mail? Application email will stop until it is reconnected.")) return;
       const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
@@ -547,9 +582,12 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
       finally { button.disabled = false; }
     });
     const query = new URLSearchParams(window.location.search);
-    if (query.get("zoho") === "connected") toast("Zoho Mail connected successfully.");
-    if (query.get("zoho") === "error") toast(`Zoho Mail connection failed (${query.get("error_code") ?? "OAUTH_CALLBACK_ERROR"}) at ${query.get("stage") ?? "callback"}. Reference ${query.get("diagnostic_id") ?? "unavailable"}.`, "error");
-    if (query.has("zoho")) history.replaceState({}, "", window.location.pathname);
+    const oauthProvider = query.get("oauth_provider");
+    if (oauthProvider === "zoho_mail" && query.get("zoho") === "connected") toast("Zoho Mail connected successfully.");
+    if (oauthProvider === "zoho_mail" && query.get("zoho") === "error") toast(`Zoho Mail connection failed (${query.get("error_code") ?? "OAUTH_CALLBACK_ERROR"}) at ${query.get("stage") ?? "callback"}. Reference ${query.get("diagnostic_id") ?? "unavailable"}.`, "error");
+    if (oauthProvider === "zoho_workdrive" && query.get("workdrive") === "connected") toast("Zoho WorkDrive connected successfully.");
+    if (oauthProvider === "zoho_workdrive" && query.get("workdrive") === "error") toast(`Zoho WorkDrive connection failed (${query.get("error_code") ?? "OAUTH_CALLBACK_ERROR"}). Reference ${query.get("diagnostic_id") ?? "unavailable"}.`, "error");
+    if (oauthProvider && (query.has("zoho") || query.has("workdrive"))) history.replaceState({}, "", window.location.pathname);
   }
   catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Settings unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
@@ -572,10 +610,72 @@ export async function profilePage(): Promise<HTMLElement> {
   const profileStack = body.querySelector<HTMLElement>(".profile-stack");
   const accountPanel = body.querySelector<HTMLElement>(".profile-account");
   if (profileStack && accountPanel) {
+    const photoPanel = document.createElement("section");
+    photoPanel.className = "panel settings-panel profile-photo-panel";
+    photoPanel.innerHTML = '<span class="eyebrow">Profile</span><h2>Profile photo</h2><p class="muted">Upload a private profile image used within your Moneda account.</p><div class="profile-photo-editor"><div class="profile-photo-preview" data-photo-preview aria-live="polite"></div><div class="profile-photo-dropzone" data-photo-dropzone role="button" tabindex="0" aria-controls="profile-photo-file"><i data-lucide="image-up"></i><strong>Drag &amp; drop your photo here</strong><span>or click to browse</span><small>PNG, JPG or WEBP · maximum 2 MB</small></div></div><input id="profile-photo-file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-actionbar"><span class="profile-signature-status" data-photo-status aria-live="polite"></span><div class="profile-signature-controls" data-photo-controls hidden><button type="button" class="button button-secondary" data-photo-select><i data-lucide="upload"></i>Replace image</button><button type="button" class="button button-danger" data-photo-remove><i data-lucide="trash-2"></i>Remove image</button></div></div><small class="field-error" data-photo-error></small>';
+    profileStack.insertBefore(photoPanel, accountPanel.nextElementSibling);
+    const photoPreview = photoPanel.querySelector<HTMLElement>("[data-photo-preview]");
+    const photoInput = photoPanel.querySelector<HTMLInputElement>("#profile-photo-file");
+    const photoDropzone = photoPanel.querySelector<HTMLElement>("[data-photo-dropzone]");
+    const photoSelect = photoPanel.querySelector<HTMLButtonElement>("[data-photo-select]");
+    const photoRemove = photoPanel.querySelector<HTMLButtonElement>("[data-photo-remove]");
+    const photoControls = photoPanel.querySelector<HTMLElement>("[data-photo-controls]");
+    const photoStatus = photoPanel.querySelector<HTMLElement>("[data-photo-status]");
+    const photoError = photoPanel.querySelector<HTMLElement>("[data-photo-error]");
+    const profileAvatar = body.querySelector<HTMLElement>(".profile-card .profile-avatar");
+    const renderPhoto = (metadata: { updated_at?: string | null; filename?: string } | null, syncStatus = "") => {
+      if (!photoPreview || !photoControls) return;
+      if (!metadata) {
+        photoPreview.innerHTML = '<i data-lucide="user-round"></i><span>No profile photo configured</span>';
+        photoControls.hidden = true;
+        if (photoStatus) photoStatus.textContent = "";
+        refreshIcons(photoPreview);
+        return;
+      }
+      const cacheKey = encodeURIComponent(String(metadata.updated_at ?? Date.now()));
+      const source = apiEndpoint(`/profile/photo/file?v=${cacheKey}`);
+      photoPreview.innerHTML = `<img src="${source}" alt="Current profile photo"><span>${escapeHtml(String(metadata.filename ?? "Profile photo"))}</span>`;
+      if (profileAvatar) profileAvatar.innerHTML = `<img src="${source}" alt="${escapeHtml(user.name)}">`;
+      photoControls.hidden = false;
+      if (photoStatus) photoStatus.innerHTML = `<i data-lucide="circle-check"></i><span>Photo saved${syncStatus === "SYNCED" ? " · WorkDrive synced" : syncStatus === "FAILED" ? " · WorkDrive sync pending retry" : ""}</span>`;
+      refreshIcons(photoPanel);
+    };
+    void profileApi.photo().then((result) => renderPhoto(result.metadata, result.workdrive_sync_status)).catch(() => renderPhoto(null));
+    const uploadPhoto = async (file: File | undefined) => {
+      if (!file) { if (photoError) photoError.textContent = "Choose a profile image first."; return; }
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+        if (photoError) photoError.textContent = "Use a PNG, JPG or WEBP image no larger than 2 MB."; return;
+      }
+      if (photoSelect) photoSelect.disabled = true;
+      photoDropzone?.classList.add("is-uploading");
+      if (photoStatus) photoStatus.innerHTML = '<span class="signature-upload-spinner" aria-hidden="true"></span><span>Uploading photo...</span>';
+      if (photoError) photoError.textContent = "";
+      try {
+        const result = await profileApi.uploadPhoto(file);
+        renderPhoto(result.metadata, result.workdrive_sync_status);
+        if (photoInput) photoInput.value = "";
+        toast("Profile photo updated");
+      } catch (error) { if (photoError) photoError.textContent = error instanceof Error ? error.message : "Photo could not be uploaded"; }
+      finally { if (photoSelect) photoSelect.disabled = false; photoDropzone?.classList.remove("is-uploading"); }
+    };
+    photoSelect?.addEventListener("click", () => photoInput?.click());
+    photoDropzone?.addEventListener("click", () => photoInput?.click());
+    photoDropzone?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); photoInput?.click(); } });
+    photoDropzone?.addEventListener("dragover", (event) => { event.preventDefault(); photoDropzone.classList.add("is-dragging"); });
+    photoDropzone?.addEventListener("dragleave", () => photoDropzone.classList.remove("is-dragging"));
+    photoDropzone?.addEventListener("drop", (event) => { event.preventDefault(); photoDropzone.classList.remove("is-dragging"); void uploadPhoto(event.dataTransfer?.files?.[0]); });
+    photoInput?.addEventListener("change", () => { void uploadPhoto(photoInput.files?.[0]); });
+    photoRemove?.addEventListener("click", async () => {
+      photoRemove.disabled = true;
+      try { await profileApi.removePhoto(); renderPhoto(null); if (profileAvatar) profileAvatar.textContent = user.name.replace(/\s+/g, "").slice(0, 2).toUpperCase(); toast("Profile photo removed", "info"); }
+      catch (error) { if (photoError) photoError.textContent = error instanceof Error ? error.message : "Photo could not be removed"; }
+      finally { photoRemove.disabled = false; }
+    });
+
     const signaturePanel = document.createElement("section");
     signaturePanel.className = "panel settings-panel profile-signature-panel";
     signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-main"><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><div class="profile-signature-dropzone" data-signature-dropzone role="button" tabindex="0" aria-controls="profile-signature-file"><i data-lucide="cloud-upload"></i><strong>Drag &amp; drop your signature here</strong><span>or click to browse</span><small>Supported formats: PNG, JPG, WEBP<br>Maximum size: 2 MB</small></div></div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-actionbar"><span class="profile-signature-status" data-signature-status aria-live="polite"></span><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select><i data-lucide="upload"></i>Replace image</button><button type="button" class="button button-danger" data-signature-remove><i data-lucide="trash-2"></i>Remove image</button></div></div></div><small class="field-error" data-signature-error></small>';
-    profileStack.insertBefore(signaturePanel, accountPanel.nextElementSibling);
+    profileStack.insertBefore(signaturePanel, photoPanel.nextElementSibling);
     const preview = signaturePanel.querySelector<HTMLElement>("[data-signature-preview]");
     const signatureInput = signaturePanel.querySelector<HTMLInputElement>("#profile-signature-file");
     const signatureError = signaturePanel.querySelector<HTMLElement>("[data-signature-error]");
@@ -584,7 +684,7 @@ export async function profilePage(): Promise<HTMLElement> {
     const controls = signaturePanel.querySelector<HTMLElement>("[data-signature-controls]");
     const dropzone = signaturePanel.querySelector<HTMLElement>("[data-signature-dropzone]");
     const status = signaturePanel.querySelector<HTMLElement>("[data-signature-status]");
-    const renderSignature = (metadata: { updated_at?: string | null; filename?: string; size?: number } | null) => {
+    const renderSignature = (metadata: { updated_at?: string | null; filename?: string; size?: number } | null, syncStatus = "") => {
       if (!preview || !removeButton || !controls) return;
       if (!metadata) {
         preview.innerHTML = '';
@@ -600,10 +700,10 @@ export async function profilePage(): Promise<HTMLElement> {
       const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : '';
       preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span>${escapeHtml(String(metadata.filename ?? "Signature image"))}${sizeLabel ? `<small>${sizeLabel}</small>` : ''}</span>`;
       controls.hidden = false;
-      if (status) status.innerHTML = '<i data-lucide="circle-check"></i><span>Image uploaded successfully</span>';
+      if (status) status.innerHTML = `<i data-lucide="circle-check"></i><span>Image saved${syncStatus === "SYNCED" ? " · WorkDrive synced" : syncStatus === "FAILED" ? " · WorkDrive sync pending retry" : ""}</span>`;
       refreshIcons(preview.parentElement ?? preview);
     };
-    void profileApi.signature().then((result) => renderSignature(result.metadata)).catch(() => renderSignature(null));
+    void profileApi.signature().then((result) => renderSignature(result.metadata, result.workdrive_sync_status)).catch(() => renderSignature(null));
     const uploadSignature = async (file: File | undefined) => {
       if (!file) { if (signatureError) signatureError.textContent = "Choose a signature image first."; return; }
       if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
@@ -616,7 +716,7 @@ export async function profilePage(): Promise<HTMLElement> {
       if (signatureError) signatureError.textContent = "";
       try {
         const result = await profileApi.uploadSignature(file);
-        renderSignature(result.metadata);
+        renderSignature(result.metadata, result.workdrive_sync_status);
         if (signatureInput) signatureInput.value = "";
         toast("Email signature updated");
       } catch (error) {

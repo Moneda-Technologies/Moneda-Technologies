@@ -96,8 +96,25 @@ class Config:
     ZOHO_ACCOUNT_ID = os.getenv("ZOHO_ACCOUNT_ID", "")
     ZOHO_ACCOUNTS_BASE_URL = os.getenv("ZOHO_ACCOUNTS_BASE_URL", "https://accounts.zoho.in")
     ZOHO_OAUTH_REDIRECT_URI = os.getenv("ZOHO_OAUTH_REDIRECT_URI", "http://localhost:5005/api/v1/integrations/zoho/callback")
+    ZOHO_WORKDRIVE_OAUTH_REDIRECT_URI = os.getenv(
+        "ZOHO_WORKDRIVE_OAUTH_REDIRECT_URI",
+        "http://localhost:5005/api/v1/integrations",
+    )
     ZOHO_MAIL_API_BASE_URL = os.getenv("ZOHO_MAIL_API_BASE_URL", "")
     ZOHO_FROM_ADDRESS = os.getenv("ZOHO_FROM_ADDRESS", "business@monedatechnologies.com")
+    # Zoho WorkDrive is an optional, server-side synchronization destination
+    # for profile assets. Local files remain authoritative when disabled or
+    # temporarily unavailable.
+    ZOHO_WORKDRIVE_ENABLED = env_bool("ZOHO_WORKDRIVE_ENABLED", False)
+    # WorkDrive can use the existing Moneda Technologies OAuth client.  A
+    # dedicated client remains supported when explicitly configured.
+    ZOHO_WORKDRIVE_CLIENT_ID = os.getenv("ZOHO_WORKDRIVE_CLIENT_ID", "") or ZOHO_CLIENT_ID
+    ZOHO_WORKDRIVE_CLIENT_SECRET = os.getenv("ZOHO_WORKDRIVE_CLIENT_SECRET", "") or ZOHO_CLIENT_SECRET
+    ZOHO_WORKDRIVE_REFRESH_TOKEN = os.getenv("ZOHO_WORKDRIVE_REFRESH_TOKEN", "")
+    ZOHO_WORKDRIVE_ROOT_FOLDER_ID = os.getenv("ZOHO_WORKDRIVE_ROOT_FOLDER_ID", "")
+    ZOHO_WORKDRIVE_API_BASE_URL = os.getenv("ZOHO_WORKDRIVE_API_BASE_URL", "https://www.zohoapis.in/workdrive/api/v1")
+    ZOHO_WORKDRIVE_ACCOUNT_REGION = os.getenv("ZOHO_WORKDRIVE_ACCOUNT_REGION", "in").strip().lower()
+    ZOHO_WORKDRIVE_TIMEOUT_SECONDS = max(2.0, float(os.getenv("ZOHO_WORKDRIVE_TIMEOUT_SECONDS", "8")))
     # Sender identities are aliases on the single Zoho OAuth mailbox. Keep the
     # purpose mapping here so application workflows never hardcode addresses.
     MAIL_OTP_FROM = os.getenv("MAIL_OTP_FROM", "otp@monedatechnologies.com")

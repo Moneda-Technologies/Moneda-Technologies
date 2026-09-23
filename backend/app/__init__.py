@@ -25,6 +25,7 @@ from app.quotations.service import QuotationService
 from app.quotations.integrity import repair_stale_conversions
 from app.repositories.store import build_store
 from app.services.seed import ensure_business_logic_schema, seed, sync_blanket_catalog, sync_commercial_units, sync_machine_catalog, sync_underpacking_catalog
+from app.services.workdrive import WorkDriveService
 
 
 _OAUTH_QUERY_SECRET = re.compile(r"([?&](?:code|state)=)[^&\s\"]+", re.IGNORECASE)
@@ -177,6 +178,9 @@ def create_app(config: type[Config] | dict[str, Any] | None = None) -> Flask:
     exchange_service = ExchangeRateService(store, FrankfurterProvider(), app.config["EXCHANGE_RATE_CACHE_SECONDS"])
     app.extensions["store"] = store
     app.extensions["zoho_oauth"] = zoho_oauth
+    app.extensions["workdrive"] = WorkDriveService(
+        app.config, store, refresh_token_provider=zoho_oauth.workdrive_refresh_token,
+    )
     app.extensions["email_provider"] = email_provider
     app.extensions["email_service"] = EmailService(email_provider, app.config, store=store)
     app.extensions["whatsapp_provider"] = MockWhatsAppProvider() if app.config["DEMO_MODE"] or app.config["TESTING"] else DisabledWhatsAppProvider()

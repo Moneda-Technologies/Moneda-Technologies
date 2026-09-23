@@ -8,13 +8,22 @@ from flask import Blueprint, current_app, redirect, request, session
 
 from app.api.responses import failure, success
 from app.communication.email import EmailDeliveryError
-from app.communication.zoho import ZohoIntegrationError, ZohoMailOAuth, integration_diagnostic_id
+from app.communication.zoho import (
+    WORKDRIVE_SCOPE, ZohoIntegrationError, ZohoMailOAuth, integration_diagnostic_id,
+)
 from app.middleware.access import current_user, permission_required
 from app.services.audit import audit
 
 
 logger = logging.getLogger(__name__)
 bp = Blueprint("integrations", __name__, url_prefix="/api")
+
+_WORKDRIVE_ACCOUNTS_BY_REGION = {
+    "us": "https://accounts.zoho.com", "eu": "https://accounts.zoho.eu",
+    "in": "https://accounts.zoho.in", "au": "https://accounts.zoho.com.au",
+    "jp": "https://accounts.zoho.jp", "ca": "https://accounts.zohocloud.ca",
+    "ae": "https://accounts.zoho.ae", "sa": "https://accounts.zoho.sa",
+}
 
 
 def _oauth() -> ZohoMailOAuth:
@@ -23,7 +32,7 @@ def _oauth() -> ZohoMailOAuth:
 
 def _settings_redirect(result: str, *, diagnostic_id: str | None = None,
                        stage: str | None = None, error_code: str | None = None) -> str:
-    query = {"zoho": result}
+    query = {"oauth_provider": "zoho_mail", "zoho": result}
     if diagnostic_id:
         query["diagnostic_id"] = diagnostic_id
     if stage:
@@ -32,6 +41,27 @@ def _settings_redirect(result: str, *, diagnostic_id: str | None = None,
         query["error_code"] = error_code
     base = str(current_app.config.get("APP_BASE_URL") or "http://localhost:3005").rstrip("/")
     return f"{base}/settings?{urlencode(query)}"
+
+
+def _workdrive_redirect(result: str, *, diagnostic_id: str | None = None,
+                        error_code: str | None = None) -> str:
+    query = {"oauth_provider": "zoho_workdrive", "workdrive": result}
+    if diagnostic_id:
+        query["diagnostic_id"] = diagnostic_id
+    if error_code:
+        query["error_code"] = error_code
+    base = str(current_app.config.get("APP_BASE_URL") or "http://localhost:3005").rstrip("/")
+    return f"{base}/settings?{urlencode(query)}"
+
+
+def _workdrive_redirect_uri() -> str:
+    return str(current_app.config.get("ZOHO_WORKDRIVE_OAUTH_REDIRECT_URI") or
+               "http://localhost:5005/api/v1/integrations").strip()
+
+
+def _workdrive_accounts_base_url() -> str:
+    region = str(current_app.config.get("ZOHO_WORKDRIVE_ACCOUNT_REGION") or "in").strip().lower()
+    return _WORKDRIVE_ACCOUNTS_BY_REGION.get(region, _WORKDRIVE_ACCOUNTS_BY_REGION["in"])
 
 
 def _email_failure(exc: EmailDeliveryError):
@@ -214,17 +244,11 @@ def zoho_callback():
         request_id, diagnostic_id, bool(supplied_state),
     )
     user_id = session.get("user_id")
-    if supplied_state:
-        state_record = _oauth().consume_state_record(
-            supplied_state, user_id, transaction_id=transaction_id,
-        )
-        validation_mode = "returned_state"
-    else:
-        # Zoho's documented server-based callback can omit state. Do not
-        # accept that callback blindly: require the signed-session pointer to
-        # match an unexpired, user-bound, one-time MongoDB transaction.
-        state_record = _oauth().consume_transaction_record(transaction_id, user_id)
-        validation_mode = "server_transaction"
+    state_record = _oauth().consume_state_record(
+        supplied_state, user_id, transaction_id=transaction_id,
+        provider="zoho_mail",
+    ) if supplied_state else None
+    validation_mode = "returned_state"
     if not state_record:
         logger.error(
             "zoho oauth callback request_id=%s diagnostic_id=%s stage=state_validation result=FAIL error_code=OAUTH_STATE_ERROR state_rejected=true",
@@ -290,6 +314,79 @@ def zoho_callback():
         return redirect(_settings_redirect("error", diagnostic_id=diagnostic_id, stage=exc.stage, error_code=exc.code))
     audit("integration.zoho.connect", "integration", "zoho_mail")
     return redirect(_settings_redirect("connected"))
+
+
+@bp.get("/integrations/workdrive/connect")
+@permission_required("settings.manage")
+def workdrive_connect():
+    """Start the one-time admin WorkDrive grant using the registered URI."""
+    oauth = _oauth()
+    client_id = str(current_app.config.get("ZOHO_WORKDRIVE_CLIENT_ID") or "").strip()
+    client_secret = str(current_app.config.get("ZOHO_WORKDRIVE_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        return failure("Zoho WorkDrive OAuth client configuration is incomplete", status=503,
+                       error="WORKDRIVE_OAUTH_CONFIGURATION_ERROR")
+    user = current_user() or {}
+    state, transaction_id, code_challenge = oauth.create_state_transaction(
+        str(user["_id"]), return_path="/settings", provider="zoho_workdrive",
+    )
+    session["workdrive_oauth_transaction"] = transaction_id
+    return redirect(oauth.authorization_url(
+        state, code_challenge=code_challenge, scope=WORKDRIVE_SCOPE,
+        redirect_uri=_workdrive_redirect_uri(), client_id=client_id,
+        accounts_base_url=_workdrive_accounts_base_url(),
+    ))
+
+
+@bp.get("/integrations")
+def workdrive_callback():
+    """Temporary session-bound callback for the registered WorkDrive URI."""
+    diagnostic_id = integration_diagnostic_id()
+    transaction_id = str(session.get("workdrive_oauth_transaction") or "")
+    user_id = session.get("user_id")
+    state = str(request.args.get("state") or "")
+    oauth = _oauth()
+    state_record = oauth.consume_state_record(
+        state, user_id, transaction_id=transaction_id, provider="zoho_workdrive",
+    ) if state else None
+    if not state_record:
+        return redirect(_workdrive_redirect(
+            "error", diagnostic_id=diagnostic_id, error_code="OAUTH_STATE_ERROR",
+        ))
+    session.pop("workdrive_oauth_transaction", None)
+    if not oauth.callback_context_valid(
+        location=request.args.get("location"),
+        accounts_server=request.args.get("accounts-server"),
+        expected_accounts_base_url=_workdrive_accounts_base_url(),
+    ):
+        return redirect(_workdrive_redirect(
+            "error", diagnostic_id=diagnostic_id, error_code="OAUTH_CALLBACK_ERROR",
+        ))
+    if request.args.get("error"):
+        return redirect(_workdrive_redirect(
+            "error", diagnostic_id=diagnostic_id, error_code="OAUTH_CALLBACK_ERROR",
+        ))
+    code = str(request.args.get("code") or "").strip()
+    if not code:
+        return redirect(_workdrive_redirect(
+            "error", diagnostic_id=diagnostic_id, error_code="OAUTH_CALLBACK_ERROR",
+        ))
+    try:
+        verifier = oauth.code_verifier_from_transaction(state_record, diagnostic_id=diagnostic_id)
+        oauth.exchange_workdrive_code(
+            code, redirect_uri=_workdrive_redirect_uri(),
+            code_verifier=verifier, diagnostic_id=diagnostic_id,
+            client_id=str(current_app.config.get("ZOHO_WORKDRIVE_CLIENT_ID") or ""),
+            client_secret=str(current_app.config.get("ZOHO_WORKDRIVE_CLIENT_SECRET") or ""),
+            accounts_base_url=_workdrive_accounts_base_url(),
+        )
+    except ZohoIntegrationError as exc:
+        oauth.record_error(exc)
+        return redirect(_workdrive_redirect(
+            "error", diagnostic_id=diagnostic_id, error_code=exc.code,
+        ))
+    audit("integration.zoho_workdrive.connect", "integration", "zoho_workdrive")
+    return redirect(_workdrive_redirect("connected"))
 
 
 @bp.post("/integrations/zoho/test")

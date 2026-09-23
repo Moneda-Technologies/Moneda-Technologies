@@ -8,7 +8,9 @@ import logging
 import pytest
 
 from app.communication.email import EmailDeliveryError, EmailService, RecordingEmailProvider
-from app.communication.zoho import ZOHO_SCOPES, ZohoMailApiProvider, ZohoMailOAuth
+from app.communication.zoho import (
+    WORKDRIVE_SCOPES, ZOHO_SCOPES, ZohoIntegrationError, ZohoMailApiProvider, ZohoMailOAuth,
+)
 from app import _OAuthAccessLogFilter
 from app.repositories.store import MemoryStore
 
@@ -68,6 +70,154 @@ def test_oauth_authorization_url_is_server_bound_and_least_privilege():
     assert set(query["scope"][0].split(",")) == set(ZOHO_SCOPES)
     assert "ZohoMail.messages.ALL" not in query["scope"][0]
     assert query["state"] == ["csrf-state"]
+
+
+def _configure_route_oauth(app):
+    oauth = app.extensions["zoho_oauth"]
+    oauth.client_id = "route-client-id"
+    oauth.client_secret = "route-client-secret"
+    oauth.redirect_uri = "http://localhost:5005/api/v1/integrations/zoho/callback"
+    app.config["ZOHO_WORKDRIVE_OAUTH_REDIRECT_URI"] = "http://localhost:5005/api/v1/integrations"
+    app.config["ZOHO_WORKDRIVE_CLIENT_ID"] = "workdrive-client-id"
+    app.config["ZOHO_WORKDRIVE_CLIENT_SECRET"] = "workdrive-client-secret"
+    return oauth
+
+
+def test_workdrive_connect_uses_dedicated_callback_scopes_and_offline_consent(app, client):
+    oauth = _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+
+    response = client.get("/api/v1/integrations/workdrive/connect")
+    assert response.status_code == 302
+    parsed = urlparse(response.headers["Location"])
+    query = parse_qs(parsed.query)
+    assert parsed.geturl().startswith("https://accounts.zoho.in/oauth/v2/auth?")
+    assert query["redirect_uri"] == ["http://localhost:5005/api/v1/integrations"]
+    assert query["redirect_uri"] != [oauth.redirect_uri]
+    assert query["client_id"] == ["workdrive-client-id"]
+    assert set(query["scope"][0].split(",")) == set(WORKDRIVE_SCOPES)
+    assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
+    rows, total = app.extensions["store"].list("oauth_states", {"provider": "zoho_workdrive"})
+    assert total == 1
+    assert rows[0]["provider"] == "zoho_workdrive"
+
+
+def test_mail_authorization_and_callback_remain_mail_specific(app, client):
+    oauth = _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    response = client.get("/api/v1/integrations/zoho/connect")
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["Location"]).query)
+    assert query["redirect_uri"] == ["http://localhost:5005/api/v1/integrations/zoho/callback"]
+    assert set(query["scope"][0].split(",")) == set(ZOHO_SCOPES)
+
+
+def test_workdrive_callback_exchanges_without_mail_lookup_and_encrypts_token(app, client, monkeypatch):
+    oauth = _configure_route_oauth(app)
+    mail_record = {
+        "_id": "zoho_mail", "provider": "zoho_mail_api", "status": "connected",
+        "refresh_token_encrypted": "existing-mail-ciphertext", "account_id": "mail-account",
+    }
+    app.extensions["store"].insert_one("integrations", mail_record)
+    mail_before = app.extensions["store"].find_one("integrations", {"_id": "zoho_mail"})
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    start = client.get("/api/v1/integrations/workdrive/connect")
+    state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
+    token_calls = []
+
+    def fake_post(url, **kwargs):
+        token_calls.append((url, kwargs.get("data") or {}))
+        return FakeResponse({"access_token": "workdrive-access", "refresh_token": "workdrive-refresh", "expires_in": 3600})
+
+    monkeypatch.setattr("app.communication.zoho.requests.post", fake_post)
+    monkeypatch.setattr(oauth, "lookup_account", lambda *args, **kwargs: pytest.fail("Mail account lookup must not run"))
+    response = client.get(
+        "/api/v1/integrations",
+        query_string={"state": state, "code": "workdrive-code", "location": "in",
+                      "accounts-server": "https://accounts.zoho.in"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("http://localhost:3005/settings?oauth_provider=zoho_workdrive&workdrive=connected")
+    assert "/integrations/zoho/callback" not in response.headers["Location"]
+    assert token_calls[0][0] == "https://accounts.zoho.in/oauth/v2/token"
+    assert token_calls[0][1]["redirect_uri"] == "http://localhost:5005/api/v1/integrations"
+    assert token_calls[0][1]["client_id"] == "workdrive-client-id"
+    assert token_calls[0][1]["client_secret"] == "workdrive-client-secret"
+    stored = app.extensions["store"].find_one("integrations", {"_id": "zoho_workdrive"})
+    assert stored["provider"] == "zoho_workdrive"
+    assert stored["refresh_token"] is None
+    assert stored["refresh_token_encrypted"] != "workdrive-refresh"
+    assert "workdrive-refresh" not in str(stored)
+    assert oauth._cipher().decrypt(stored["refresh_token_encrypted"], "test") == "workdrive-refresh"
+    assert app.extensions["store"].find_one("integrations", {"_id": "zoho_mail"}) == mail_before
+
+
+def test_workdrive_callback_rejects_invalid_state_without_token_exchange(app, client, monkeypatch):
+    _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    assert client.get("/api/v1/integrations/workdrive/connect").status_code == 302
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda *args, **kwargs: pytest.fail("Token exchange must not run"))
+    response = client.get("/api/v1/integrations", query_string={"state": "invalid", "code": "unused"})
+    assert response.status_code == 302
+    assert "workdrive=error" in response.headers["Location"]
+    assert "error_code=OAUTH_STATE_ERROR" in response.headers["Location"]
+
+
+def test_workdrive_callback_rejects_mail_provider_state(app, client, monkeypatch):
+    oauth = _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    mail_state, transaction_id, _challenge = oauth.create_state_transaction(
+        "user-demo-admin", provider="zoho_mail",
+    )
+    with client.session_transaction() as browser_session:
+        browser_session["workdrive_oauth_transaction"] = transaction_id
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda *args, **kwargs: pytest.fail("Token exchange must not run"))
+    response = client.get("/api/v1/integrations", query_string={"state": mail_state, "code": "unused"})
+    assert response.status_code == 302
+    assert "error_code=OAUTH_STATE_ERROR" in response.headers["Location"]
+
+
+def test_mail_callback_rejects_workdrive_provider_state(app, client, monkeypatch):
+    oauth = _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    workdrive_state, transaction_id, _challenge = oauth.create_state_transaction(
+        "user-demo-admin", provider="zoho_workdrive",
+    )
+    with client.session_transaction() as browser_session:
+        browser_session["zoho_oauth_transaction"] = transaction_id
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda *args, **kwargs: pytest.fail("Token exchange must not run"))
+    response = client.get(
+        "/api/v1/integrations/zoho/callback",
+        query_string={"state": workdrive_state, "code": "unused"},
+    )
+    assert response.status_code == 302
+    assert "error_code=OAUTH_STATE_ERROR" in response.headers["Location"]
+
+
+def test_workdrive_connect_reports_specific_missing_client_configuration(app, client):
+    _configure_route_oauth(app)
+    app.config["ZOHO_WORKDRIVE_CLIENT_ID"] = ""
+    app.config["ZOHO_WORKDRIVE_CLIENT_SECRET"] = ""
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    response = client.get("/api/v1/integrations/workdrive/connect")
+    assert response.status_code == 503
+    assert response.json["error"] == "WORKDRIVE_OAUTH_CONFIGURATION_ERROR"
+
+
+def test_workdrive_callback_handles_oauth_denial_without_exposing_details(app, client):
+    _configure_route_oauth(app)
+    assert client.post("/api/auth/demo", json={}).status_code == 200
+    start = client.get("/api/v1/integrations/workdrive/connect")
+    state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
+    response = client.get(
+        "/api/v1/integrations", query_string={"state": state, "error": "access_denied"},
+    )
+    assert response.status_code == 302
+    location = response.headers["Location"]
+    assert location.startswith("http://localhost:3005/settings?oauth_provider=zoho_workdrive&workdrive=error")
+    assert "access_denied" not in location
+    assert "error_code=OAUTH_CALLBACK_ERROR" in location
 
 
 def test_email_routing_is_persisted_and_audited_for_superadmin(app):
@@ -146,6 +296,12 @@ def test_oauth_transaction_fallback_is_user_bound_and_one_time():
 def test_exchange_encrypts_refresh_token_discovers_account_and_captures_region(monkeypatch):
     store = MemoryStore()
     oauth = ZohoMailOAuth(zoho_config(), store)
+    workdrive_record = {
+        "_id": "zoho_workdrive", "provider": "zoho_workdrive", "status": "connected",
+        "refresh_token_encrypted": "existing-workdrive-ciphertext",
+    }
+    store.insert_one("integrations", workdrive_record)
+    workdrive_before = store.find_one("integrations", {"_id": "zoho_workdrive"})
     token_requests = []
 
     def fake_post(url, **kwargs):
@@ -173,6 +329,52 @@ def test_exchange_encrypts_refresh_token_discovers_account_and_captures_region(m
     assert stored["refresh_token_encrypted"] != "refresh-token"
     assert "authorization-code" not in str(stored)
     assert oauth.get_valid_zoho_access_token() == "access-token"
+    assert store.find_one("integrations", {"_id": "zoho_workdrive"}) == workdrive_before
+
+
+def test_mail_exchange_retries_transient_account_lookup_before_persisting(monkeypatch):
+    store = MemoryStore()
+    oauth = ZohoMailOAuth(zoho_config(), store)
+    monkeypatch.setattr("app.communication.zoho.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda url, **kwargs: FakeResponse({
+        "access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600,
+    }))
+    responses = iter([
+        FakeResponse({"status": {"code": 500, "description": "Internal Error"}}, 500),
+        FakeResponse({
+            "status": {"code": 200, "description": "success"},
+            "data": [{"accountId": "987654", "emailAddress": "business@monedatechnologies.com"}],
+        }),
+    ])
+    monkeypatch.setattr("app.communication.zoho.requests.get", lambda url, **kwargs: next(responses))
+
+    result = oauth.exchange_code("authorization-code")
+
+    assert result["connected"] is True
+    stored = store.find_one("integrations", {"_id": "zoho_mail"})
+    assert oauth._cipher().decrypt(stored["refresh_token_encrypted"], "test") == "new-refresh"
+
+
+def test_failed_mail_account_validation_preserves_existing_credentials(monkeypatch):
+    oauth = ZohoMailOAuth(zoho_config(), MemoryStore())
+    store = connected_store(oauth)
+    before = store.find_one("integrations", {"_id": "zoho_mail"})
+    monkeypatch.setattr("app.communication.zoho.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("app.communication.zoho.requests.post", lambda url, **kwargs: FakeResponse({
+        "access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600,
+    }))
+    monkeypatch.setattr("app.communication.zoho.requests.get", lambda url, **kwargs: FakeResponse(
+        {"status": {"code": 500, "description": "Internal Error"}}, 500,
+    ))
+
+    with pytest.raises(ZohoIntegrationError) as raised:
+        oauth.exchange_code("authorization-code")
+
+    assert raised.value.code == "ZOHO_ACCOUNT_LOOKUP_ERROR"
+    after = store.find_one("integrations", {"_id": "zoho_mail"})
+    assert after["refresh_token_encrypted"] == before["refresh_token_encrypted"]
+    assert after["account_id"] == before["account_id"]
+    assert oauth._cipher().decrypt(after["refresh_token_encrypted"], "test") == "refresh-token"
 
 
 def test_account_lookup_extracts_account_id_from_documented_email_address_list(monkeypatch):
@@ -377,14 +579,16 @@ def test_admin_status_connect_callback_and_disconnect_routes_are_safe(app, authe
     monkeypatch.setattr(oauth, "exchange_code", lambda code, code_verifier=None, diagnostic_id=None: {"connected": True})
     callback = authenticated.get(f"/api/v1/integrations/zoho/callback?code=secret-code&state={state}")
     assert callback.status_code == 302
-    assert callback.headers["Location"] == "http://localhost:3005/settings?zoho=connected"
+    assert callback.headers["Location"] == "http://localhost:3005/settings?oauth_provider=zoho_mail&zoho=connected"
     assert "secret-code" not in str(app.extensions["store"].list("audit_logs")[0])
 
     connect_without_returned_state = authenticated.get("/api/v1/integrations/zoho/connect")
     assert connect_without_returned_state.status_code == 302
     callback_without_state = authenticated.get("/api/v1/integrations/zoho/callback?code=secret-code-2&location=in&accounts-server=https://accounts.zoho.in")
     assert callback_without_state.status_code == 302
-    assert callback_without_state.headers["Location"] == "http://localhost:3005/settings?zoho=connected"
+    assert "oauth_provider=zoho_mail" in callback_without_state.headers["Location"]
+    assert "zoho=error" in callback_without_state.headers["Location"]
+    assert "error_code=OAUTH_STATE_ERROR" in callback_without_state.headers["Location"]
 
     invalid = authenticated.get("/api/v1/integrations/zoho/callback?code=ignored&state=wrong")
     assert invalid.status_code == 302

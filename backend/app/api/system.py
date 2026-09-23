@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from app.api.responses import failure, success
 from app.account.signature import SignatureValidationError, read_signature, remove_signature, save_signature, signature_metadata
+from app.account.photo import photo_metadata, read_photo, remove_photo, save_photo
+from app.account.profile_sync import synchronize_profile_asset, workdrive_fields, workdrive_public_status
 from app.auth.policy import SIGNUP_EMAIL_DOMAIN_MESSAGE, is_allowed_signup_email, normalize_signup_email
 from app.auth.schemas import EmailChangeRequest, EmailChangeVerify
 from app.auth.service import OtpError
@@ -77,7 +79,8 @@ def me():
         # to a pending device; never include customers or cached app data.
         return success({"user": {"_id": user_record.get("_id"), "name": user_record.get("name"), "role_id": user_record.get("role_id")}, "customers": [], "companies": [], "customer_companies": [], "device_access": device_status, "application_access": False})
     user = {**user_record}
-    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts", "signature_path"):
+    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts", "signature_path", "photo_path",
+                  "workdrive_user_folder_id", "workdrive_profile_folder_id", "signature_workdrive_resource_id", "signature_workdrive_path", "photo_workdrive_resource_id", "photo_workdrive_path"):
         user.pop(field, None)
     user.pop("currency_preference", None)
     store = current_app.extensions["store"]
@@ -157,6 +160,7 @@ def get_profile_signature():
         "configured": bool(metadata),
         "metadata": metadata,
         "url": "/profile/signature/file" if metadata else None,
+        "workdrive_sync_status": workdrive_public_status(user, "signature", current_app.extensions["workdrive"]),
     })
 
 
@@ -188,9 +192,11 @@ def upload_profile_signature():
     row = store.update_one("users", {"_id": user["_id"]}, changes)
     if not row:
         return failure("Profile could not be updated", status=404)
+    row = synchronize_profile_asset(store, current_app.extensions["workdrive"], row, "signature", current_app.config["UPLOAD_DIRECTORY"])
     metadata = signature_metadata(row)
     audit("profile.signature.update", "user", str(user["_id"]), {"filename": changes.get("signature_filename")})
-    return success({"configured": True, "metadata": metadata, "url": "/profile/signature/file"}, "Email signature saved")
+    return success({"configured": True, "metadata": metadata, "url": "/profile/signature/file",
+                    "workdrive_sync_status": workdrive_public_status(row, "signature", current_app.extensions["workdrive"])}, "Email signature saved")
 
 
 @bp.delete("/profile/signature")
@@ -199,12 +205,84 @@ def delete_profile_signature():
     user = current_user() or {}
     store = current_app.extensions["store"]
     remove_signature(user, current_app.config["UPLOAD_DIRECTORY"])
+    try:
+        current_app.extensions["workdrive"].delete_asset(user, "signature")
+    except Exception:
+        current_app.logger.warning("WorkDrive signature deletion failed user_id=%s", user.get("_id"))
     store.unset_many("users", {"_id": user["_id"]}, [
         "signature_path", "signature_filename", "signature_mime_type", "signature_size",
         "signature_width", "signature_height", "signature_updated_at",
+        *workdrive_fields("signature"),
     ])
     audit("profile.signature.delete", "user", str(user["_id"]), {})
     return success({"configured": False, "metadata": None, "url": None}, "Email signature removed")
+
+
+@bp.get("/profile/photo")
+@login_required
+def get_profile_photo():
+    user = current_user() or {}
+    metadata = photo_metadata(user)
+    return success({
+        "configured": bool(metadata), "metadata": metadata,
+        "url": "/profile/photo/file" if metadata else None,
+        "workdrive_sync_status": workdrive_public_status(user, "photo", current_app.extensions["workdrive"]),
+    })
+
+
+@bp.get("/profile/photo/file")
+@login_required
+def get_profile_photo_file():
+    loaded = read_photo(current_user() or {}, current_app.config["UPLOAD_DIRECTORY"])
+    if not loaded:
+        return failure("Profile photo is not configured", status=404, error="PHOTO_NOT_CONFIGURED")
+    metadata, data = loaded
+    response = Response(data, mimetype=metadata["mime_type"])
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@bp.post("/profile/photo")
+@login_required
+def upload_profile_photo():
+    user = current_user() or {}
+    upload = request.files.get("file")
+    if not upload:
+        return failure("Choose a profile image", status=422, error="PHOTO_FILE_REQUIRED")
+    try:
+        changes = save_photo(str(user["_id"]), current_app.config["UPLOAD_DIRECTORY"], upload)
+    except SignatureValidationError as exc:
+        return failure(str(exc), status=422, error="INVALID_PHOTO")
+    changes["photo_updated_at"] = utcnow()
+    store = current_app.extensions["store"]
+    row = store.update_one("users", {"_id": user["_id"]}, changes)
+    if not row:
+        return failure("Profile could not be updated", status=404)
+    row = synchronize_profile_asset(store, current_app.extensions["workdrive"], row, "photo", current_app.config["UPLOAD_DIRECTORY"])
+    audit("profile.photo.update", "user", str(user["_id"]), {"filename": changes.get("photo_filename")})
+    return success({
+        "configured": True, "metadata": photo_metadata(row), "url": "/profile/photo/file",
+        "workdrive_sync_status": workdrive_public_status(row, "photo", current_app.extensions["workdrive"]),
+    }, "Profile photo saved")
+
+
+@bp.delete("/profile/photo")
+@login_required
+def delete_profile_photo():
+    user = current_user() or {}
+    store = current_app.extensions["store"]
+    remove_photo(user, current_app.config["UPLOAD_DIRECTORY"])
+    try:
+        current_app.extensions["workdrive"].delete_asset(user, "photo")
+    except Exception:
+        current_app.logger.warning("WorkDrive photo deletion failed user_id=%s", user.get("_id"))
+    store.unset_many("users", {"_id": user["_id"]}, [
+        "photo_path", "photo_filename", "photo_mime_type", "photo_size",
+        "photo_width", "photo_height", "photo_updated_at", *workdrive_fields("photo"),
+    ])
+    audit("profile.photo.delete", "user", str(user["_id"]), {})
+    return success({"configured": False, "metadata": None, "url": None}, "Profile photo removed")
 
 
 _EMAIL_CHANGE_FIELDS = [
@@ -221,7 +299,8 @@ def _invalidate_email_change_challenges(store, user_id: str) -> None:
 
 def _safe_profile_user(row: dict) -> dict:
     result = {**row}
-    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts", "signature_path"):
+    for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts", "signature_path", "photo_path",
+                  "workdrive_user_folder_id", "workdrive_profile_folder_id", "signature_workdrive_resource_id", "signature_workdrive_path", "photo_workdrive_resource_id", "photo_workdrive_path"):
         result.pop(field, None)
     return result
 
