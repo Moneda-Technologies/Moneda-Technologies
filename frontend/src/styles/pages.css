@@ -878,6 +878,57 @@
 .timeline-item strong { font-size: .84rem; overflow-wrap: anywhere; }
 .timeline-item small { color: var(--text-muted); font-size: .75rem; overflow-wrap: anywhere; }
 
+/* Compact document revision history and current-PDF actions. */
+.revision-history-list { max-height: 246px; overflow-y: auto; padding-right: 4px; scrollbar-gutter: stable; }
+.revision-row { align-items: center; border: 1px solid var(--border); border-radius: 9px; grid-template-columns: 24px minmax(0, 1fr) auto; margin-top: 8px; padding: 10px 12px; }
+.revision-row:first-child { margin-top: 0; }
+.revision-row.is-current { background: #eef7ff; border-color: #b7d6f4; }
+.revision-row .revision-pdf-button { align-items: center; display: inline-flex; gap: 6px; white-space: nowrap; }
+.revision-row .revision-pdf-button svg { height: 16px; width: 16px; }
+.detail-current-pdf { align-items: center; display: inline-flex; gap: 7px; white-space: nowrap; }
+.document-detail-actions { align-items: center; justify-content: space-between; width: 100%; }
+.document-primary-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.document-detail-actions .detail-back-action { margin-right: auto; }
+.document-detail-grid { align-items: start; display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) 320px; }
+.document-detail-grid > * { min-width: 0; }
+.document-summary-card { grid-column: 1 / -1; }
+.document-summary-copy { flex: 1 1 auto; min-width: 0; }
+.document-summary-side { align-items: flex-end; display: grid; flex: 0 0 auto; gap: 14px; justify-items: end; margin-left: auto; }
+.document-summary-side .detail-hero-actions { align-items: center; flex-wrap: nowrap; }
+.document-summary-side .detail-hero-total { margin-left: 0; }
+.document-detail-main { display: grid; gap: 14px; min-width: 0; }
+.document-detail-main > .panel { padding: 20px; }
+.document-timeline, .quotation-communication { align-self: start; min-width: 0; padding: 20px; position: sticky; top: 84px; }
+.document-timeline-list, .quotation-communication-list { max-height: 520px; overflow-y: auto; padding-right: 4px; scrollbar-gutter: stable; }
+.document-items-table { border: 1px solid var(--border); border-radius: 9px; max-width: 100%; overflow-x: auto; }
+.document-items-table table { border-collapse: collapse; min-width: 720px; table-layout: fixed; width: 100%; }
+.document-items-table th { background: var(--surface-secondary); color: var(--text-muted); font-size: .68rem; letter-spacing: .03em; padding: 11px 12px; text-align: left; text-transform: uppercase; }
+.document-items-table th:nth-child(1) { width: 25%; }
+.document-items-table th:nth-child(2) { width: 30%; }
+.document-items-table th:nth-child(3) { width: 10%; }
+.document-items-table th:nth-child(4), .document-items-table th:nth-child(5), .document-items-table th:nth-child(6) { width: 12%; }
+.document-items-table td { border-top: 1px solid var(--border); font-size: .8rem; line-height: 1.45; overflow-wrap: anywhere; padding: 12px; vertical-align: top; }
+.document-items-table td small { color: var(--text-muted); display: block; margin-top: 4px; }
+.document-items-table td.money, .document-items-table th:last-child { text-align: right; }
+.quotation-detail-layout { gap: 14px; }
+.quotation-items-detail .summary-total { margin-top: 14px; }
+.quotation-communication .timeline-item { padding-block: 10px; }
+
+@media (max-width: 700px) {
+  .document-detail-main > .panel { padding: 15px; }
+  .revision-row { align-items: flex-start; grid-template-columns: 22px minmax(0, 1fr); }
+  .revision-row .revision-pdf-button { grid-column: 2; justify-self: start; margin-top: 4px; }
+  .detail-current-pdf { grid-column: 1 / -1; justify-content: center; width: 100%; }
+  .document-detail-actions { align-items: stretch; flex-direction: column; }
+  .document-detail-actions .detail-back-action { justify-content: center; margin-right: 0; order: 2; width: 100%; }
+  .document-primary-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin-left: 0; width: 100%; }
+  .document-primary-actions > .button { justify-content: center; }
+  .document-summary-side { align-items: stretch; justify-items: stretch; margin-left: 0; width: 100%; }
+  .document-summary-side .detail-hero-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .document-summary-side .detail-current-pdf { grid-column: auto; width: auto; }
+  .document-summary-side .detail-hero-total { text-align: left; }
+}
+
 /* Document-scoped quotation/order editors */
 .document-editor-header { align-items: center; display: flex; justify-content: space-between; padding: 20px 22px; }
 .document-editor-header h2 { font-size: 1.55rem; margin: 3px 0 7px; }
@@ -931,11 +982,11 @@
 .page-body { display: grid; gap: var(--space-6); }
 .page-body > :where(.metric-grid, .panel, .data-table, .detail-layout, form) { margin-bottom: 0; }
 
-@media (min-width: 1050px) {
-  .working-order-detail-page .detail-layout { align-items: start; grid-template-columns: minmax(0, 1fr) 320px; }
-  .working-order-detail-page .detail-hero { grid-column: 1 / -1; }
-  .working-order-detail-page #audit-history { grid-column: 2; grid-row: 2 / span 4; position: sticky; top: 84px; }
-  .working-order-detail-page .detail-layout > section:not(.detail-hero):not(#audit-history) { grid-column: 1; }
+@media (max-width: 1049px) {
+  .document-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .document-summary-card, .document-detail-main, .document-timeline, .quotation-communication { grid-column: 1; }
+  .document-timeline, .quotation-communication { position: static; }
+  .document-timeline-list, .quotation-communication-list { max-height: 300px; }
 }
 
 @media (max-width: 760px) {
@@ -2210,6 +2261,44 @@
   .customer-detail-page .detail-hero-actions { grid-column: auto; grid-row: auto; min-width: 0; }
   .customer-detail-page .detail-hero-actions .button { flex: 1 1 150px; justify-content: center; }
   .customer-detail-page .customer-profile-panel .detail-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Customer Detail only: keep the two asset slots balanced whether either
+   asset is empty or populated. The surrounding controls remain unchanged. */
+.customer-detail-page .customer-detail-asset-control > .profile-avatar,
+.customer-detail-page .customer-detail-asset-control > .customer-visiting-card-tile {
+  align-items: center;
+  box-sizing: border-box;
+  flex: 0 0 112px;
+  height: 88px;
+  justify-content: center;
+  min-width: 112px;
+  width: 112px;
+}
+.customer-detail-page .customer-detail-asset-control > .profile-avatar.has-logo,
+.customer-detail-page .customer-detail-asset-control > .profile-avatar.has-logo.logo-shape-wide,
+.customer-detail-page .customer-detail-asset-control > .profile-avatar.has-logo.logo-shape-square,
+.customer-detail-page .customer-detail-asset-control > .profile-avatar.has-logo.logo-shape-round {
+  border-radius: 12px;
+  padding: 8px;
+}
+.customer-detail-page .customer-detail-asset-control > .profile-avatar img,
+.customer-detail-page .customer-detail-asset-control > .customer-visiting-card-tile img {
+  display: block;
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+@media (max-width: 520px) {
+  .customer-detail-page .customer-detail-asset-control > .profile-avatar,
+  .customer-detail-page .customer-detail-asset-control > .customer-visiting-card-tile {
+    flex-basis: 104px;
+    height: 82px;
+    min-width: 104px;
+    width: 104px;
+  }
 }
 @media (max-width: 520px) {
   .quotation-line-heading { align-items: flex-start; flex-direction: column; }

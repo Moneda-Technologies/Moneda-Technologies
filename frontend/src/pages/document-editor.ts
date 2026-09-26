@@ -57,7 +57,8 @@ export async function documentEditorPage(mode: EditorMode, id: string): Promise<
     const back = mode === "quotation" ? "/quotations" : `/orders/${encodeURIComponent(id)}`;
     const transport = (document.transport as Record<string, unknown> | undefined) ?? {};
     const commitOrderItems = async (nextItems: CartItem[]) => {
-      if (mode === "order") await orderApi.update(id, { items: nextItems.map(itemPayload) });
+      // Keep item edits local until the explicit Save action. Persisting an
+      // order here and again from Save created two revisions for one edit.
       items = nextItems;
       render();
     };

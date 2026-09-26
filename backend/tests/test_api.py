@@ -1236,6 +1236,86 @@ def test_document_edit_workflow_reprices_server_side_and_keeps_snapshots_isolate
     }]
 
 
+def test_order_update_is_noop_for_duplicate_payload_and_archives_each_revision_once(app, authenticated):
+    store = app.extensions["store"]
+    configuration = {
+        "thickness_mm": 1.96, "length": 1000, "width": 1000,
+        "dimension_unit": "mm", "format_type": "cut_format",
+    }
+    assert authenticated.post("/api/v1/cart/items", json={
+        "customer_id": COMPANY, "product_id": "mtech_active_sf", "display_currency": "EUR",
+        "quantity": 1, "configuration": configuration,
+    }).status_code == 201
+    quote = authenticated.post("/api/v1/quotations", json={
+        "customer_id": COMPANY, "currency": "EUR", "payment_terms": "POD",
+    }).json["data"]
+    converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
+    assert converted.status_code == 201
+    order = converted.json["data"]
+
+    class CountingArchiveService:
+        def __init__(self):
+            self.user_versions = []
+            self.company_versions = []
+
+        def archive_document_version(self, _owner, **kwargs):
+            self.user_versions.append(kwargs["version_id"])
+            return {
+                "workdrive_folder_id": "user-order-folder",
+                "workdrive_file_id": f"user-{kwargs['version_id']}",
+                "workdrive_sync_status": "SYNCED",
+            }
+
+        def archive_customer_document_version(self, _customer, **kwargs):
+            self.company_versions.append(kwargs["version_id"])
+            return {
+                "workdrive_customer_folder_id": "company-order-folder",
+                "workdrive_customer_file_id": f"company-{kwargs['version_id']}",
+                "workdrive_customer_sync_status": "SYNCED",
+            }
+
+    archive = CountingArchiveService()
+    app.extensions["workdrive"] = archive
+    item = order["lines"][0]
+
+    def item_payload(quantity):
+        return {"items": [{
+            "item_id": item["item_id"], "product_id": item["product_id"],
+            "configuration": item["configuration"], "quantity": quantity,
+            "discount_percent": item.get("requested_discount_percent", item.get("discount_percent", 0)),
+            "display_currency": item.get("display_currency", "EUR"),
+        }]}
+
+    first = authenticated.patch(f"/api/v1/orders/{order['_id']}", json=item_payload(2))
+    assert first.status_code == 200
+    assert first.json["data"]["version"] == 2
+    assert archive.user_versions == [f"{order['_id']}-v02"]
+    assert archive.company_versions == [f"{order['_id']}-v02"]
+    assert store.count("order_versions", {"order_id": order["_id"]}) == 2
+
+    duplicate = authenticated.patch(f"/api/v1/orders/{order['_id']}", json=item_payload(2))
+    assert duplicate.status_code == 200
+    assert duplicate.json["data"]["version"] == 2
+    assert archive.user_versions == [f"{order['_id']}-v02"]
+    assert archive.company_versions == [f"{order['_id']}-v02"]
+    assert store.count("order_versions", {"order_id": order["_id"]}) == 2
+
+    unchanged_metadata = authenticated.patch(
+        f"/api/v1/orders/{order['_id']}",
+        json={"payment_terms": first.json["data"].get("payment_terms")},
+    )
+    assert unchanged_metadata.status_code == 200
+    assert unchanged_metadata.json["message"] == "Order unchanged"
+    assert store.count("order_versions", {"order_id": order["_id"]}) == 2
+
+    later_edit = authenticated.patch(f"/api/v1/orders/{order['_id']}", json=item_payload(3))
+    assert later_edit.status_code == 200
+    assert later_edit.json["data"]["version"] == 3
+    assert archive.user_versions == [f"{order['_id']}-v02", f"{order['_id']}-v03"]
+    assert archive.company_versions == [f"{order['_id']}-v02", f"{order['_id']}-v03"]
+    assert store.count("order_versions", {"order_id": order["_id"]}) == 3
+
+
 def test_legacy_working_order_lines_compare_without_false_added_removed_changes(app, authenticated):
     store = app.extensions["store"]
     source_line = {"product_id": "legacy-product", "configuration": {"size": "A"}, "quantity": 2, "line_total": 20}

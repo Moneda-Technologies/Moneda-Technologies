@@ -28,6 +28,7 @@ from app.pricing.engine import PricingUnavailable
 bp = Blueprint("orders", __name__, url_prefix="/api")
 STATUSES = {"Pending", "Confirmed", "Processing", "Completed", "Cancelled"}
 _CONVERSION_LOCK = Lock()
+_ORDER_REVISION_LOCK = Lock()
 PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
 WORKING_STATES = {"WORKING", "AWAITING_PAYMENT", "PAYMENT_RECORDED", "PAYMENT_CONFIRMED", "READY_FOR_DISPATCH", "READY_TO_FINALIZE", "CANCELLED"}
 
@@ -1391,6 +1392,14 @@ def finalize_order(order_id: str):
 @bp.patch("/orders/<order_id>")
 @permission_required("orders.update")
 def update_order(order_id: str):
+    # Serialize revision decisions within this process so a rapid duplicate
+    # request observes the first accepted revision and can be treated as a
+    # no-op instead of archiving the same edit twice.
+    with _ORDER_REVISION_LOCK:
+        return _update_order(order_id)
+
+
+def _update_order(order_id: str):
     store = current_app.extensions["store"]
     order = store.find_one("orders", {"_id": order_id})
     if not order:
@@ -1457,6 +1466,9 @@ def update_order(order_id: str):
             )
     if not changes:
         return failure("No editable order fields were supplied", status=422, error="NO_ORDER_CHANGES")
+    changes = {field: value for field, value in changes.items() if order.get(field) != value}
+    if not changes:
+        return success(order, "Order unchanged")
     previous_version = int(order.get("version") or 1)
     changes["version"] = previous_version + 1
     history = list(order.get("history", []))
@@ -1502,13 +1514,22 @@ def _line_edit_signature(value: dict) -> tuple:
         repr(sorted((value.get("configuration") or {}).items())),
         int(value.get("requested_quantity", value.get("quantity", 1)) or 1),
         float(value.get("requested_discount_percent", value.get("discount_percent", 0)) or 0),
+        str(value.get("display_currency") or value.get("currency") or "EUR"),
     )
 
 
 def _replace_working_order_items(store, order: dict, submitted: object) -> dict:
     if not isinstance(submitted, list) or not submitted:
         raise ValueError("A working Order must contain at least one item")
-    existing = {str(line.get("item_id")): line for line in _working_order_lines(order)}
+    existing_lines = _working_order_lines(order)
+    existing = {str(line.get("item_id")): line for line in existing_lines}
+    if len(submitted) == len(existing_lines) and all(
+        isinstance(raw, dict)
+        and str(raw.get("item_id") or raw.get("line_id") or "") == str(current.get("item_id") or "")
+        and _line_edit_signature(raw) == _line_edit_signature(current)
+        for raw, current in zip(submitted, existing_lines)
+    ):
+        return order
     lines: list[dict] = []
     for raw in submitted:
         if not isinstance(raw, dict):
