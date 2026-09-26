@@ -84,6 +84,10 @@ export const customerApi = {
   updateShippingAddress: (id: string, addressId: string, value: unknown) => api<AddressRecord>(`/customers/${encodeURIComponent(id)}/shipping-addresses/${encodeURIComponent(addressId)}`, patchBody(value)),
   deactivateShippingAddress: (id: string, addressId: string) => api<null>(`/customers/${encodeURIComponent(id)}/shipping-addresses/${encodeURIComponent(addressId)}`, { method: "DELETE" }),
   updatePricing: (id: string, value: unknown) => api<Customer>(`/customers/${encodeURIComponent(id)}/pricing`, patchBody(value)),
+  assets: (id: string) => api<{ items: Record<string, unknown>[]; total: number }>(`/customers/${encodeURIComponent(id)}/assets`),
+  uploadAsset: (id: string, category: "logo" | "visiting_card" | "document", file: File, metadata: { cardholderName?: string } = {}) => { const body = new FormData(); body.append("category", category); body.append("file", file); if (metadata.cardholderName) body.append("cardholder_name", metadata.cardholderName); return api<Record<string, unknown>>(`/customers/${encodeURIComponent(id)}/assets`, { method: "POST", body }); },
+  removeAsset: (id: string, assetId: string) => api<null>(`/customers/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" }),
+  assetUrl: (id: string, assetId: string) => apiEndpoint(`/customers/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}/file`),
 };
 
 export const priceListApi = {
@@ -110,6 +114,8 @@ export const quotationApi = {
   convert: (id: string, idempotencyKey = crypto.randomUUID()) => api<unknown>(`/quotations/${encodeURIComponent(id)}/convert-to-order`, { ...jsonBody({}), headers: { "Idempotency-Key": idempotencyKey } }),
   remove: (id: string, reason: string, permanent = true) => api<null>(`/quotations/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason, permanent }), headers: { "Content-Type": "application/json" } }),
   restore: (id: string) => api<Quotation>(`/quotations/${encodeURIComponent(id)}/restore`, jsonBody({})),
+  history: (id: string) => api<{ quotation_id: string; quotation_number?: string; current_version: number; items: Record<string, unknown>[] }>(`/quotations/${encodeURIComponent(id)}/history`),
+  historyPdfUrl: (id: string, versionId: string) => apiEndpoint(`/quotations/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}/pdf`),
 };
 
 export const cartApi = {
@@ -147,6 +153,8 @@ export const orderApi = {
   resendConfirmation: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/resend-confirmation`, jsonBody({})),
   remove: (id: string, reason = "Deleted from Order Confirmations") => api<null>(`/orders/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }), headers: { "Content-Type": "application/json" } }),
   pdfUrl: (id: string, inline = false) => apiEndpoint(`/orders/${encodeURIComponent(id)}/pdf${inline ? "?preview=true" : ""}`),
+  history: (id: string) => api<{ order_id: string; order_number?: string; current_version: number; items: Record<string, unknown>[] }>(`/orders/${encodeURIComponent(id)}/history`),
+  historyPdfUrl: (id: string, versionId: string) => apiEndpoint(`/orders/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}/pdf`),
   sendStatus: (id: string) => api<{ sent: boolean; diagnostic_id?: string }>(`/orders/${encodeURIComponent(id)}/send-status`, jsonBody({})),
 };
 export const financeApi = {

@@ -2,6 +2,7 @@ import { cartApi, customerCompanyApi, orderApi, quotationApi } from "../api";
 import { refreshIcons } from "../components/icons";
 import { createWatermark } from "../components/watermark";
 import { openModal } from "../components/modal";
+import { fetchPdfObjectUrl, openPdfViewer, type PdfObjectUrl } from "../components/pdf-viewer";
 import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
@@ -362,7 +363,7 @@ function previewDocumentMarkup(quote: Quotation, saved: boolean, pdfSource: stri
   const sendAction = saved
     ? (appStore.can("quotations.send") && (quote.status === "Draft" || resend) ? `<button class="button button-primary preview-send"><i data-lucide="send"></i>${resend ? "Send Again" : "Send Email"}</button>` : "")
     : '<button class="button button-primary preview-generate"><i data-lucide="send"></i>Generate & Send Email</button>';
-  return `<div class="preview-toolbar"><button class="button button-quiet preview-back"><i data-lucide="arrow-left"></i>Back to Quotation Preparation</button><div><button class="button button-quiet preview-print"><i data-lucide="printer"></i>Print</button>${saved ? `<a class="button button-secondary" href="${quotationPdfUrl(quote._id!)}"><i data-lucide="download"></i>Download PDF</a>` : '<button class="button button-secondary preview-download" disabled title="Generate and save the quotation first"><i data-lucide="download"></i>Download PDF</button>'}${sendAction}</div></div><iframe class="quotation-pdf-preview" title="Quotation ${escapeHtml(quote.quotation_number)}" src="${pdfSource}"></iframe>`;
+  return `<div class="preview-toolbar"><button class="button button-quiet preview-back"><i data-lucide="arrow-left"></i>Back to Quotation Preparation</button><div><button class="button button-quiet preview-print"><i data-lucide="printer"></i>Print</button>${saved ? `<a class="button button-secondary" href="${quotationPdfUrl(quote._id!)}"><i data-lucide="download"></i>Download PDF</a>` : '<button class="button button-secondary preview-download" disabled title="Generate and save the quotation first"><i data-lucide="download"></i>Download PDF</button>'}${sendAction}</div></div><div class="quotation-pdf-loading" data-pdf-loading${pdfSource ? " hidden" : ""}>Loading PDF…</div><iframe class="quotation-pdf-preview" title="Quotation ${escapeHtml(quote.quotation_number)}"${pdfSource ? ` src="${pdfSource}"` : ""} hidden></iframe>`;
 }
 
 export async function quotationPreviewPage(): Promise<HTMLElement> {
@@ -371,20 +372,38 @@ export async function quotationPreviewPage(): Promise<HTMLElement> {
   const params = new URLSearchParams(location.search);
   const savedId = params.get("id"); const draftKey = params.get("draft");
   let bundle: PreviewBundle | null = null;
+  let savedPreview: PdfObjectUrl | null = null;
   try {
     if (savedId) bundle = { payload: {}, document: await quotationApi.get(savedId) };
     else if (draftKey) bundle = JSON.parse(localStorage.getItem(draftKey) ?? "null") as PreviewBundle | null;
   } catch (error) { root.innerHTML = emptyState("file-warning", "Preview unavailable", error instanceof Error ? error.message : "The quotation preview could not be loaded."); return root; }
   if (!bundle) { root.innerHTML = emptyState("file-warning", "Preview expired", "Return to the cart and create a new preview."); return root; }
   const render = () => {
+    savedPreview?.revoke();
+    savedPreview = null;
     const saved = Boolean(bundle?.document._id && !bundle.document.preview);
     const pdfSource = saved
-      ? quotationPdfUrl(bundle!.document._id!, true)
+      ? ""
       : `data:application/pdf;base64,${bundle!.document.preview_pdf_base64 ?? ""}`;
     root.innerHTML = previewDocumentMarkup(bundle!.document, saved, pdfSource);
     root.prepend(watermark);
     root.querySelector(".preview-back")?.addEventListener("click", () => { if (window.opener) { window.close(); return; } window.location.assign(draftKey ? `/quotation/create?draft=${encodeURIComponent(draftKey)}` : "/quotation/create"); });
-    root.querySelector(".preview-print")?.addEventListener("click", () => root.querySelector<HTMLIFrameElement>(".quotation-pdf-preview")?.contentWindow?.print());
+    const frame = root.querySelector<HTMLIFrameElement>(".quotation-pdf-preview");
+    const loading = root.querySelector<HTMLElement>("[data-pdf-loading]");
+    if (saved && bundle?.document._id && frame && loading) {
+      void fetchPdfObjectUrl(`/quotations/${encodeURIComponent(bundle.document._id)}/pdf?preview=true`).then((loaded) => {
+        savedPreview = loaded;
+        frame.src = loaded.url;
+        frame.hidden = false;
+        loading.hidden = true;
+      }).catch((error: unknown) => {
+        loading.classList.add("is-error");
+        loading.textContent = error instanceof Error ? error.message : "The PDF could not be loaded.";
+      });
+    } else if (frame) {
+      frame.hidden = false;
+    }
+    root.querySelector(".preview-print")?.addEventListener("click", () => frame?.contentWindow?.print());
     const sendSaved = async (quote: Quotation, button: HTMLButtonElement) => {
       const resend = quote.status === "Sent" || quote.status === "send_failed";
       const snapshotRecipient = String(quote.customer_snapshot?.email ?? "").trim();
@@ -420,6 +439,7 @@ export async function quotationPreviewPage(): Promise<HTMLElement> {
     root.querySelector(".preview-send")?.addEventListener("click", async (event) => sendSaved(bundle!.document, event.currentTarget as HTMLButtonElement));
     refreshIcons(root);
   };
+  window.addEventListener("pagehide", () => savedPreview?.revoke(), { once: true });
   render(); return root;
 }
 
@@ -437,7 +457,14 @@ export async function quotationDetailPage(quotationId: string): Promise<HTMLElem
       const unitPrice = Number(rawLine.unit_price ?? rawLine.master_unit_price ?? rawLine.base_unit_price ?? 0);
       return `<article class="detail-line quotation-detail-line"><div class="quotation-line-heading"><div><strong>${escapeHtml(line.product_name)}</strong>${line.description ? `<small>${escapeHtml(line.description)}</small>` : ""}</div><strong>${formatMoney(line.line_total, "EUR")}</strong></div><div class="quotation-line-meta"><div><span>Configuration</span><strong>${escapeHtml(configuration || "Standard")}</strong></div><div><span>Quantity</span><strong>${escapeHtml(quantity)}</strong></div><div><span>Unit price</span><strong>${formatMoney(unitPrice, "EUR")}</strong></div><div><span>Discount</span><strong>${escapeHtml(discountText(line.discount_percent, "", "%") || "0%")}</strong></div></div></article>`;
     }).join("");
-    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar"><i data-lucide="file-text"></i></div><div><span class="eyebrow">${escapeHtml(quote.quotation_number)}</span><h2>${escapeHtml(quote.customer_snapshot.name)}</h2><p>${formatDate(quote.created_at)} · ${statusBadge(quote.status)}</p></div><div class="detail-hero-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, "EUR")}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Line Items</h2></div><a class="button button-quiet" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank" rel="noopener noreferrer"><i data-lucide="eye"></i>Full-screen Preview</a></div><div class="detail-lines">${lineItems}</div><div class="summary-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, "EUR")}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Communication History</span><h2>Delivery Timeline</h2></div><span class="count-badge">${communication.length} events</span></div>${communication.length ? `<div class="timeline-list">${communication.map((item) => `<div class="timeline-item"><i data-lucide="${item.channel === "email" ? "mail" : item.channel === "whatsapp" ? "message-circle" : "file-text"}"></i><div><strong>${escapeHtml(String(item.action ?? item.status ?? item.channel ?? "Activity"))}</strong><small>${escapeHtml(String(item.recipient ?? item.provider_id ?? "Internal record"))}</small></div></div>`).join("")}</div>` : '<p class="muted">No delivery events recorded yet.</p>'}</section></div>`;
+    const revisionResult = await quotationApi.history(quotationId);
+    const revisionMarkup = `<section class="panel revision-history"><div class="section-title"><div><span class="eyebrow">Revision History</span><h2>${escapeHtml(String(quote.quotation_number))}</h2></div><span class="count-badge">Current V${revisionResult.current_version}</span></div><div class="timeline-list">${revisionResult.items.map((version) => `<div class="timeline-item"><i data-lucide="history"></i><div><strong>V${escapeHtml(String(version.version))}${Number(version.version) === Number(revisionResult.current_version) ? " · Current" : ""}</strong><small>${escapeHtml(String((version.created_by_snapshot as Record<string, unknown> | undefined)?.name ?? version.created_by ?? "User"))} · ${escapeHtml(String(version.reason ?? "Revision"))}</small><button class="button button-quiet button-small" type="button" data-quotation-version-pdf="${escapeHtml(String(version._id))}" data-version="${escapeHtml(String(version.version))}">View PDF</button></div></div>`).join("")}</div></section>`;
+    body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar"><i data-lucide="file-text"></i></div><div><span class="eyebrow">${escapeHtml(quote.quotation_number)}</span><h2>${escapeHtml(quote.customer_snapshot.name)}</h2><p>${formatDate(quote.created_at)} · ${statusBadge(quote.status)}</p></div><div class="detail-hero-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, "EUR")}</strong></div></section><section class="panel"><div class="section-title"><div><span class="eyebrow">Quotation Items</span><h2>Line Items</h2></div><a class="button button-quiet" href="/quotation-preview?id=${encodeURIComponent(quote._id)}" target="_blank" rel="noopener noreferrer"><i data-lucide="eye"></i>Full-screen Preview</a></div><div class="detail-lines">${lineItems}</div><div class="summary-total"><span>Grand Total</span><strong>${formatMoney(quote.totals.grand_total, "EUR")}</strong></div>${revisionMarkup}<section class="panel"><div class="section-title"><div><span class="eyebrow">Communication History</span><h2>Delivery Timeline</h2></div><span class="count-badge">${communication.length} events</span></div>${communication.length ? `<div class="timeline-list">${communication.map((item) => `<div class="timeline-item"><i data-lucide="${item.channel === "email" ? "mail" : item.channel === "whatsapp" ? "message-circle" : "file-text"}"></i><div><strong>${escapeHtml(String(item.action ?? item.status ?? item.channel ?? "Activity"))}</strong><small>${escapeHtml(String(item.recipient ?? item.provider_id ?? "Internal record"))}</small></div></div>`).join("")}</div>` : '<p class="muted">No delivery events recorded yet.</p>'}</section></div>`;
+    body.querySelectorAll<HTMLButtonElement>("[data-quotation-version-pdf]").forEach((button) => button.addEventListener("click", () => {
+      const versionId = button.dataset.quotationVersionPdf;
+      if (!versionId) return;
+      openPdfViewer({ title: `Quotation V${button.dataset.version ?? ""}`, subtitle: `${quote.quotation_number} · immutable version`, filename: `${quote.quotation_number}-V${button.dataset.version ?? ""}.pdf`, path: `/quotations/${encodeURIComponent(quotationId)}/history/${encodeURIComponent(versionId)}/pdf` });
+    }));
   } catch (error) { body.innerHTML = `<div class="notice error"><i data-lucide="circle-alert"></i><div><strong>Quotation unavailable</strong><p>${escapeHtml(error instanceof Error ? error.message : "Please try again")}</p></div></div>`; }
   refreshIcons(page); return page;
 }

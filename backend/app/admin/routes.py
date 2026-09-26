@@ -9,7 +9,7 @@ import re
 import secrets
 from typing import Any
 
-from flask import Blueprint, current_app, request, session
+from flask import Blueprint, current_app, request, session, Response
 from werkzeug.security import generate_password_hash
 
 from app.api.responses import failure, success
@@ -41,7 +41,7 @@ from app.services.business_logic import (
 )
 from app.devices.service import APPROVED, DENIED, PENDING, REVOKED, safe_device, _append_history, _history_entry, notify_reinstatement, notify_device_decision, notify_device_revocation, _notify_superadmins, _create_login_approval
 from app.account.signature import SignatureValidationError, save_signature
-from app.account.photo import save_photo
+from app.account.photo import read_photo, save_photo
 from app.account.profile_sync import profile_asset_state, synchronize_profile_asset, workdrive_public_status
 from app.services.workdrive import WorkDriveError, FAILED as WORKDRIVE_FAILED, PENDING as WORKDRIVE_PENDING, SYNCED as WORKDRIVE_SYNCED
 
@@ -950,6 +950,8 @@ def list_users():
         manager = store.find_one("users", {"_id": row.get("manager_id")}) if row.get("manager_id") else None
         row["manager_id"] = manager.get("_id") if manager else None
         row["manager"] = {"_id": manager.get("_id"), "name": manager.get("name"), "email": manager.get("email")} if manager else None
+        if row.get("photo_path"):
+            row["profile_photo_url"] = f"/admin/users/{row.get('_id')}/profile/photo/file?v={str(row.get('photo_updated_at') or 'current')}"
         row["managed_user_count"] = store.count("users", {"manager_id": row.get("_id"), "active": {"$ne": False}}) if str(row.get("role_id") or "") in MANAGER_ROLE_IDS else 0
         global_access = can_view_all_customers({**row, "permissions": role.get("permissions", [])})
         assigned_ids = list(dict.fromkeys(assigned_by_user.get(str(row.get("_id")), [])))
@@ -972,6 +974,22 @@ def list_users():
             row["incentive_rates"] = configured
             row["incentive_categories"] = incentive_categories
     return success({"items": rows, "total": total, "manager_options": manager_rows})
+
+
+@bp.get("/admin/users/<user_id>/profile/photo/file")
+@permission_required("users.view")
+def admin_user_profile_photo_file(user_id: str):
+    user = current_app.extensions["store"].find_one("users", {"_id": user_id})
+    if not user:
+        return failure("User not found", status=404)
+    loaded = read_photo(user, current_app.config["UPLOAD_DIRECTORY"])
+    if not loaded:
+        return failure("Profile photo is not configured", status=404, error="PHOTO_NOT_CONFIGURED")
+    metadata, data = loaded
+    response = Response(data, mimetype=metadata["mime_type"])
+    response.headers["Cache-Control"] = "private, max-age=60"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @bp.get("/admin/users/<user_id>/devices")
@@ -2522,13 +2540,23 @@ def workdrive_status():
             state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
             states[asset][state] = states[asset].get(state, 0) + 1
     statuses = [state for values in states.values() for state, count in values.items() for _ in range(count)]
+    account_email = integration.get("account_email")
+    identity_verified = bool(account_email)
+    if not account_email and integration.get("status") == "connected" and service.configured():
+        try:
+            diagnostic = service.diagnose_access()
+            account_email = diagnostic.get("authenticated_account_email")
+            identity_verified = bool(account_email)
+        except WorkDriveError:
+            account_email = None
     return success({
         "status": "connected" if integration.get("status") == "connected" else "not_connected",
         "connected": integration.get("status") == "connected",
         "enabled": bool(current_app.config.get("ZOHO_WORKDRIVE_ENABLED")),
         "configured": service.configured(),
         "configuration_error": configuration_issue[0] if configuration_issue else None,
-        "account_email": integration.get("account_email"),
+        "account_email": account_email,
+        "account_identity_verified": identity_verified,
         "connected_at": integration.get("connected_at"),
         "last_tested_at": integration.get("last_tested_at"),
         "last_test_status": integration.get("last_test_status"),
@@ -2627,6 +2655,145 @@ def workdrive_diagnostic():
             str(exc), status=503, error=exc.code, error_code=exc.code,
             stage=exc.stage, diagnostic_id=exc.diagnostic_id,
         )
+
+
+@bp.get("/admin/workdrive/quotation-archive-diagnostic/<quotation_id>/<version_id>")
+@permission_required("settings.manage")
+def workdrive_quotation_archive_diagnostic(quotation_id: str, version_id: str):
+    """Read-only validation of the two persisted quotation archive trees."""
+    store = current_app.extensions["store"]
+    quotation = store.find_one("quotations", {"_id": quotation_id})
+    version = store.find_one("quotation_versions", {"_id": version_id, "quotation_id": quotation_id})
+    if not quotation or not version:
+        return failure("Quotation version not found", status=404)
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    customer = store.find_one("customers", {"_id": customer_id}) if customer_id else None
+    owner_id = quotation.get("created_by_user_id") or quotation.get("user_id") or quotation.get("salesperson_id")
+    owner = store.find_one("users", {"_id": owner_id}) if owner_id else None
+    mappings, _ = store.list("workdrive_document_versions", {"document_id": quotation_id}, limit=100, sort="updated_at", direction=-1)
+    company_quote_folder = next((str(row.get("workdrive_customer_folder_id") or "").strip() for row in mappings
+                                 if str(row.get("workdrive_customer_folder_id") or "").strip()), "")
+    user_quote_folder = str(version.get("workdrive_user_document_folder_id") or version.get("workdrive_folder_id") or "").strip()
+    if not user_quote_folder:
+        user_quote_folder = next((str(row.get("workdrive_user_document_folder_id") or row.get("workdrive_folder_id") or "").strip()
+                                  for row in mappings if str(row.get("workdrive_user_document_folder_id") or row.get("workdrive_folder_id") or "").strip()), "")
+    resources = [
+        {"label": "configured_root", "resource_id": str(current_app.config.get("ZOHO_WORKDRIVE_ROOT_FOLDER_ID") or "")},
+        {"label": "companies_root", "resource_id": str(current_app.config.get("ZOHO_WORKDRIVE_COMPANIES_ROOT_FOLDER_ID") or "")},
+        {"label": "company_folder", "resource_id": str((customer or {}).get("workdrive_company_folder_id") or ""),
+         "expected_parent_id": str(current_app.config.get("ZOHO_WORKDRIVE_COMPANIES_ROOT_FOLDER_ID") or "")},
+        {"label": "company_quotations_folder", "resource_id": str((customer or {}).get("workdrive_company_quotations_folder_id") or ""),
+         "expected_parent_id": str((customer or {}).get("workdrive_company_folder_id") or "")},
+        {"label": "company_quote_folder", "resource_id": company_quote_folder,
+         "expected_parent_id": str((customer or {}).get("workdrive_company_quotations_folder_id") or "")},
+        {"label": "user_quotes_folder", "resource_id": str((owner or {}).get("workdrive_quotes_folder_id") or "")},
+        {"label": "user_quote_folder", "resource_id": user_quote_folder,
+         "expected_parent_id": str((owner or {}).get("workdrive_quotes_folder_id") or "")},
+    ]
+    try:
+        result = current_app.extensions["workdrive"].diagnose_resource_access(resources)
+        result["folder_discovery"] = {
+            "company": current_app.extensions["workdrive"].diagnose_child_folder(
+                str((customer or {}).get("workdrive_company_quotations_folder_id") or ""),
+                str(quotation.get("quotation_number") or ""),
+            ),
+            "user": current_app.extensions["workdrive"].diagnose_child_folder(
+                str((owner or {}).get("workdrive_quotes_folder_id") or ""),
+                str(quotation.get("quotation_number") or ""),
+            ),
+        }
+        result["persisted_folder_ids"] = {
+            "company_quote_folder_id": company_quote_folder or None,
+            "user_quote_folder_id": user_quote_folder or None,
+        }
+    except WorkDriveError as exc:
+        current_app.logger.warning(
+            "workdrive_quotation_archive_diagnostic result=ERROR quotation_id=%s version_id=%s error_code=%s http_status=%s provider_code=%s endpoint_host=%s endpoint_path=%s diagnostic_id=%s",
+            quotation_id, version_id, exc.code, exc.http_status, exc.provider_code,
+            exc.endpoint_host, exc.endpoint_path, exc.diagnostic_id,
+        )
+        return failure("WorkDrive resource diagnostic could not be started", status=503,
+                       error=exc.code, diagnostic_id=exc.diagnostic_id)
+    return success(result, "WorkDrive quotation archive resource diagnostic")
+
+
+@bp.post("/admin/workdrive/quotation-archive-mapping-repair/<quotation_id>/<version_id>")
+@permission_required("settings.manage")
+def repair_quotation_archive_mappings(quotation_id: str, version_id: str):
+    """Repair two verified quote-folder mappings; never archives or creates resources."""
+    payload = request.get_json(silent=True) or {}
+    company_folder_id = str(payload.get("company_quote_folder_id") or "").strip()
+    user_folder_id = str(payload.get("user_quote_folder_id") or "").strip()
+    if not company_folder_id or not user_folder_id:
+        return failure("Both verified quote folder IDs are required", status=400)
+
+    store = current_app.extensions["store"]
+    quotation = store.find_one("quotations", {"_id": quotation_id})
+    version = store.find_one("quotation_versions", {"_id": version_id, "quotation_id": quotation_id})
+    if not quotation or not version:
+        return failure("Quotation version not found", status=404)
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    customer = store.find_one("customers", {"_id": customer_id}) if customer_id else None
+    owner_id = quotation.get("created_by_user_id") or quotation.get("user_id") or quotation.get("salesperson_id")
+    owner = store.find_one("users", {"_id": owner_id}) if owner_id else None
+    company_parent_id = str((customer or {}).get("workdrive_company_quotations_folder_id") or "").strip()
+    user_parent_id = str((owner or {}).get("workdrive_quotes_folder_id") or "").strip()
+    quotation_number = str(quotation.get("quotation_number") or "").strip()
+    if not customer or not owner or not company_parent_id or not user_parent_id or not quotation_number:
+        return failure("The existing quotation archive parent mappings are incomplete", status=409)
+
+    try:
+        diagnostic = current_app.extensions["workdrive"].diagnose_resource_access([
+            {"label": "company_quote_folder", "resource_id": company_folder_id,
+             "expected_parent_id": company_parent_id},
+            {"label": "user_quote_folder", "resource_id": user_folder_id,
+             "expected_parent_id": user_parent_id},
+        ])
+    except WorkDriveError as exc:
+        current_app.logger.warning(
+            "workdrive_quotation_mapping_repair result=VALIDATION_ERROR quotation_id=%s version_id=%s error_code=%s http_status=%s provider_code=%s diagnostic_id=%s",
+            quotation_id, version_id, exc.code, exc.http_status, exc.provider_code, exc.diagnostic_id,
+        )
+        return failure("WorkDrive folder validation could not be started", status=503,
+                       error=exc.code, diagnostic_id=exc.diagnostic_id)
+
+    folders = {str(item.get("label") or ""): item for item in diagnostic.get("resources", [])}
+    invalid = [label for label in ("company_quote_folder", "user_quote_folder") if not (
+        folders.get(label, {}).get("status") == "accessible"
+        and folders[label].get("id_matches") is True
+        and folders[label].get("parent_matches") is True
+        and folders[label].get("name") == quotation_number
+        and folders[label].get("is_folder") is True
+    )]
+    if invalid:
+        return failure("Verified WorkDrive folders did not match the expected quotation hierarchy", status=409,
+                       error="WORKDRIVE_FOLDER_VALIDATION_FAILED",
+                       data={"invalid_destinations": invalid, "resources": list(folders.values())})
+
+    mappings, _ = store.list("workdrive_document_versions", {"document_id": quotation_id}, limit=100)
+    mapping_changes = {
+        "workdrive_customer_folder_id": company_folder_id,
+        "workdrive_user_document_folder_id": user_folder_id,
+        # Compatibility field used by historical user-archive rows.
+        "workdrive_folder_id": user_folder_id,
+    }
+    updated_mapping_ids = []
+    for mapping in mappings:
+        if store.update_one("workdrive_document_versions", {"_id": mapping["_id"], "document_id": quotation_id}, mapping_changes):
+            updated_mapping_ids.append(str(mapping["_id"]))
+    version_changes = {**mapping_changes, "workdrive_customer_folder_id": company_folder_id}
+    store.update_one("quotation_versions", {"_id": version_id, "quotation_id": quotation_id}, version_changes)
+    audit("workdrive.quotation_archive_mappings_repaired", "quotation", quotation_id, {
+        "version_id": version_id, "quotation_number": quotation_number,
+        "mapping_rows_updated": len(updated_mapping_ids),
+        "company_quote_folder_id": company_folder_id, "user_quote_folder_id": user_folder_id,
+    })
+    return success({
+        "quotation_id": quotation_id, "version_id": version_id,
+        "quotation_number": quotation_number, "mapping_rows_updated": len(updated_mapping_ids),
+        "updated_mapping_ids": updated_mapping_ids,
+        "resources": list(folders.values()),
+    }, "Verified quotation archive folder mappings updated")
 @bp.post("/admin/workdrive/resync-user/<user_id>")
 @superadmin_required
 def resync_workdrive_user(user_id: str):
@@ -2639,7 +2806,7 @@ def resync_workdrive_user(user_id: str):
         return failure("WorkDrive synchronization is disabled", status=409, error="WORKDRIVE_DISABLED")
     results = {}
     for asset in ("photo", "signature"):
-        if user.get(f"{asset}_path"):
+        if user.get(f"{asset}_path") or user.get(f"{asset}_workdrive_resource_id"):
             user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
             results[asset] = workdrive_public_status(user, asset, service)
         else:
@@ -2657,17 +2824,19 @@ def resync_workdrive_all():
     store = current_app.extensions["store"]
     users, _ = store.list("users", {}, limit=5000)
     report = {"users": len(users), "assets": 0, "synced": 0, "failed": 0, "skipped": 0,
-              "skipped_no_local_asset": 0, "stale_missing_local": 0}
+              "skipped_no_local_asset": 0, "stale_missing_local": 0, "skipped_reasons": {}}
     for user in users:
         for asset in ("photo", "signature"):
             state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
             if state == "NO_LOCAL_ASSET":
                 report["skipped"] += 1
                 report["skipped_no_local_asset"] += 1
+                report["skipped_reasons"][f"{user.get('_id')}:{asset}"] = state
                 continue
             if state == "MISSING_LOCAL":
                 report["stale_missing_local"] += 1
-                continue
+            if state == "REMOTE_ONLY":
+                report["stale_missing_local"] += 1
             report["assets"] += 1
             user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])
             if workdrive_public_status(user, asset, service) == "SYNCED":
@@ -2687,16 +2856,21 @@ def resync_workdrive_failed():
     store = current_app.extensions["store"]
     users, _ = store.list("users", {}, limit=5000)
     report = {"assets": 0, "synced": 0, "failed": 0, "skipped": 0,
-              "skipped_no_local_asset": 0, "stale_missing_local": 0}
+              "skipped_no_local_asset": 0, "stale_missing_local": 0, "skipped_reasons": {}}
     for user in users:
         for asset in ("photo", "signature"):
             state = profile_asset_state(user, asset, current_app.config["UPLOAD_DIRECTORY"], service)
-            if state in {"NO_LOCAL_ASSET", "MISSING_LOCAL"} or user.get(f"{asset}_workdrive_sync_status") != WORKDRIVE_FAILED:
+            if state in {"NO_LOCAL_ASSET", "MISSING_LOCAL"} and not user.get(f"{asset}_workdrive_resource_id"):
                 report["skipped"] += 1
                 if state == "NO_LOCAL_ASSET":
                     report["skipped_no_local_asset"] += 1
                 elif state == "MISSING_LOCAL":
                     report["stale_missing_local"] += 1
+                report["skipped_reasons"][f"{user.get('_id')}:{asset}"] = state
+                continue
+            if user.get(f"{asset}_workdrive_sync_status") != WORKDRIVE_FAILED and state != "REMOTE_ONLY":
+                report["skipped"] += 1
+                report["skipped_reasons"][f"{user.get('_id')}:{asset}"] = "NOT_FAILED"
                 continue
             report["assets"] += 1
             user = synchronize_profile_asset(store, service, user, asset, current_app.config["UPLOAD_DIRECTORY"])

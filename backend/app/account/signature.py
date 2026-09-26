@@ -156,6 +156,29 @@ def save_signature(user_id: str, upload_directory: str | os.PathLike[str], uploa
     }
 
 
+def restore_signature(user_id: str, upload_directory: str | os.PathLike[str], data: bytes,
+                      filename: str, mimetype: str) -> dict[str, Any]:
+    """Persist a validated WorkDrive-restored signature without changing its bytes."""
+    mimetype = str(mimetype or "").lower()
+    width, height = _validate_image(data, mimetype)
+    extension = ALLOWED_SIGNATURES[mimetype]
+    safe_id = "".join(char for char in str(user_id) if char.isalnum() or char in "-_") or "user"
+    directory = _signature_dir(upload_directory)
+    target = directory / f"{safe_id}{extension}"
+    for previous in directory.glob(f"{safe_id}.*"):
+        if previous != target:
+            previous.unlink(missing_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_bytes(data)
+    temporary.replace(target)
+    return {
+        "signature_path": str(target.relative_to(Path(upload_directory).resolve())),
+        "signature_filename": Path(filename or target.name).name,
+        "signature_mime_type": mimetype, "signature_size": len(data),
+        "signature_width": width, "signature_height": height,
+    }
+
+
 def remove_signature(user: dict[str, Any], upload_directory: str | os.PathLike[str]) -> bool:
     path = signature_path(user, upload_directory)
     if not path:

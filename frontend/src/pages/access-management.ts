@@ -5,8 +5,18 @@ import { pageScaffold, statusBadge } from "../components/page";
 import { toast } from "../components/toast";
 import { appStore } from "../state/store";
 import { emptyState, escapeHtml, formatDate, skeleton } from "../utils/dom";
+import { userAvatar } from "../components/user-avatar";
 
 type Row = Record<string, unknown>;
+
+function prependAvatar(cell: HTMLElement | null, user: Row | undefined): void {
+  if (!cell || !user) return;
+  const identity = document.createElement("span");
+  identity.className = "identity-with-avatar";
+  identity.innerHTML = `${userAvatar(user, "small")}<span>${cell.innerHTML}</span>`;
+  cell.replaceChildren(identity);
+}
+
 
 const permissionCategoryLabels: Record<string, string> = {
   audit_logs: "Audit / Activity", bank_details: "Bank Details", calculator: "Calculator", cart: "Cart",
@@ -131,6 +141,7 @@ export async function customerAssignmentsPage(): Promise<HTMLElement> {
     const requestedUser = new URLSearchParams(location.search).get("user_id");
     const managers = users.items.filter((user) => ["manager", "manager_sales_admin"].includes(String(user.role_id)));
     body.innerHTML = users.items.length ? `<div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Assigned customers</th><th>Status</th><th>Actions</th></tr></thead><tbody>${users.items.map((user) => { const assigned = (user.assigned_customer_ids as unknown[] | undefined)?.map(String) ?? []; return `<tr class="${requestedUser === String(user._id) ? "is-highlighted" : ""}"><td><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Row | undefined)?.name ?? "—"))}</td><td>${user.customer_access_global === true ? "All customers" : `${assigned.length} assigned`}</td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="button button-secondary" type="button" data-edit-assignment="${escapeHtml(String(user._id))}">Manage assignments</button></td></tr>`; }).join("")}</tbody></table></div>` : emptyState("building-2", "No users", "Create a user before assigning customers.");
+    [...body.querySelectorAll<HTMLTableCellElement>("tbody tr td:first-child")].forEach((cell, index) => prependAvatar(cell, users.items[index] as Row));
     body.querySelectorAll<HTMLButtonElement>("[data-edit-assignment]").forEach((button) => button.addEventListener("click", () => {
       const user = users.items.find((item) => String(item._id) === String(button.dataset.editAssignment));
       if (!user) return;
@@ -180,6 +191,7 @@ export async function legacyActivityPage(): Promise<HTMLElement> {
   try {
     const result = await adminApi.auditLogs();
     body.innerHTML = result.items.length ? `<div class="data-table panel"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Resource</th><th>Result</th><th>IP</th></tr></thead><tbody>${result.items.map((event) => { const metadata = (event.metadata as Row | undefined) ?? {}; return `<tr><td>${formatDate(String(event.created_at ?? event.timestamp ?? ""))}</td><td>${escapeHtml(String(event.actor_name ?? event.user_name ?? event.actor_id ?? event.user_id ?? "System"))}</td><td><strong>${escapeHtml(String(event.action ?? "Event"))}</strong></td><td>${escapeHtml(String(event.entity_type ?? event.resource_type ?? "—"))}${event.entity_id ? `<small>${escapeHtml(String(event.entity_id))}</small>` : ""}</td><td>${statusBadge(String(event.status ?? event.result ?? "RECORDED"))}</td><td>${escapeHtml(maskedIp(event.ip_address ?? metadata.ip_address))}</td></tr>`; }).join("")}</tbody></table></div>` : emptyState("history", "No activity events", "Audited actions will appear here.");
+    [...body.querySelectorAll<HTMLTableCellElement>("tbody tr td:nth-child(2)")].forEach((cell, index) => prependAvatar(cell, result.items[index] as Row));
   } catch (error) { body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Activity unavailable")}</div>`; }
   refreshIcons(page);
   return page;
@@ -204,6 +216,7 @@ export async function legacyLoginDevicesPage(): Promise<HTMLElement> {
       try { if (action === "approve") await adminApi.approveDevice(userId, deviceId); else if (action === "reject") await adminApi.rejectDevice(userId, deviceId, reason); else await adminApi.revokeDevice(userId, deviceId, reason); toast("Device status updated"); window.dispatchEvent(new CustomEvent("moneda:navigate", { detail: location.pathname + location.search })); }
       catch (error) { toast(error instanceof Error ? error.message : "Device could not be updated", "error"); button.disabled = false; }
     }));
+    [...body.querySelectorAll<HTMLTableCellElement>("tbody tr td:first-child")].forEach((cell, index) => prependAvatar(cell, rows[index]?.user as Row));
   } catch (error) { body.innerHTML = `<div class="notice error">${escapeHtml(error instanceof Error ? error.message : "Login devices unavailable")}</div>`; }
   refreshIcons(page);
   return page;
@@ -257,6 +270,7 @@ export async function activityPage(): Promise<HTMLElement> {
         return `<tr><td>${formatDate(String(event.created_at ?? event.timestamp ?? ""))}</td><td><strong>${escapeHtml(String(actor?.name ?? event.actor_name ?? event.user_name ?? event.user_id ?? "System"))}</strong>${actor?.email ? `<small>${escapeHtml(String(actor.email))}</small>` : ""}</td><td><strong class="audit-action">${escapeHtml(String(event.action ?? "Event"))}</strong></td><td><strong>${escapeHtml(String(event.entity_type ?? event.resource_type ?? "Resource"))}</strong>${id ? `<small title="${escapeHtml(id)}">ID: ${escapeHtml(id.length > 18 ? `${id.slice(0, 18)}…` : id)}</small>` : ""}</td><td>${statusBadge(String(event.status ?? event.result ?? "RECORDED"))}</td><td>${escapeHtml(maskedIp(event.ip_address ?? metadata.ip_address))}</td></tr>`;
       }).join("");
       body.innerHTML = `<section class="panel activity-filter-panel"><form class="activity-filters"><label>User<select name="user"><option value="">All users</option>${users.items.map((user) => `<option value="${escapeHtml(String(user._id))}" ${filters.user === String(user._id) ? "selected" : ""}>${escapeHtml(String(user.name ?? user.email))}</option>`).join("")}</select></label><label>Action<select name="action"><option value="">All actions</option>${options(actions, filters.action)}</select></label><label>Resource<select name="resource"><option value="">All resources</option>${options(resources, filters.resource)}</select></label><label>Result<select name="result"><option value="">All results</option><option value="RECORDED" ${filters.result === "RECORDED" ? "selected" : ""}>Recorded</option></select></label><label>From date<input type="date" name="from_date" value="${escapeHtml(filters.from_date ?? "")}"></label><label>To date<input type="date" name="to_date" value="${escapeHtml(filters.to_date ?? "")}"></label><label class="activity-search">Search<input type="search" name="search" placeholder="Action, resource, ID or IP" value="${escapeHtml(filters.search ?? "")}"></label><label>Per page<select name="page_size"><option value="25" ${filters.page_size === "25" ? "selected" : ""}>25</option><option value="50" ${filters.page_size === "50" ? "selected" : ""}>50</option><option value="100" ${filters.page_size === "100" ? "selected" : ""}>100</option></select></label><div class="activity-filter-actions"><button class="button button-secondary" type="reset">Reset</button><button class="button button-primary" type="submit">Apply filters</button></div></form></section><div class="activity-result-count">${result.total} audit event${result.total === 1 ? "" : "s"}</div>${rows ? `<div class="data-table panel activity-table"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Resource</th><th>Result</th><th>IP</th></tr></thead><tbody>${rows}</tbody></table></div><div class="activity-pagination"></div>` : emptyState("history", "No audit events found", "Try changing your filters or search criteria.")}`;
+      [...body.querySelectorAll<HTMLTableCellElement>(".activity-table tbody tr td:nth-child(2)")].forEach((cell, index) => { const event = result.items[index] as Row | undefined; const actor = users.items.find((user) => String(user._id) === String(event?.user_id ?? event?.actor_id)); prependAvatar(cell, actor as Row | undefined); });
       const pagination = body.querySelector<HTMLElement>(".activity-pagination");
       if (pagination) {
         const pageSize = Number(result.page_size || filters.page_size || 25);
@@ -307,6 +321,7 @@ export async function loginDevicesPage(): Promise<HTMLElement> {
       return `<tr><td><strong>${escapeHtml(String(user.name ?? user.email))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></td><td><strong>${escapeHtml(deviceClient(device))}</strong>${current ? '<small class="current-device-label">This device</small>' : ""}</td><td>${escapeHtml(String(device.os_name ?? device.operating_system ?? "Unknown OS"))}${device.os_version ? `<small>${escapeHtml(String(device.os_version))}</small>` : ""}</td><td><span class="device-location"><i data-lucide="map-pin"></i>${escapeHtml(deviceLocation(device))}</span></td><td>${formatDate(String(device.registered_at ?? device.first_seen_at ?? ""))}</td><td><strong>${escapeHtml(relativeActivity(device.last_seen_at ?? device.last_activity_at ?? device.last_login_at))}</strong><small>${formatDate(String(device.last_seen_at ?? device.last_activity_at ?? device.last_login_at ?? ""))}</small></td><td><span class="presence-badge presence-${escapeHtml(presence)}"><i></i>${escapeHtml(presenceLabel)}</span></td><td><span class="trust-badge trust-${escapeHtml(trust)}">${escapeHtml(trustLabel)}</span></td><td><div class="table-actions">${actions}</div></td></tr>`;
     }).join("");
     body.innerHTML = `<div class="device-summary-grid">${summaries.map(([label, value, icon, copy, kind]) => `<article class="panel device-summary-card is-${kind}"><i data-lucide="${icon}"></i><div><span>${label}</span><strong>${value}</strong><small>${copy}</small></div></article>`).join("")}</div>${tableRows ? `<div class="data-table panel login-device-table"><table><thead><tr><th>User</th><th>Device / Browser</th><th>Platform</th><th>Location</th><th>First seen</th><th>Last seen</th><th>Presence</th><th>Trust status</th><th>Actions</th></tr></thead><tbody>${tableRows}</tbody></table></div>` : emptyState("monitor-smartphone", "No login devices", "Trusted and pending login devices will appear here.")}`;
+    [...body.querySelectorAll<HTMLTableCellElement>(".login-device-table tbody tr td:first-child")].forEach((cell, index) => prependAvatar(cell, rows[index]?.user as Row | undefined));
     body.querySelectorAll<HTMLButtonElement>("[data-device-action]").forEach((button) => button.addEventListener("click", async () => {
       const action = String(button.dataset.deviceAction); const userId = String(button.dataset.user); const deviceId = String(button.dataset.device);
       let reason = action === "approve" ? "" : action === "delete" ? "Revoked device cleanup" : window.prompt(`${action === "reject" ? "Rejection" : "Revocation"} reason:`, "")?.trim() ?? "";

@@ -535,6 +535,9 @@ class MongoStore:
                 self.db.orders.drop_index(name)
         self._create_index("orders", "quotation_id", unique=True, sparse=True)
         self._create_index("order_documents", "order_id", unique=True)
+        self._create_index("workdrive_document_versions", [
+            ("document_id", ASCENDING), ("version_id", ASCENDING),
+        ], unique=True)
         self._create_index("order_confirmations", "source_order_id", unique=True, sparse=True)
         self._create_index("payments", [("order_id", ASCENDING), ("status", ASCENDING)])
         self._create_index("user_bank_details", "user_id", unique=True)

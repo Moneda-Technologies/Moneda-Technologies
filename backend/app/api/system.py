@@ -6,7 +6,7 @@ from flask import Blueprint, Response, current_app, request, session
 from pydantic import ValidationError
 
 from app.api.responses import failure, success
-from app.account.signature import SignatureValidationError, read_signature, remove_signature, save_signature, signature_metadata
+from app.account.signature import SignatureValidationError, read_signature, remove_signature, save_signature, signature_metadata, signature_path
 from app.account.photo import photo_metadata, read_photo, remove_photo, save_photo
 from app.account.profile_sync import synchronize_profile_asset, workdrive_fields, workdrive_public_status
 from app.auth.policy import SIGNUP_EMAIL_DOMAIN_MESSAGE, is_allowed_signup_email, normalize_signup_email
@@ -79,6 +79,8 @@ def me():
         # to a pending device; never include customers or cached app data.
         return success({"user": {"_id": user_record.get("_id"), "name": user_record.get("name"), "role_id": user_record.get("role_id")}, "customers": [], "companies": [], "customer_companies": [], "device_access": device_status, "application_access": False})
     user = {**user_record}
+    if user_record.get("photo_path"):
+        user["profile_photo_url"] = f"/profile/photo/file?v={str(user_record.get('photo_updated_at') or 'current')}"
     for field in ("password_hash", "pending_email_verification_id", "pending_email_verification_token_hash", "pending_email_verification_attempts", "signature_path", "photo_path",
                   "workdrive_user_folder_id", "workdrive_profile_folder_id", "signature_workdrive_resource_id", "signature_workdrive_path", "photo_workdrive_resource_id", "photo_workdrive_path"):
         user.pop(field, None)
@@ -156,6 +158,13 @@ def update_profile():
 def get_profile_signature():
     user = current_user() or {}
     metadata = signature_metadata(user)
+    local_file = signature_path(user, current_app.config["UPLOAD_DIRECTORY"])
+    if metadata and not local_file:
+        user = synchronize_profile_asset(current_app.extensions["store"], current_app.extensions["workdrive"], user, "signature", current_app.config["UPLOAD_DIRECTORY"])
+        metadata = signature_metadata(user)
+        local_file = signature_path(user, current_app.config["UPLOAD_DIRECTORY"])
+        if metadata and not local_file:
+            return success({"configured": False, "metadata": None, "url": None, "stale_metadata": True, "workdrive_sync_status": "MISSING_LOCAL"})
     return success({
         "configured": bool(metadata),
         "metadata": metadata,
@@ -173,6 +182,7 @@ def get_profile_signature_file():
     metadata, data = loaded
     response = Response(data, mimetype=metadata["mime_type"])
     response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 

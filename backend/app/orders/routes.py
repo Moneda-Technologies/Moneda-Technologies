@@ -18,6 +18,8 @@ from app.finance.service import IncentiveConfigurationError, cancel_unpaid_incen
 from app.middleware.access import current_user, customer_access_ids_for_user, customer_record, enforce_customer, login_required, permission_required, superadmin_required
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.services.document_archive import archive_version, build_revision_diff
+from app.services.version_signature import capture_signature_snapshot, public_signature_snapshot
 from app.services.business_logic import customer_client_type, manager_snapshot
 from app.quotations.pdf import render_order_confirmation_pdf
 from app.pricing.engine import PricingUnavailable
@@ -28,6 +30,45 @@ STATUSES = {"Pending", "Confirmed", "Processing", "Completed", "Cancelled"}
 _CONVERSION_LOCK = Lock()
 PAYMENT_TERMS = ("Advance", "POD", "30 Days from receipt", "60 Days", "Custom")
 WORKING_STATES = {"WORKING", "AWAITING_PAYMENT", "PAYMENT_RECORDED", "PAYMENT_CONFIRMED", "READY_FOR_DISPATCH", "READY_TO_FINALIZE", "CANCELLED"}
+
+
+def _record_order_version(store, order: dict, *, actor: dict, reason: str,
+                          previous_version_id: str | None = None) -> dict:
+    version = int(order.get("version") or 1)
+    version_id = f"{order.get('_id')}-v{version:02d}"
+    if store.find_one("order_versions", {"_id": version_id}):
+        return store.find_one("order_versions", {"_id": version_id}) or {}
+    snapshot = deepcopy({key: value for key, value in order.items() if key not in {"pdf", "preview_pdf_base64", "signature_snapshot"}})
+    signature_snapshot = (
+        deepcopy(order.get("signature_snapshot"))
+        if "signature_snapshot" in order
+        else capture_signature_snapshot(actor, current_app.config["UPLOAD_DIRECTORY"])
+    )
+    try:
+        pdf = render_order_confirmation_pdf({**order, "signature_snapshot": signature_snapshot})
+    except RuntimeError:
+        pdf = None
+    previous = store.find_one("order_versions", {"_id": previous_version_id}) if previous_version_id else None
+    changes, automatic_reason = build_revision_diff((previous or {}).get("snapshot"), snapshot)
+    return store.insert_one("order_versions", {
+        "_id": version_id, "order_id": order.get("_id"), "order_number": order.get("order_number"),
+        "version": version, "created_at": utcnow(), "created_by": actor.get("_id"),
+        "created_by_snapshot": {key: actor.get(key) for key in ("_id", "name", "email") if actor.get(key)},
+        "reason": reason if reason and reason != "Working order revised" else automatic_reason,
+        "change_set": changes, "snapshot": snapshot, "signature_snapshot": signature_snapshot, "pdf": pdf,
+        "filename": f"{order.get('order_number')}-V{version:02d}.pdf", "previous_version_id": previous_version_id,
+        "status": "CURRENT",
+    })
+
+
+def _archive_order_version(store, order: dict, version: dict) -> dict:
+    owner_id = order.get("source_quotation_owner_id") or order.get("created_by_user_id") or order.get("salesperson_id")
+    owner = store.find_one("users", {"_id": owner_id}) or current_user() or {}
+    customer_id = order.get("customer_id") or order.get("customer_company_id") or order.get("company_id")
+    customer = store.find_one("customers", {"_id": customer_id}) if customer_id else None
+    return archive_version(store, current_app.extensions["workdrive"], collection="order_versions", version=version,
+                           owner_user=owner, document_type="order", document_id=str(order["_id"]),
+                           document_number=str(order.get("order_number") or order["_id"]), customer=customer)
 
 
 def _working_order_lines(order: dict) -> list[dict]:
@@ -579,7 +620,9 @@ def _ensure_order_pdf(order: dict) -> tuple[bytes, dict]:
             return content, order
         except (ValueError, TypeError):
             pass
-    content = render_order_confirmation_pdf(order)
+    version_number = int(order.get("version") or 1)
+    version = store.find_one("order_versions", {"_id": f"{order_id}-v{version_number:02d}"})
+    content = version.get("pdf") if version and version.get("pdf") else render_order_confirmation_pdf(order)
     now = utcnow()
     filename = f"{order.get('order_number') or order_id}.pdf"
     document = {
@@ -1171,6 +1214,8 @@ def convert_quotation(quotation_id: str):
             order = store.update_one("orders", {"_id": persisted.get("_id")}, {
                 "conversion_state": "COMPLETE", "conversion_completed_at": utcnow(),
             }) or persisted
+            version = _record_order_version(store, order, actor=user, reason="Original working order")
+            _archive_order_version(store, order, version)
         except Exception as exc:
             # Mongo's unique/index errors (or a concurrent worker) should be
             # reported as an idempotent conversion conflict, never retried as
@@ -1291,6 +1336,9 @@ def finalize_order(order_id: str):
             "customer_credit": rollup["customer_credit"], "pending_payment_count": rollup["pending_payment_count"],
             "history": [*order.get("history", []), {"status": "FINAL", "at": now, "by": (current_user() or {}).get("_id")}],
         })
+        final_record["signature_snapshot"] = capture_signature_snapshot(
+            current_user() or {}, current_app.config["UPLOAD_DIRECTORY"]
+        )
         try:
             validate_incentive_configuration(store, final_record, salesperson)
         except IncentiveConfigurationError as exc:
@@ -1317,6 +1365,10 @@ def finalize_order(order_id: str):
             "incentive_amount": incentive.get("gross_incentive_amount", 0),
         }) or final
         try:
+            final_version = _record_order_version(
+                store, final, actor=current_user() or {}, reason="Final order confirmation"
+            )
+            _archive_order_version(store, final, final_version)
             _, final = _ensure_order_pdf(final)
         except Exception:
             current_app.logger.exception("final Order Confirmation PDF generation failed order_id=%s", order_id)
@@ -1405,6 +1457,8 @@ def update_order(order_id: str):
             )
     if not changes:
         return failure("No editable order fields were supplied", status=422, error="NO_ORDER_CHANGES")
+    previous_version = int(order.get("version") or 1)
+    changes["version"] = previous_version + 1
     history = list(order.get("history", []))
     if "status" in changes:
         history.append({"status": changes["status"], "at": utcnow(), "by": (current_user() or {}).get("_id")})
@@ -1414,6 +1468,11 @@ def update_order(order_id: str):
     if updated:
         from app.finance.service import sync_order_payment_state
         updated = sync_order_payment_state(store, order_id) or updated
+        version = _record_order_version(
+            store, updated, actor=current_user() or {}, reason="Working order revised",
+            previous_version_id=f"{order_id}-v{previous_version:02d}",
+        )
+        _archive_order_version(store, updated, version)
     audit("order.update", "order", order_id, {"fields": sorted(changes)})
     return success(updated, "Order updated")
 
@@ -1471,9 +1530,42 @@ def _replace_working_order_items(store, order: dict, submitted: object) -> dict:
         "at": now, "by": (current_user() or {}).get("_id"), "before_total": before,
         "after_total": float((updated.get("totals") or {}).get("grand_total") or 0),
     }]
-    return store.update_one("orders", {"_id": order.get("_id")}, {
+    revised = store.update_one("orders", {"_id": order.get("_id")}, {
         "history": history, "version": int(order.get("version") or 1) + 1,
-    }) or {**updated, "history": history}
+    }) or {**updated, "history": history, "version": int(order.get("version") or 1) + 1}
+    version = _record_order_version(store, revised, actor=current_user() or {}, reason="Working order revised", previous_version_id=f"{order.get('_id')}-v{int(order.get('version') or 1):02d}")
+    _archive_order_version(store, revised, version)
+    return revised
+
+
+@bp.get("/orders/<order_id>/history")
+@permission_required("orders.view")
+def order_history(order_id: str):
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    if not order or not _can_access_order_record(order, current_user() or {}):
+        return failure("Order not found", status=404)
+    versions, _ = store.list("order_versions", {"order_id": order_id}, limit=1000, sort="version", direction=-1)
+    items = []
+    for version in versions:
+        item = {key: value for key, value in version.items() if key not in {"pdf", "signature_snapshot"}}
+        item["signature_snapshot"] = public_signature_snapshot(version.get("signature_snapshot"))
+        items.append(item)
+    return success({"order_id": order_id, "order_number": order.get("order_number"), "current_version": order.get("version") or 1,
+                    "items": items})
+
+
+@bp.get("/orders/<order_id>/history/<version_id>/pdf")
+@permission_required("orders.view")
+def order_history_pdf(order_id: str, version_id: str):
+    store = current_app.extensions["store"]
+    order = store.find_one("orders", {"_id": order_id})
+    version = store.find_one("order_versions", {"_id": version_id, "order_id": order_id})
+    if not order or not version or not _can_access_order_record(order, current_user() or {}):
+        return failure("Order version not found", status=404)
+    if not version.get("pdf"):
+        return failure("Historical PDF snapshot is unavailable", status=404, error="PDF_SNAPSHOT_MISSING")
+    return Response(version["pdf"], mimetype="application/pdf", headers={"Content-Disposition": f'inline; filename="{version.get("filename") or version_id}.pdf"'})
 
 
 @bp.post("/orders/<order_id>/items")

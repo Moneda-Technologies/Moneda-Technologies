@@ -71,7 +71,7 @@ async function enterWorkspace(forceCompanySelection = false, existingSession?: A
     : authEntry
       ? "/dashboard"
       : location.pathname;
-  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/order-confirmations", "/banking", "/payments", "/incentives", "/incentives/overview", "/incentives/rules", "/incentives/payouts", "/incentives/customer", "/credit-notes", "/customer-credits", "/reminders", "/reports", "/users", "/settings", "/profile", "/my-bank-details", "/account/price-lists"].includes(destination.split("?", 1)[0]) || destination.startsWith("/settings/");
+  const customerOptional = ["/crm", "/dashboard", "/customers", "/quotations", "/orders", "/order-confirmations", "/banking", "/payments", "/incentives", "/incentives/overview", "/incentives/rules", "/incentives/payouts", "/incentives/customer", "/credit-notes", "/customer-credits", "/reminders", "/reports", "/users", "/settings", "/profile", "/my-bank-details", "/account/price-lists"].includes(destination.split("?", 1)[0]) || destination.startsWith("/customers/") || destination.startsWith("/settings/");
   await navigate(!customer && !customerOptional && destination !== "/customer-selection" && destination !== "/company-selection" ? "/customer-selection" : destination, authEntry || forceCompanySelection);
 }
 

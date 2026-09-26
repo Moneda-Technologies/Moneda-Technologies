@@ -41,8 +41,9 @@
 .sidebar-foot { background: var(--primary-black); border-top: 1px solid #2d2d2d; display: flex; flex: 0 0 auto; flex-direction: column; gap: 8px; min-height: 70px; padding: 9px 15px 12px; }
 .sidebar-foot > .sidebar-toggle { align-self: flex-end; color: #8e8e8e; flex: 0 0 34px; height: 34px; width: 34px; }
 .sidebar-account { align-items: center; display: flex; gap: 9px; min-width: 0; }
-.avatar { align-items: center; background: #efc509; border-radius: 8px; color: #141414; display: flex; flex: 0 0 auto; font-size: .68rem; font-weight: 850; height: 34px; justify-content: center; width: 34px; }
-.avatar-button { border: 0; }
+.avatar { align-items: center; background: #2a2a2a; border: 1px solid #555; border-radius: 50%; color: #fff; display: flex; flex: 0 0 auto; font-size: .68rem; font-weight: 850; height: 34px; justify-content: center; overflow: hidden; width: 34px; }
+.avatar-button { background: transparent; border: 0; border-radius: 50%; padding: 0; }
+.avatar-button .user-avatar { border: 1px solid #555; }
 .user-menu-control { position: relative; }
 .user-menu { background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 34px rgba(20,20,18,.16); padding: 7px; position: absolute; right: 0; top: calc(100% + 9px); width: 240px; z-index: 90; }
 .user-menu[hidden] { display: none; }

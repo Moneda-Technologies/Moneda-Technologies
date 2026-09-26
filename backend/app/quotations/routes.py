@@ -21,6 +21,8 @@ from app.quotations.pdf import render_quotation_pdf
 from app.quotations.integrity import EDITABLE_STATUSES, has_historical_reference, live_working_order, repair_stale_conversions, quotation_status
 from app.repositories.store import utcnow
 from app.services.audit import audit
+from app.services.document_archive import archive_version, build_revision_diff
+from app.services.version_signature import capture_signature_snapshot, public_signature_snapshot
 
 
 bp = Blueprint("quotations", __name__, url_prefix="/api/quotations")
@@ -36,6 +38,61 @@ def _edit_signature(value: dict) -> tuple:
         int(value.get("requested_quantity", value.get("quantity", 1)) or 1),
         float(value.get("requested_discount_percent", value.get("discount_percent", 0)) or 0),
     )
+
+
+def _quotation_snapshot(quotation: dict) -> dict:
+    return deepcopy({key: value for key, value in quotation.items() if key not in {"preview_pdf_base64"}})
+
+
+def _record_quotation_version(store, quotation: dict, *, actor: dict, reason: str,
+                              previous_version_id: str | None = None) -> dict:
+    """Persist an immutable structured snapshot and PDF for one quote version."""
+    version = int(quotation.get("version") or 1)
+    version_id = f"{quotation.get('_id')}-v{version:02d}"
+    existing = store.find_one("quotation_versions", {"_id": version_id})
+    if existing:
+        return existing
+    signature_snapshot = capture_signature_snapshot(actor, current_app.config["UPLOAD_DIRECTORY"])
+    try:
+        pdf = render_quotation_pdf({**quotation, "signature_snapshot": signature_snapshot})
+    except RuntimeError:
+        pdf = None
+    previous = store.find_one("quotation_versions", {"_id": previous_version_id}) if previous_version_id else None
+    changes, automatic_reason = build_revision_diff((previous or {}).get("snapshot"), _quotation_snapshot(quotation))
+    row = {
+        "_id": version_id, "quotation_id": quotation.get("_id"),
+        "quotation_number": quotation.get("quotation_number"), "version": version,
+        "created_at": utcnow(), "created_by": actor.get("_id"),
+        "created_by_snapshot": {key: actor.get(key) for key in ("_id", "name", "email") if actor.get(key)},
+        "reason": reason if reason and reason != "Quotation revised" else automatic_reason,
+        "change_set": changes, "snapshot": _quotation_snapshot(quotation),
+        "signature_snapshot": signature_snapshot,
+        "pdf": pdf, "filename": f"{quotation.get('quotation_number')}-V{version:02d}.pdf",
+        "previous_version_id": previous_version_id,
+        "status": "CURRENT" if version == int(quotation.get("version") or 1) else "HISTORICAL",
+    }
+    return store.insert_one("quotation_versions", row)
+
+
+def _archive_quotation_version(store, quotation: dict, version: dict) -> dict:
+    owner_id = quotation.get("created_by_user_id") or quotation.get("user_id") or quotation.get("salesperson_id")
+    owner = store.find_one("users", {"_id": owner_id}) or current_user() or {}
+    customer_id = quotation.get("customer_id") or quotation.get("customer_company_id") or quotation.get("company_id")
+    customer = store.find_one("customers", {"_id": customer_id}) if customer_id else None
+    return archive_version(store, current_app.extensions["workdrive"], collection="quotation_versions", version=version,
+                           owner_user=owner, document_type="quote", document_id=str(quotation["_id"]),
+                           document_number=str(quotation.get("quotation_number") or quotation["_id"]), customer=customer)
+
+
+def _saved_quotation_pdf(store, quotation: dict) -> bytes:
+    """Return the current immutable PDF; render only pre-versioning legacy rows."""
+    version = int(quotation.get("version") or 1)
+    stored = store.find_one("quotation_versions", {"_id": f"{quotation.get('_id')}-v{version:02d}"})
+    if stored:
+        if not stored.get("pdf"):
+            raise RuntimeError("The saved quotation PDF is unavailable")
+        return stored["pdf"]
+    return render_quotation_pdf(quotation)
 
 
 def _replace_quotation_items(store, quotation: dict, submitted: object, submitted_transport: object = None) -> dict:
@@ -65,11 +122,6 @@ def _replace_quotation_items(store, quotation: dict, submitted: object, submitte
     totals = calculate_quote_totals(lines, transport_cost)
     now = utcnow()
     version = int(quotation.get("version") or 1)
-    store.insert_one("quotation_versions", {
-        "quotation_id": quotation.get("_id"), "quotation_number": quotation.get("quotation_number"),
-        "version": version, "lines": deepcopy(existing_lines), "totals": deepcopy(quotation.get("totals") or {}),
-        "created_at": now, "created_by": (current_user() or {}).get("_id"),
-    })
     return store.update_one("quotations", {"_id": quotation.get("_id")}, {
         "lines": lines, "totals": totals, "eur_totals": totals, "version": version + 1,
         "history": [*(quotation.get("history") or []), {"status": quotation.get("status"), "event": "ITEMS_UPDATED", "at": now, "by": (current_user() or {}).get("_id")}],
@@ -220,7 +272,9 @@ def create_quotation():
         return failure(str(exc), status=404)
     except (ValueError, TypeError) as exc:
         return failure(str(exc), status=422)
-    audit("quotation.create", "quotation", str(row["_id"]), {"number": row["quotation_number"]})
+    version = _record_quotation_version(current_app.extensions["store"], row, actor=user, reason="Original quotation")
+    _archive_quotation_version(current_app.extensions["store"], row, version)
+    audit("quotation.create", "quotation", str(row["_id"]), {"number": row["quotation_number"], "version": 1})
     store = current_app.extensions["store"]
     if payload.get("create_lead"):
         lead = store.insert_one("leads", {
@@ -322,8 +376,82 @@ def update_quotation(quotation_id: str):
     if not changes and not items_changed:
         return failure("No editable quotation fields were supplied", status=422, error="NO_QUOTATION_CHANGES")
     updated = store.update_one("quotations", {"_id": quotation_id}, changes) if changes else row
+    updated = updated or {**row, **changes}
+    if items_changed or changes:
+        previous_version = int(row.get("version") or 1)
+        if not items_changed:
+            updated = store.update_one("quotations", {"_id": quotation_id}, {"version": previous_version + 1}) or {**updated, "version": previous_version + 1}
+        version = _record_quotation_version(store, updated, actor=current_user() or {}, reason=str(payload.get("change_note") or "Quotation revised"), previous_version_id=f"{quotation_id}-v{previous_version:02d}")
+        _archive_quotation_version(store, updated, version)
     audit("quotation.update", "quotation", quotation_id, {"fields": sorted(changes)})
     return success(updated, "Quotation updated")
+
+
+@bp.post("/<quotation_id>/versions/<version_id>/workdrive/retry")
+@permission_required("quotations.edit")
+def retry_quotation_version_workdrive_archive(quotation_id: str, version_id: str):
+    """Retry both destinations from the immutable, already-rendered PDF."""
+    store = current_app.extensions["store"]
+    quotation = store.find_one("quotations", {"_id": quotation_id})
+    if not quotation:
+        return failure("Quotation not found", status=404)
+    if not _accessible(quotation):
+        return failure("Customer company access denied", status=403)
+    version = store.find_one("quotation_versions", {"_id": version_id, "quotation_id": quotation_id})
+    if not version:
+        return failure("Quotation version not found", status=404)
+    result = _archive_quotation_version(store, quotation, version)
+    outcome = {
+        "version_id": version_id,
+        "workdrive_sync_status": result.get("workdrive_sync_status"),
+        "workdrive_sync_error": result.get("workdrive_sync_error"),
+        "workdrive_folder_id": result.get("workdrive_folder_id"),
+        "workdrive_file_id": result.get("workdrive_file_id"),
+        "workdrive_customer_sync_status": result.get("workdrive_customer_sync_status"),
+        "workdrive_customer_sync_error": result.get("workdrive_customer_sync_error"),
+        "workdrive_customer_folder_id": result.get("workdrive_customer_folder_id"),
+        "workdrive_customer_file_id": result.get("workdrive_customer_file_id"),
+        "workdrive_customer_last_http_status": result.get("workdrive_customer_last_http_status"),
+        "workdrive_customer_last_provider_code": result.get("workdrive_customer_last_provider_code"),
+        "workdrive_customer_last_diagnostic_id": result.get("workdrive_customer_last_diagnostic_id"),
+    }
+    if outcome["workdrive_sync_status"] != "SYNCED":
+        audit("quotation.workdrive_retry", "quotation", quotation_id, {"version_id": version_id, "result": "incomplete"})
+        return failure("WorkDrive archive remains incomplete", status=503,
+                       error="WORKDRIVE_ARCHIVE_INCOMPLETE", archive=outcome)
+    audit("quotation.workdrive_retry", "quotation", quotation_id, {"version_id": version_id, "result": "synced"})
+    return success(outcome, "Quotation version archived to WorkDrive")
+
+
+@bp.get("/<quotation_id>/history")
+@permission_required("quotations.view")
+def quotation_history(quotation_id: str):
+    quotation = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    if not quotation:
+        return failure("Quotation not found", status=404)
+    if not _accessible(quotation):
+        return failure("Quotation access denied", status=403)
+    versions, _ = current_app.extensions["store"].list("quotation_versions", {"quotation_id": quotation_id}, limit=1000, sort="version", direction=-1)
+    items = []
+    for version in versions:
+        item = {key: value for key, value in version.items() if key not in {"pdf", "signature_snapshot"}}
+        item["signature_snapshot"] = public_signature_snapshot(version.get("signature_snapshot"))
+        items.append(item)
+    return success({"quotation_id": quotation_id, "quotation_number": quotation.get("quotation_number"), "current_version": quotation.get("version") or 1, "items": items})
+
+
+@bp.get("/<quotation_id>/history/<version_id>/pdf")
+@permission_required("quotations.download")
+def quotation_history_pdf(quotation_id: str, version_id: str):
+    quotation = current_app.extensions["store"].find_one("quotations", {"_id": quotation_id})
+    version = current_app.extensions["store"].find_one("quotation_versions", {"_id": version_id, "quotation_id": quotation_id})
+    if not quotation or not version:
+        return failure("Quotation version not found", status=404)
+    if not _accessible(quotation):
+        return failure("Quotation access denied", status=403)
+    if not version.get("pdf"):
+        return failure("Historical PDF snapshot is unavailable", status=404, error="PDF_SNAPSHOT_MISSING")
+    return Response(version["pdf"], mimetype="application/pdf", headers={"Content-Disposition": f'inline; filename="{version.get("filename") or version_id}.pdf"'})
 
 
 @bp.get("/<quotation_id>/pdf")
@@ -335,7 +463,7 @@ def quotation_pdf(quotation_id: str):
     if not _accessible(row):
         return failure("Customer company access denied", status=403)
     try:
-        content = render_quotation_pdf(row)
+        content = _saved_quotation_pdf(current_app.extensions["store"], row)
     except RuntimeError as exc:
         current_app.logger.error("quotation_pdf_generation quotation_id=%s renderer=unavailable format=pdf result=FAIL", quotation_id)
         return failure(str(exc), status=503, error="PDF_GENERATION_FAILED")
@@ -401,7 +529,7 @@ def send_quotation(quotation_id: str):
 
     try:
         try:
-            pdf = render_quotation_pdf(row)
+            pdf = _saved_quotation_pdf(store, row)
         except Exception:
             diagnostic_id = email_diagnostic_id()
             current_app.logger.exception("quotation email failed diagnostic_id=%s stage=pdf_generation", diagnostic_id)

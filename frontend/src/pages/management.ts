@@ -2,6 +2,7 @@ import { adminApi, authApi, companyApi, customerCompanyApi, financeApi, profileA
 import { ApiError, apiEndpoint } from "../api/client";
 import { logout } from "../auth/logout";
 import { refreshIcons } from "../components/icons";
+import { userAvatar } from "../components/user-avatar";
 import { enhancePasswordFields } from "../components/password";
 import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
@@ -314,6 +315,7 @@ export async function usersPage(): Promise<HTMLElement> {
     availableManagers = (users.manager_options ?? users.items.filter((user) => ["manager", "manager_sales_admin"].includes(String(user.role_id))));
     const customers = customerResult.items as unknown as Record<string, unknown>[];
      body.innerHTML = `<div class="access-summary panel"><div><span class="eyebrow">Access model</span><h2>${users.total} users across ${roles.total} roles</h2><p>Server-side permissions remain authoritative for every customer-scoped action.</p></div><div class="role-pills">${roles.items.map((role) => `<span>${escapeHtml(String(role.display_name))}<b>${(role.permissions as unknown[])?.length ?? 0}</b></span>`).join("")}</div></div><div class="data-table panel"><table><thead><tr><th>User</th><th>Role</th><th>Manager</th><th>Customers</th><th>Devices</th><th>Status</th><th></th></tr></thead><tbody>${users.items.map((user) => { const global = user.customer_access_global === true; const count = Number(user.customer_access_count ?? ((user.assigned_customer_ids as unknown[]) ?? []).length); const devices = (user.device_counts as { total?: number; approved?: number; pending?: number; denied?: number; revoked?: number } | undefined) ?? {}; const total = Number(devices.total ?? 0); const deviceLabel = `${total} device${total === 1 ? "" : "s"} · ${Number(devices.approved ?? 0)} approved${Number(devices.pending ?? 0) ? ` · ${Number(devices.pending)} pending` : ""}${Number(devices.revoked ?? 0) ? ` · ${Number(devices.revoked)} revoked` : ""}${Number(devices.denied ?? 0) ? ` · ${Number(devices.denied)} denied` : ""}`; return `<tr><td><div class="table-identity"><span>${escapeHtml(String(user.name ?? "User").replace(/\s+/g, "").slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small></p></div></td><td>${escapeHtml(String(user.role_id ?? "user"))}</td><td>${escapeHtml(String((user.manager as Record<string, unknown> | null)?.name ?? "Unassigned"))}</td><td><button class="text-button customer-count-button" data-id="${escapeHtml(String(user._id))}">${global ? "All customers" : `${count} assigned`}</button></td><td><button class="text-button device-count-button" data-id="${escapeHtml(String(user._id))}">${deviceLabel}</button></td><td>${statusBadge(user.active === false ? "Inactive" : "Active")}</td><td><button class="icon-button edit-user" data-id="${escapeHtml(String(user._id))}" aria-label="Edit user" title="Edit user"><i data-lucide="pencil"></i></button></td></tr>`; }).join("")}</tbody></table></div>`;
+    body.querySelectorAll<HTMLElement>(".table-identity").forEach((cell, index) => { const user = users.items[index]; if (!user) return; cell.replaceChildren(); cell.append(Object.assign(document.createElement("span"), { innerHTML: userAvatar(user, "small") })); const text = document.createElement("p"); text.innerHTML = `<strong>${escapeHtml(String(user.name ?? "User"))}</strong><small>${escapeHtml(String(user.email ?? ""))}</small>`; cell.append(text); });
     const accessSummary = body.querySelector<HTMLElement>(".access-summary");
     if (accessSummary) accessSummary.innerHTML = `<div><span class="eyebrow">User accounts</span><h2>${users.total} active and inactive users</h2><p>Create users here. Role policy, customer scope, activity and trusted devices each have their own workspace.</p></div>`;
     body.querySelectorAll<HTMLButtonElement>(".customer-count-button").forEach((button) => {
@@ -442,7 +444,7 @@ export async function settingsPage(section: "brand" | "currencies" | "communicat
         const assetSummary = (label: string, key: "photo" | "signature") => { const counts = status.sync.by_asset?.[key] ?? {}; const synced = Number(counts.SYNCED ?? 0); const pending = Number(counts.PENDING ?? 0); const failed = Number(counts.FAILED ?? 0); const missing = Number(counts.MISSING_LOCAL ?? 0); const parts = []; if (synced) parts.push(`${synced} synced`); if (pending) parts.push(`${pending} pending`); if (failed) parts.push(`${failed} failed`); if (missing) parts.push(`${missing} missing locally`); return `<div><span>${label}</span><strong>${escapeHtml(parts.join(" · ") || "No local assets")}</strong></div>`; };
         const connectButton = status.connected ? '<button class="button button-secondary" type="button" data-workdrive-connect>Reconnect</button>' : '<button class="button button-primary" type="button" data-workdrive-connect>Connect Zoho WorkDrive</button>';
         const adminActions = appStore.can("settings.manage") ? `<button class="button button-quiet" type="button" data-workdrive-test>Test Connection</button><button class="button button-quiet" type="button" data-workdrive-resync-failed>Resync Failed Files</button>${appStore.state.user?.role_id === "superadmin" ? '<button class="button button-secondary" type="button" data-workdrive-resync-all>Resync All User Assets</button>' : ""}` : "";
-        workdriveMarkup = `<section class="panel settings-panel workdrive-integration" data-settings-section="workdrive"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><p>Manage profile photo and email signature synchronization with Zoho WorkDrive.</p><div class="integration-status"><span class="status-dot ${status.connected ? "is-live" : status.last_test_status === "error" ? "is-error" : ""}"></span><strong>${escapeHtml(state)}</strong><small>Profile assets remain available locally if WorkDrive is unavailable.</small></div><dl class="integration-details"><div><dt>Zoho account</dt><dd>${escapeHtml(status.account_email || "Not available")}</dd></div><div><dt>Connected</dt><dd>${escapeHtml(status.connected_at ? formatDate(status.connected_at) : "—")}</dd></div><div><dt>Root folder</dt><dd>${escapeHtml(status.root_folder_name || (status.root_folder_configured ? "Configured" : "Not configured"))}</dd></div><div><dt>Last test</dt><dd>${escapeHtml(status.last_tested_at ? formatDate(status.last_tested_at) : "Not tested")}</dd></div></dl><section class="workdrive-tree"><strong>Storage structure</strong><code>Moneda / Users / &lt;User&gt; / Profile / Photo | Signature</code></section><section class="workdrive-sync"><h3>Synchronization</h3>${assetSummary("Profile Photos", "photo")}${assetSummary("Email Signatures", "signature")}<div class="workdrive-sync-summary"><span>Status <b>${escapeHtml(syncState)}</b></span><span>Pending ${status.sync.pending}</span><span>Missing locally ${status.sync.missing_local}</span><span>Failed ${status.sync.failed}</span></div></section><div class="settings-actions">${connectButton}${adminActions}</div><div data-workdrive-result></div></section>`;
+        workdriveMarkup = `<section class="panel settings-panel workdrive-integration" data-settings-section="workdrive"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><p>Manage profile photo and email signature synchronization with Zoho WorkDrive.</p><div class="integration-status"><span class="status-dot ${status.connected ? "is-live" : status.last_test_status === "error" ? "is-error" : ""}"></span><strong>${escapeHtml(state)}</strong><small>Profile assets remain available locally if WorkDrive is unavailable.</small></div><dl class="integration-details"><div><dt>Zoho account</dt><dd>${escapeHtml(status.account_email || "Identity unavailable")}</dd></div><div><dt>Connected</dt><dd>${escapeHtml(status.connected_at ? formatDate(status.connected_at) : "—")}</dd></div><div><dt>Root folder</dt><dd>${escapeHtml(status.root_folder_name || (status.root_folder_configured ? "Configured" : "Not configured"))}</dd></div><div><dt>Last test</dt><dd>${escapeHtml(status.last_tested_at ? formatDate(status.last_tested_at) : "Not tested")}</dd></div></dl><section class="workdrive-tree"><strong>Storage structure</strong><code>Moneda / Users / &lt;User&gt; / Profile / Photo | Signature</code></section><section class="workdrive-sync"><h3>Synchronization</h3>${assetSummary("Profile Photos", "photo")}${assetSummary("Email Signatures", "signature")}<div class="workdrive-sync-summary"><span>Status <b>${escapeHtml(syncState)}</b></span><span>Pending ${status.sync.pending}</span><span>Missing locally ${status.sync.missing_local}</span><span>Failed ${status.sync.failed}</span></div></section><div class="settings-actions">${connectButton}${adminActions}</div><div data-workdrive-result></div></section>`;
         page.dataset.workdriveConnected = String(status.connected);
       } catch (_error) {
         workdriveMarkup = '<section class="panel settings-panel workdrive-integration" data-settings-section="workdrive"><span class="eyebrow">Zoho WorkDrive</span><h2>Zoho WorkDrive</h2><div class="notice error compact"><i data-lucide="circle-alert"></i><div><strong>Connection error</strong><p>WorkDrive status could not be loaded.</p></div></div></section>';
@@ -631,19 +633,23 @@ export async function profilePage(): Promise<HTMLElement> {
     const photoControls = photoPanel.querySelector<HTMLElement>("[data-photo-controls]");
     const photoStatus = photoPanel.querySelector<HTMLElement>("[data-photo-status]");
     const photoError = photoPanel.querySelector<HTMLElement>("[data-photo-error]");
+    if (photoPreview) { photoPreview.setAttribute("role", "button"); photoPreview.setAttribute("tabindex", "0"); }
+    if (photoSelect) photoSelect.hidden = true;
     const profileAvatar = body.querySelector<HTMLElement>(".profile-card .profile-avatar");
     const renderPhoto = (metadata: { updated_at?: string | null; filename?: string } | null, syncStatus = "") => {
       if (!photoPreview || !photoControls) return;
       if (!metadata) {
         photoPreview.innerHTML = '<i data-lucide="user-round"></i><span>No profile photo configured</span>';
         photoControls.hidden = true;
+        photoPreview.classList.remove("has-image"); photoPreview.removeAttribute("aria-label"); photoDropzone?.removeAttribute("hidden");
         if (photoStatus) photoStatus.textContent = "";
         refreshIcons(photoPreview);
         return;
       }
       const cacheKey = encodeURIComponent(String(metadata.updated_at ?? Date.now()));
       const source = apiEndpoint(`/profile/photo/file?v=${cacheKey}`);
-      photoPreview.innerHTML = `<img src="${source}" alt="Current profile photo"><span>${escapeHtml(String(metadata.filename ?? "Profile photo"))}</span>`;
+      photoPreview.innerHTML = `<img src="${source}" alt="Current profile photo"><span class="profile-photo-change-overlay"><i data-lucide="upload"></i><strong class="replacement-label">Change photo</strong><strong class="drop-label">Drop to replace</strong></span>`;
+      photoPreview.classList.add("has-image"); photoPreview.setAttribute("aria-label", "Change profile photo"); photoDropzone?.setAttribute("hidden", "true");
       if (profileAvatar) profileAvatar.innerHTML = `<img src="${source}" alt="${escapeHtml(user.name)}">`;
       photoControls.hidden = false;
       if (photoStatus) photoStatus.innerHTML = `<i data-lucide="circle-check"></i><span>Photo saved${syncStatus === "SYNCED" ? " · WorkDrive synced" : syncStatus === "FAILED" ? " · WorkDrive sync pending retry" : ""}</span>`;
@@ -669,10 +675,15 @@ export async function profilePage(): Promise<HTMLElement> {
     };
     photoSelect?.addEventListener("click", () => photoInput?.click());
     photoDropzone?.addEventListener("click", () => photoInput?.click());
+    photoPreview?.addEventListener("click", () => { if (photoPreview.classList.contains("has-image")) photoInput?.click(); });
+    photoPreview?.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && photoPreview.classList.contains("has-image")) { event.preventDefault(); photoInput?.click(); } });
     photoDropzone?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); photoInput?.click(); } });
     photoDropzone?.addEventListener("dragover", (event) => { event.preventDefault(); photoDropzone.classList.add("is-dragging"); });
     photoDropzone?.addEventListener("dragleave", () => photoDropzone.classList.remove("is-dragging"));
     photoDropzone?.addEventListener("drop", (event) => { event.preventDefault(); photoDropzone.classList.remove("is-dragging"); void uploadPhoto(event.dataTransfer?.files?.[0]); });
+    photoPreview?.addEventListener("dragover", (event) => { if (!photoPreview.classList.contains("has-image")) return; event.preventDefault(); photoPreview.classList.add("is-dragging"); });
+    photoPreview?.addEventListener("dragleave", () => photoPreview.classList.remove("is-dragging"));
+    photoPreview?.addEventListener("drop", (event) => { if (!photoPreview.classList.contains("has-image")) return; event.preventDefault(); photoPreview.classList.remove("is-dragging"); void uploadPhoto(event.dataTransfer?.files?.[0]); });
     photoInput?.addEventListener("change", () => { void uploadPhoto(photoInput.files?.[0]); });
     photoRemove?.addEventListener("click", async () => {
       photoRemove.disabled = true;
@@ -683,7 +694,7 @@ export async function profilePage(): Promise<HTMLElement> {
 
     const signaturePanel = document.createElement("section");
     signaturePanel.className = "panel settings-panel profile-signature-panel";
-    signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-main"><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><div class="profile-signature-dropzone" data-signature-dropzone role="button" tabindex="0" aria-controls="profile-signature-file"><i data-lucide="cloud-upload"></i><strong>Drag &amp; drop your signature here</strong><span>or click to browse</span><small>Supported formats: PNG, JPG, WEBP<br>Maximum size: 2 MB</small></div></div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-actionbar"><span class="profile-signature-status" data-signature-status aria-live="polite"></span><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select><i data-lucide="upload"></i>Replace image</button><button type="button" class="button button-danger" data-signature-remove><i data-lucide="trash-2"></i>Remove image</button></div></div></div><small class="field-error" data-signature-error></small>';
+    signaturePanel.innerHTML = '<span class="eyebrow">Account</span><h2>Email signature</h2><p class="muted">Add an image signature for official emails sent from your account.</p><div class="profile-signature-editor" data-signature-editor><div class="profile-signature-main"><div class="profile-signature-preview" data-signature-preview aria-live="polite">Loading signature...</div><div class="profile-signature-dropzone" data-signature-dropzone role="button" tabindex="0" aria-controls="profile-signature-file" hidden><i data-lucide="cloud-upload"></i><strong>Drag &amp; drop your signature here</strong><span>or click to browse</span><small>Supported formats: PNG, JPG, WEBP<br>Maximum size: 2 MB</small></div></div><input id="profile-signature-file" name="signature_file" type="file" accept="image/png,image/jpeg,image/webp" hidden><div class="profile-signature-actionbar"><span class="profile-signature-status" data-signature-status aria-live="polite"></span><div class="profile-signature-controls" data-signature-controls hidden><button type="button" class="button button-secondary" data-signature-select><i data-lucide="upload"></i>Replace image</button><button type="button" class="button button-danger" data-signature-remove><i data-lucide="trash-2"></i>Remove image</button></div></div></div><small class="field-error" data-signature-error></small>';
     profileStack.insertBefore(signaturePanel, photoPanel.nextElementSibling);
     const preview = signaturePanel.querySelector<HTMLElement>("[data-signature-preview]");
     const signatureInput = signaturePanel.querySelector<HTMLInputElement>("#profile-signature-file");
@@ -693,26 +704,45 @@ export async function profilePage(): Promise<HTMLElement> {
     const controls = signaturePanel.querySelector<HTMLElement>("[data-signature-controls]");
     const dropzone = signaturePanel.querySelector<HTMLElement>("[data-signature-dropzone]");
     const status = signaturePanel.querySelector<HTMLElement>("[data-signature-status]");
-    const renderSignature = (metadata: { updated_at?: string | null; filename?: string; size?: number } | null, syncStatus = "") => {
+    if (preview) { preview.setAttribute("role", "button"); preview.setAttribute("tabindex", "0"); }
+    if (selectButton) selectButton.hidden = true;
+    let signatureMetadata: { updated_at?: string | null; filename?: string; size?: number } | null = null;
+    let signatureRequestId = 0;
+    const renderSignature = (metadata: { updated_at?: string | null; filename?: string; size?: number } | null, syncStatus = "", phase: "loaded" | "empty" | "error" = "loaded") => {
       if (!preview || !removeButton || !controls) return;
       if (!metadata) {
+        if (signatureMetadata && phase === "error") {
+          if (status) status.textContent = "Unable to refresh signature; showing the saved image.";
+          return;
+        }
+        signatureMetadata = null;
         preview.innerHTML = '';
         preview.hidden = true;
-        controls.hidden = true;
+        controls.hidden = true; dropzone?.removeAttribute("hidden"); preview.classList.remove("has-image"); preview.removeAttribute("aria-label");
         if (status) status.textContent = '';
         refreshIcons(preview);
         return;
       }
+      signatureMetadata = metadata;
       preview.hidden = false;
       const cacheKey = encodeURIComponent(String(metadata.updated_at ?? Date.now()));
-      const size = Number(metadata.size ?? 0);
-      const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : '';
-      preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span>${escapeHtml(String(metadata.filename ?? "Signature image"))}${sizeLabel ? `<small>${sizeLabel}</small>` : ''}</span>`;
+      preview.innerHTML = `<img src="${apiEndpoint(`/profile/signature/file?v=${cacheKey}`)}" alt="Configured email signature"><span class="profile-signature-change-overlay"><i data-lucide="upload"></i><strong class="replacement-label">Change signature</strong><strong class="drop-label">Drop to replace</strong></span>`;
+      preview.classList.add("has-image"); preview.setAttribute("aria-label", "Change email signature"); dropzone?.setAttribute("hidden", "true");
       controls.hidden = false;
       if (status) status.innerHTML = `<i data-lucide="circle-check"></i><span>Image saved${syncStatus === "SYNCED" ? " · WorkDrive synced" : syncStatus === "FAILED" ? " · WorkDrive sync pending retry" : ""}</span>`;
       refreshIcons(preview.parentElement ?? preview);
     };
-    void profileApi.signature().then((result) => renderSignature(result.metadata, result.workdrive_sync_status)).catch(() => renderSignature(null));
+    const loadSignature = async () => {
+      const requestId = ++signatureRequestId;
+      try {
+        const result = await profileApi.signature();
+        if (requestId !== signatureRequestId) return;
+        renderSignature(result.metadata, result.workdrive_sync_status, result.metadata ? "loaded" : "empty");
+      } catch {
+        if (requestId === signatureRequestId) renderSignature(signatureMetadata, "", "error");
+      }
+    };
+    void loadSignature();
     const uploadSignature = async (file: File | undefined) => {
       if (!file) { if (signatureError) signatureError.textContent = "Choose a signature image first."; return; }
       if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
@@ -735,15 +765,20 @@ export async function profilePage(): Promise<HTMLElement> {
     };
     selectButton?.addEventListener("click", () => signatureInput?.click());
     dropzone?.addEventListener("click", () => signatureInput?.click());
+    preview?.addEventListener("click", () => { if (preview.classList.contains("has-image")) signatureInput?.click(); });
+    preview?.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && preview.classList.contains("has-image")) { event.preventDefault(); signatureInput?.click(); } });
     dropzone?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); signatureInput?.click(); } });
     dropzone?.addEventListener("dragover", (event) => { event.preventDefault(); dropzone.classList.add("is-dragging"); });
     dropzone?.addEventListener("dragleave", () => dropzone.classList.remove("is-dragging"));
     dropzone?.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("is-dragging"); void uploadSignature(event.dataTransfer?.files?.[0]); });
+    preview?.addEventListener("dragover", (event) => { if (!preview.classList.contains("has-image")) return; event.preventDefault(); preview.classList.add("is-dragging"); });
+    preview?.addEventListener("dragleave", () => preview.classList.remove("is-dragging"));
+    preview?.addEventListener("drop", (event) => { if (!preview.classList.contains("has-image")) return; event.preventDefault(); preview.classList.remove("is-dragging"); void uploadSignature(event.dataTransfer?.files?.[0]); });
     signatureInput?.addEventListener("change", () => { void uploadSignature(signatureInput.files?.[0]); });
     removeButton?.addEventListener("click", async () => {
       removeButton.disabled = true;
       if (signatureError) signatureError.textContent = "";
-      try { await profileApi.removeSignature(); renderSignature(null); if (signatureInput) signatureInput.value = ""; toast("Email signature removed", "info"); }
+      try { await profileApi.removeSignature(); renderSignature(null, "", "empty"); if (signatureInput) signatureInput.value = ""; toast("Email signature removed", "info"); }
       catch (error) { if (signatureError) signatureError.textContent = error instanceof Error ? error.message : "Signature could not be removed"; }
       finally { removeButton.disabled = false; }
     });

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.account.photo import photo_path
-from app.account.signature import signature_path
+from app.account.signature import restore_signature, signature_path
 from app.repositories.store import utcnow
 from app.services.workdrive import FAILED, PENDING, WorkDriveError, WorkDriveService
 
@@ -19,6 +19,8 @@ def profile_asset_state(user: dict[str, Any], asset: str, upload_directory: str 
                         service: WorkDriveService) -> str:
     """Classify an asset using persisted metadata and the physical file."""
     if not user.get(f"{asset}_path"):
+        if asset == "signature" and user.get("signature_workdrive_resource_id"):
+            return "REMOTE_ONLY"
         return "NO_LOCAL_ASSET"
     path = photo_path(user, upload_directory) if asset == "photo" else signature_path(user, upload_directory)
     if not path:
@@ -37,6 +39,19 @@ def synchronize_profile_asset(store: Any, service: WorkDriveService, user: dict[
     prefix = f"{asset}_workdrive_"
     path = photo_path(user, upload_directory) if asset == "photo" else signature_path(user, upload_directory)
     if not path:
+        if asset == "signature" and user.get("signature_workdrive_resource_id"):
+            try:
+                data = service.download_asset(str(user["signature_workdrive_resource_id"]))
+                metadata = restore_signature(
+                    user_id, upload_directory, data,
+                    str(user.get("signature_workdrive_filename") or user.get("signature_filename") or "signature.png"),
+                    str(user.get("signature_mime_type") or "image/png"),
+                )
+                changes = {**metadata, f"{prefix}sync_status": "SYNCED", f"{prefix}sync_error": None, f"{prefix}updated_at": utcnow()}
+                return store.update_one("users", {"_id": user_id}, changes) or {**user, **changes}
+            except (WorkDriveError, ValueError):
+                changes = {f"{prefix}sync_status": FAILED, f"{prefix}sync_error": "REMOTE_RESTORE_FAILED", f"{prefix}updated_at": utcnow()}
+                return store.update_one("users", {"_id": user_id}, changes) or {**user, **changes}
         changes = {
             f"{prefix}sync_status": FAILED,
             f"{prefix}sync_error": "LOCAL_FILE_MISSING",

@@ -1208,7 +1208,7 @@ def test_document_edit_workflow_reprices_server_side_and_keeps_snapshots_isolate
     quotation_snapshot = edited_quote.json["data"]
     assert quotation_snapshot["lines"][0]["requested_quantity"] == 2
     assert quotation_snapshot["version"] == 2
-    assert store.count("quotation_versions", {"quotation_id": quote["_id"]}) == 1
+    assert store.count("quotation_versions", {"quotation_id": quote["_id"]}) == 2
     stored_quote_snapshot = store.find_one("quotations", {"_id": quote["_id"]})
 
     converted = authenticated.post(f"/api/v1/quotations/{quote['_id']}/convert-to-order", json={})
@@ -1312,6 +1312,32 @@ def test_profile_signature_is_validated_stored_and_removed(app, authenticated):
     assert authenticated.get("/api/v1/profile/signature/file").status_code == 200
     assert authenticated.delete("/api/v1/profile/signature").status_code == 200
     assert authenticated.get("/api/v1/profile/signature").json["data"]["configured"] is False
+
+
+def test_profile_signature_missing_local_file_is_reported_as_stale(app, authenticated):
+    store = app.extensions["store"]
+    missing_path = "signatures/missing-user-demo-admin.png"
+    store.update_one("users", {"_id": "user-demo-admin"}, {
+        "signature_path": missing_path,
+        "signature_filename": "missing.png",
+        "signature_mime_type": "image/png",
+        "signature_workdrive_sync_status": "SYNCED",
+    })
+
+    metadata = authenticated.get("/api/v1/profile/signature")
+    assert metadata.status_code == 200
+    assert metadata.json["data"] == {
+        "configured": False,
+        "metadata": None,
+        "url": None,
+        "stale_metadata": True,
+        "workdrive_sync_status": "MISSING_LOCAL",
+    }
+    assert authenticated.get("/api/v1/profile/signature/file").status_code == 404
+
+    stored = store.find_one("users", {"_id": "user-demo-admin"})
+    assert stored["signature_path"] == missing_path
+    assert stored["signature_workdrive_sync_status"] == "SYNCED"
 
 
 def test_quote_conversion_creates_working_order_without_final_document(app, authenticated):

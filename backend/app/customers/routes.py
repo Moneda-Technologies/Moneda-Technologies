@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import logging
+from pathlib import Path
 from uuid import uuid4
 
-from flask import Blueprint, current_app, request
+from flask import Blueprint, current_app, request, Response
 
 from app.api.responses import failure, success
 from app.middleware.access import can_view_all_customers, customer_record, current_user, enforce_customer, permission_required, permission_required_any, permitted_customer_query
@@ -12,9 +14,184 @@ from app.customers.codes import available_customer_code, customer_code
 from app.customers.metadata import normalize_customer_profile, validation_message
 from app.customers.addresses import customer_address_view, customer_shipping_addresses, normalize_address
 from app.services.business_logic import normalize_client_type, customer_account_type, validate_customer_incentive_config
+from app.customers.assets import persist_company_asset, _safe_filename
+from app.services.workdrive import WorkDriveError
 
 
 bp = Blueprint("customers", __name__, url_prefix="/api/customers")
+logger = logging.getLogger(__name__)
+
+
+def _company_asset_access(customer_id: str, mutate: bool = False) -> dict | None:
+    permission = "customers.update" if mutate else "customers.view"
+    user = current_user() or {}
+    if permission not in user.get("permissions", []) and user.get("role_id") != "superadmin":
+        return None
+    if not enforce_customer(customer_id):
+        return None
+    return current_app.extensions["store"].find_one("customers", {"_id": customer_id})
+
+
+@bp.get("/<customer_id>/assets")
+def list_company_assets(customer_id: str):
+    customer = _company_asset_access(customer_id)
+    if not customer:
+        return failure("Customer access denied", status=403)
+    store = current_app.extensions["store"]
+    rows, total = store.list("company_assets", {"customer_id": customer_id, "superseded_at": {"$exists": False}}, limit=500, sort="created_at", direction=-1)
+    # Legacy records can be reachable only through the customer-level asset
+    # reference. Resolve those references without re-uploading or inventing
+    # assets, while still preventing duplicate rows in the response.
+    known = {str(row.get("_id")) for row in rows}
+    for field in ("logo_asset_id", "visiting_card_asset_id"):
+        asset_id = str(customer.get(field) or "").strip()
+        if asset_id and asset_id not in known:
+            legacy = store.find_one("company_assets", {"_id": asset_id, "customer_id": customer_id})
+            if legacy:
+                rows.append(legacy)
+                known.add(asset_id)
+    total = len(rows)
+    for row in rows:
+        row["url"] = f"/customers/{customer_id}/assets/{row['_id']}/file"
+        if row.get("thumbnail_path"):
+            row["thumbnail_url"] = f"/customers/{customer_id}/assets/{row['_id']}/thumbnail"
+        row.pop("storage_path", None)
+    return success({"items": rows, "total": total})
+
+
+@bp.post("/<customer_id>/assets")
+def upload_company_asset(customer_id: str):
+    if not _company_asset_access(customer_id, mutate=True):
+        return failure("Customer access denied", status=403)
+    category = str(request.form.get("category") or "document").strip().lower()
+    if category not in {"logo", "visiting_card", "document"}:
+        return failure("Unsupported company asset category", status=422)
+    upload = request.files.get("file")
+    if not upload:
+        return failure("Choose a company asset", status=422)
+    try:
+        cardholder_name = " ".join(str(request.form.get("cardholder_name") or "").split())
+        if category == "visiting_card" and not cardholder_name:
+            return failure("Cardholder name is required for visiting cards", status=422, error="CARDHOLDER_NAME_REQUIRED")
+        store = current_app.extensions["store"]
+        customer = store.find_one("customers", {"_id": customer_id}) or {}
+        row = persist_company_asset(current_app.config["UPLOAD_DIRECTORY"], customer_id, upload, category, str((current_user() or {}).get("_id") or ""), store, current_app.extensions["workdrive"].enabled())
+        row = store.update_one("company_assets", {"_id": row["_id"]}, {
+            "company_name": str(customer.get("company_name") or customer.get("name") or customer_id).strip(),
+            "company_id": customer_id,
+            "cardholder_name": cardholder_name or None,
+            "workdrive_company_folder_id": customer.get("workdrive_company_folder_id"),
+            "workdrive_company_root_id": customer.get("workdrive_company_root_id"),
+        }) or row
+        store.update_one("customers", {"_id": customer_id}, {f"{category}_asset_id": row["_id"]})
+        if current_app.extensions["workdrive"].enabled():
+            try:
+                sync = current_app.extensions["workdrive"].sync_company_asset(row, current_app.config["UPLOAD_DIRECTORY"])
+                row = store.update_one("company_assets", {"_id": row["_id"]}, {**sync, "updated_at": __import__("app.repositories.store", fromlist=["utcnow"]).utcnow()}) or {**row, **sync}
+                store.update_one("customers", {"_id": customer_id}, {
+                    "workdrive_company_root_id": sync.get("workdrive_company_root_id"),
+                    "workdrive_company_folder_id": sync.get("workdrive_company_folder_id"),
+                    "workdrive_company_name": sync.get("workdrive_company_name"),
+                })
+            except WorkDriveError as exc:
+                row = store.update_one("company_assets", {"_id": row["_id"]}, {"sync_status": "FAILED", "sync_error": exc.code}) or {**row, "sync_status": "FAILED", "sync_error": exc.code}
+        row["url"] = f"/customers/{customer_id}/assets/{row['_id']}/file"
+        row.pop("storage_path", None)
+        return success(row, "Company asset uploaded", 201)
+    except ValueError as exc:
+        return failure(str(exc), status=422, error="INVALID_COMPANY_ASSET")
+
+
+@bp.get("/<customer_id>/assets/<asset_id>/file")
+def download_company_asset(customer_id: str, asset_id: str):
+    if not _company_asset_access(customer_id):
+        return failure("Customer access denied", status=403)
+    row = current_app.extensions["store"].find_one("company_assets", {"_id": asset_id, "customer_id": customer_id})
+    if not row:
+        return failure("Company asset not found", status=404)
+    root = Path(current_app.config["UPLOAD_DIRECTORY"]).resolve()
+    path = (root / str(row.get("storage_path") or "")).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return failure("Company asset not found", status=404)
+    if not path.is_file():
+        return failure("Company asset is unavailable", status=404)
+    response = Response(path.read_bytes(), mimetype=row.get("mime_type") or "application/octet-stream")
+    response.headers["Content-Disposition"] = f"inline; filename=\"{_safe_filename(row.get('filename', 'asset'))}\""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@bp.get("/<customer_id>/assets/<asset_id>/thumbnail")
+def download_company_asset_thumbnail(customer_id: str, asset_id: str):
+    if not _company_asset_access(customer_id):
+        return failure("Customer access denied", status=403)
+    row = current_app.extensions["store"].find_one("company_assets", {"_id": asset_id, "customer_id": customer_id})
+    if not row or not row.get("thumbnail_path"):
+        return failure("Asset thumbnail not found", status=404)
+    root = Path(current_app.config["UPLOAD_DIRECTORY"]).resolve()
+    path = (root / str(row["thumbnail_path"])).resolve()
+    try: path.relative_to(root)
+    except ValueError: return failure("Asset thumbnail not found", status=404)
+    if not path.is_file(): return failure("Asset thumbnail is unavailable", status=404)
+    response = Response(path.read_bytes(), mimetype="image/png")
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@bp.delete("/<customer_id>/assets/<asset_id>")
+def delete_company_asset(customer_id: str, asset_id: str):
+    if not _company_asset_access(customer_id, mutate=True):
+        return failure("Customer access denied", status=403)
+    store = current_app.extensions["store"]
+    row = store.find_one("company_assets", {"_id": asset_id, "customer_id": customer_id})
+    if not row:
+        return failure("Company asset not found", status=404)
+    remote_result = {"remote_deleted": False, "remote_missing": False}
+    resource_id = str(row.get("workdrive_resource_id") or "").strip()
+    if resource_id and not current_app.extensions["workdrive"].enabled():
+        return failure("WorkDrive is unavailable; the remote asset was retained", status=409, error="WORKDRIVE_DISABLED")
+    if resource_id and current_app.extensions["workdrive"].enabled():
+        diagnostic_id = f"company-asset-delete-{uuid4().hex[:12]}"
+        logger.info("company_asset_delete start diagnostic_id=%s customer_id=%s asset_id=%s workdrive_resource_exists=%s workdrive_method=PATCH status=51", diagnostic_id, customer_id, asset_id, True)
+        try:
+            remote_result = current_app.extensions["workdrive"].delete_company_asset(row)
+        except WorkDriveError as exc:
+            logger.exception("company_asset_delete failed diagnostic_id=%s customer_id=%s asset_id=%s workdrive_resource_exists=%s endpoint_host=%s endpoint_method=PATCH provider_http_status=%s provider_error_code=%s provider_body=%s error_code=%s", diagnostic_id, customer_id, asset_id, True, exc.endpoint_host or "unknown", exc.http_status or "unknown", exc.provider_code or "unknown", exc.provider_body or "<none>", exc.code)
+            store.update_one("company_assets", {"_id": asset_id}, {"sync_status": "FAILED", "sync_error": exc.code})
+            return failure("Remote company asset deletion failed; the asset was retained", status=502, error=exc.code)
+        logger.info("company_asset_delete remote_result diagnostic_id=%s customer_id=%s asset_id=%s remote_deleted=%s remote_missing=%s", diagnostic_id, customer_id, asset_id, remote_result["remote_deleted"], remote_result["remote_missing"])
+        if row.get("category") in {"logo", "visiting_card"}:
+            try:
+                current_app.extensions["workdrive"].cleanup_empty_company_asset_folder(row)
+            except WorkDriveError as exc:
+                logger.exception("company_asset_folder_cleanup failed diagnostic_id=%s customer_id=%s asset_id=%s error_code=%s provider_http_status=%s", diagnostic_id, customer_id, asset_id, exc.code, exc.http_status or "unknown")
+                store.update_one("company_assets", {"_id": asset_id}, {"sync_status": "FAILED", "sync_error": exc.code})
+                return failure("Remote asset was removed but its empty-folder cleanup failed; the asset was retained for reconciliation", status=502, error=exc.code)
+    path = (Path(current_app.config["UPLOAD_DIRECTORY"]).resolve() / str(row.get("storage_path") or "")).resolve()
+    root = Path(current_app.config["UPLOAD_DIRECTORY"]).resolve()
+    try:
+        path.relative_to(root)
+        if path.is_file(): path.unlink()
+    except (ValueError, OSError):
+        pass
+    thumbnail = (root / str(row.get("thumbnail_path") or "")).resolve()
+    try:
+        thumbnail.relative_to(root)
+        if thumbnail.is_file(): thumbnail.unlink()
+    except (ValueError, OSError):
+        pass
+    store.delete_one("company_assets", {"_id": asset_id, "customer_id": customer_id})
+    if row.get("category") in {"logo", "visiting_card"}:
+        field = f"{row['category']}_asset_id"
+        customer = store.find_one("customers", {"_id": customer_id}) or {}
+        if str(customer.get(field) or "") == str(asset_id):
+            remaining, _ = store.list("company_assets", {"customer_id": customer_id, "category": row["category"], "superseded_at": {"$exists": False}}, limit=100, sort="created_at", direction=-1)
+            store.update_one("customers", {"_id": customer_id}, {field: remaining[0]["_id"] if remaining else None})
+    return success({"remote_deleted": remote_result["remote_deleted"], "remote_missing": remote_result["remote_missing"]}, "Company asset removed")
 
 FIELDS = {
     "name", "company_name", "contact_name", "email", "phone", "alternate_phone", "legal_name",
@@ -81,6 +258,18 @@ def _view(row: dict, *, include_sensitive: bool | None = None) -> dict:
     if not include_sensitive:
         for field in CUSTOMER_INCENTIVE_FIELDS:
             customer.pop(field, None)
+    assets, _ = current_app.extensions["store"].list("company_assets", {"customer_id": customer.get("_id"), "superseded_at": {"$exists": False}}, limit=50, sort="created_at", direction=-1)
+    for asset in assets:
+        category = asset.get("category")
+        if category in {"logo", "visiting_card"} and (not customer.get(f"{category}_asset_id") or str(customer.get(f"{category}_asset_id")) == str(asset.get("_id"))):
+            customer[f"{category}_asset_id"] = asset.get("_id")
+            file_url = f"/customers/{customer.get('_id')}/assets/{asset.get('_id')}/file"
+            thumbnail_url = f"/customers/{customer.get('_id')}/assets/{asset.get('_id')}/thumbnail" if asset.get("thumbnail_path") else None
+            # Detail rendering needs the original intrinsic aspect ratio;
+            # the list can opt into the normalized thumbnail separately.
+            customer[f"{category}_url"] = file_url
+            if asset.get("thumbnail_path"):
+                customer[f"{category}_thumbnail_url"] = thumbnail_url
     return customer
 
 
@@ -221,6 +410,14 @@ def create_customer():
     row = store.insert_one("customers", payload)
     if row.get("customer_id") != row.get("_id"):
         row = current_app.extensions["store"].update_one("customers", {"_id": row["_id"]}, {"customer_id": row["_id"]}) or row
+    if current_app.extensions["workdrive"].enabled():
+        try:
+            folders = current_app.extensions["workdrive"].ensure_customer_company_folder(row)
+            row = store.update_one("customers", {"_id": row["_id"]}, folders) or {**row, **folders}
+        except WorkDriveError:
+            # Customer creation remains local-first; the first asset/document
+            # sync will retry preparation and record its own safe failure.
+            pass
     audit("customer.create", "customer", str(row["_id"]))
     return success(_view(row), "Customer created", 201)
 

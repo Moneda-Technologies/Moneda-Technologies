@@ -1,4 +1,5 @@
 import { customerApi, customerCompanyApi, priceListApi } from "../api";
+import { apiEndpoint } from "../api/client";
 import { refreshIcons } from "../components/icons";
 import { openModal } from "../components/modal";
 import { pageScaffold, statusBadge } from "../components/page";
@@ -272,6 +273,23 @@ export async function openCustomerEditor(
     try { priceLists = (await priceListApi.list()).items ?? []; } catch { priceLists = []; }
   }
   const content = customerForm(countries, existing, priceLists);
+  const assetEditor = document.createElement("section");
+  assetEditor.className = "customer-form-card customer-editor-assets";
+  assetEditor.innerHTML = '<header class="customer-form-card-head"><span class="customer-form-card-icon"><i data-lucide="image"></i></span><div><h3>Company Logo</h3><p>Upload the logo used on this customer record.</p></div></header><div class="customer-form-card-body"><div data-editor-logo-preview class="customer-editor-logo-preview">No logo configured</div><input type="file" data-editor-logo-input accept="image/png,image/jpeg,image/webp" hidden><button type="button" class="button button-secondary" data-editor-logo-upload><i data-lucide="upload"></i>Upload / Replace Logo</button><small class="field-error" data-editor-logo-error></small></div>';
+  content.querySelector(".customer-editor-column")?.prepend(assetEditor);
+  const editorLogoInput = assetEditor.querySelector<HTMLInputElement>("[data-editor-logo-input]");
+  const editorLogoPreview = assetEditor.querySelector<HTMLElement>("[data-editor-logo-preview]");
+  const editorLogoError = assetEditor.querySelector<HTMLElement>("[data-editor-logo-error]");
+  const editorLogoFile = (file: File) => {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return "Use a PNG, JPG or WEBP image.";
+    if (file.size > 2 * 1024 * 1024) return "Logo must be no larger than 2 MB.";
+    return "";
+  };
+  let pendingLogo: File | null = null;
+  if (existing?._id) void customerApi.assets(existing._id).then((result) => { const logo = result.items.find((asset) => asset.category === "logo" && !asset.superseded_at); if (logo && editorLogoPreview) editorLogoPreview.innerHTML = `<img src="${apiEndpoint(String(logo.url))}" alt="Current company logo">`; }).catch(() => { if (editorLogoPreview) editorLogoPreview.textContent = "Logo preview unavailable"; });
+  assetEditor.querySelector("[data-editor-logo-upload]")?.addEventListener("click", () => editorLogoInput?.click());
+  editorLogoInput?.addEventListener("change", () => { const file = editorLogoInput.files?.[0]; if (!file) return; const error = editorLogoFile(file); if (editorLogoError) editorLogoError.textContent = error; if (!error) { pendingLogo = file; if (editorLogoPreview) editorLogoPreview.textContent = file.name; } });
+  refreshIcons(assetEditor);
   const isSuperadmin = appStore.state.user?.role_id === "superadmin";
   const dialog = openModal(options.title ?? (existing ? "Edit Customer" : "Add Customer"), content, "wide");
   dialog.classList.add("customer-editor-dialog");
@@ -376,7 +394,7 @@ export async function openCustomerEditor(
     }
     delete value.category_price_list_blankets; delete value.category_price_list_underpacking;
     try {
-      if (existing) { await customerApi.update(existing._id, value); dialog.close(); toast("Customer updated"); await onSaved(); return; }
+      if (existing) { await customerApi.update(existing._id, value); if (pendingLogo) await customerApi.uploadAsset(existing._id, "logo", pendingLogo); dialog.close(); toast("Customer updated"); await onSaved(); return; }
       const created = await customerApi.create(value);
       dialog.close(); await onSaved();
       toast("Customer created successfully");
@@ -405,6 +423,7 @@ export async function customersPage(): Promise<HTMLElement> {
   const load = async () => {
     const result = await customerApi.list(undefined, statusFilter, clientTypeFilter);
     body.innerHTML = `<div class="table-toolbar"><div class="field-search"><i data-lucide="search"></i><input placeholder="Search customers" aria-label="Search customers"></div><div class="segmented"><button class="active">All</button><button>Active</button><button>Archived</button></div><span>${result.pagination?.total ?? result.items.length} records</span></div>${result.items.length ? `<div class="data-table panel"><table><thead><tr><th>Customer company</th><th>Primary contact</th><th>Email / phone</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${result.items.map((customer) => { const name = customerName(customer); const id = customer.customer_id ?? customer._id; return `<tr><td><div class="table-identity"><span>${escapeHtml(name.slice(0, 2).toUpperCase())}</span><p><strong>${escapeHtml(name)}</strong><small>${escapeHtml(customer.address ?? "")}</small></p></div></td><td>${escapeHtml(customer.contact_name ?? "—")}</td><td><strong>${escapeHtml(customer.email ?? "No email")}</strong><small>${escapeHtml(customer.phone ?? "")}</small></td><td><span class="currency-tag">${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</span></td><td>${statusBadge(customer.status ?? "active")}</td><td><a class="icon-button" href="/customers/${encodeURIComponent(id)}" data-route="/customers/${encodeURIComponent(id)}" aria-label="View customer" title="View customer"><i data-lucide="arrow-up-right"></i></a></td></tr>`; }).join("")}</tbody></table></div>` : emptyState("building-2", "No customers yet", "Add a customer business to prepare a quotation.")}`;
+    body.querySelectorAll<HTMLElement>(".table-identity").forEach((cell, index) => { const customer = result.items[index] as Customer & { logo_url?: string; logo_thumbnail_url?: string }; const logo = customer.logo_thumbnail_url || customer.logo_url; if (!logo) return; const initials = cell.querySelector("span"); if (initials) initials.innerHTML = `<img src="${apiEndpoint(String(logo))}" alt="${escapeHtml(customerName(customer))} logo">`; });
     const customerTable = body.querySelector<HTMLTableElement>("table");
     if (customerTable) {
       const headerRow = customerTable.tHead?.rows[0];
@@ -471,12 +490,120 @@ export async function customerDetailPage(customerId: string): Promise<HTMLElemen
   body.innerHTML = skeleton(5);
   const load = async () => {
     const customer = await customerApi.get(customerId);
+    // Keep the global customer context aligned with the detail route. This
+    // updates the toolbar selector without changing cart, currency, or server
+    // selection state.
+    appStore.set({ activeCustomerId: customerId, customer });
     const related = customer.related ?? {};
     const name = customerName(customer);
     const leads = (related.leads ?? []) as Record<string, unknown>[];
     const crmHref = `/crm?customer_id=${encodeURIComponent(customerId)}`;
     const accessMarkup = customer.access ? `<section class="panel customer-access-panel"><div class="section-title"><div><span class="eyebrow">Access & ownership</span><h2>Customer access</h2></div></div><div class="detail-grid"><div><span>Created by</span><strong>${escapeHtml(customer.access.created_by?.name ?? "Unknown")}</strong></div><div><span>Assigned users</span><strong>${customer.access.assigned_users?.length ?? 0}</strong></div></div>${customer.access.assigned_users?.length ? `<div class="customer-activity-list">${customer.access.assigned_users.map((member) => `<div><div><strong>${escapeHtml(member.name)}</strong><small>${escapeHtml(member.email ?? "")}</small></div></div>`).join("")}</div>` : '<p class="muted">No assigned users.</p>'}</section>` : "";
     body.innerHTML = `<div class="detail-layout"><section class="panel detail-hero"><div class="profile-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</div><div><span class="eyebrow">Customer</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(customer.contact_name ?? "Primary contact not configured")}</p>${statusBadge(customer.status ?? "active")}</div><div class="detail-hero-actions"><a class="button button-secondary" href="${crmHref}" data-route="${crmHref}"><i data-lucide="chart-no-axes-combined"></i>View CRM</a><button class="button button-primary" id="edit-customer"><i data-lucide="pencil"></i>Edit customer</button></div></section><section class="panel customer-profile-panel"><div class="section-title"><div><span class="eyebrow">Contact & business information</span><h2>Customer profile</h2></div></div><div class="detail-grid"><div><span>Company name</span><strong>${escapeHtml(name)}</strong></div><div><span>Primary contact</span><strong>${escapeHtml(customer.contact_name ?? "—")}</strong></div><div><span>Email</span><strong>${escapeHtml(customer.email ?? "—")}</strong></div><div><span>Phone</span><strong>${escapeHtml(customer.phone ?? "—")}</strong></div><div><span>Region</span><strong>${escapeHtml(customer.region?.continent ?? customer.continent ?? "—")}</strong></div><div><span>Country</span><strong>${escapeHtml(customer.region?.country_name ?? customer.country_name ?? customer.country ?? "—")}</strong></div><div><span>Display currency</span><strong>${escapeHtml(customer.default_currency ?? customer.preferred_currency ?? "EUR")}</strong></div><div><span>Payment terms</span><strong>${escapeHtml(customer.payment_terms_display ?? customer.payment_terms ?? "—")}</strong></div><div class="detail-grid-wide"><span>Address</span><strong>${escapeHtml(customer.address ?? "—")}</strong></div></div></section>${accessMarkup}<section class="panel customer-history-panel"><div class="section-title"><div><span class="eyebrow">Related records</span><h2>Customer history</h2></div></div><div class="metric-grid compact-metrics"><a class="metric-card" href="/quotations?customer_id=${encodeURIComponent(customerId)}" data-route="/quotations?customer_id=${encodeURIComponent(customerId)}"><span>Quotations</span><strong>${related.quotations?.length ?? 0}</strong></a><a class="metric-card" href="/orders?customer_id=${encodeURIComponent(customerId)}" data-route="/orders?customer_id=${encodeURIComponent(customerId)}"><span>Orders</span><strong>${related.orders?.length ?? 0}</strong></a><a class="metric-card" href="${crmHref}" data-route="${crmHref}"><span>Leads</span><strong>${related.leads?.length ?? 0}</strong></a><a class="metric-card" href="${crmHref}" data-route="${crmHref}"><span>Opportunities</span><strong>${related.opportunities?.length ?? 0}</strong></a></div></section><section class="panel customer-activity-panel"><div class="section-title"><div><span class="eyebrow">CRM</span><h2>Sales activity</h2></div><a class="button button-quiet" href="${crmHref}" data-route="${crmHref}">Open pipeline<i data-lucide="arrow-up-right"></i></a></div>${leads.length ? `<div class="customer-activity-list">${leads.slice(0, 5).map((lead) => `<div><div><strong>${escapeHtml(String(lead.title ?? lead.notes ?? "Sales lead"))}</strong><small>${escapeHtml(String(lead.next_action ?? lead.follow_up_date ?? "No next action"))}</small></div>${statusBadge(String(lead.status ?? "Lead"))}</div>`).join("")}</div>` : '<p class="muted">No CRM activity yet.</p>'}</section></div>`;
+    const assetsPanel = document.createElement("section"); assetsPanel.className = "panel company-assets-panel"; assetsPanel.innerHTML = `<div class="section-title"><div><span class="eyebrow">Company</span><h2>Company assets</h2><p class="muted">Logos, visiting cards and company documents.</p></div><div class="company-assets-upload-actions"><button type="button" class="button button-secondary button-small" data-upload-logo><i data-lucide="image-plus"></i>Add logo</button><button type="button" class="button button-secondary button-small" data-upload-card><i data-lucide="contact"></i>Add visiting card</button><button type="button" class="button button-secondary button-small" data-upload-document><i data-lucide="upload"></i>Add document</button></div></div><div data-assets-list><span class="muted">Loading assets...</span></div>`; body.prepend(assetsPanel);
+    const logoCircle = body.querySelector<HTMLElement>(".detail-hero .profile-avatar");
+    body.querySelector<HTMLElement>(".detail-hero > div:nth-child(2)")?.classList.add("customer-detail-summary");
+    const logoCluster = document.createElement("div"); logoCluster.className = "customer-detail-logo-cluster";
+    logoCircle?.replaceWith(logoCluster); if (logoCircle) logoCluster.append(logoCircle);
+    const visitingTile = document.createElement("button"); visitingTile.type = "button"; visitingTile.className = "customer-visiting-card-tile"; visitingTile.setAttribute("aria-label", "Add visiting card"); visitingTile.innerHTML = '<i data-lucide="contact"></i><span>Add card</span>'; logoCluster.append(visitingTile);
+    const assetActions = document.createElement("div"); assetActions.className = "customer-detail-asset-actions"; assetActions.innerHTML = '<button type="button" class="button button-danger button-small" data-remove-logo hidden><i data-lucide="trash-2"></i>Remove logo</button><button type="button" class="button button-danger button-small" data-remove-visiting hidden><i data-lucide="trash-2"></i>Remove card</button>'; visitingTile.after(assetActions);
+    logoCluster.append(assetActions);
+    const logoInput = document.createElement("input"); logoInput.type = "file"; logoInput.accept = "image/png,image/jpeg,image/webp"; logoInput.hidden = true; logoInput.setAttribute("aria-label", "Choose company logo"); body.append(logoInput);
+    const visitingInput = document.createElement("input"); visitingInput.type = "file"; visitingInput.accept = "image/png,image/jpeg,image/webp,application/pdf"; visitingInput.hidden = true; visitingInput.setAttribute("aria-label", "Choose visiting card"); body.append(visitingInput);
+    const documentInput = document.createElement("input"); documentInput.type = "file"; documentInput.accept = "image/png,image/jpeg,image/webp,application/pdf"; documentInput.multiple = true; documentInput.hidden = true; documentInput.setAttribute("aria-label", "Choose company assets"); body.append(documentInput);
+    assetsPanel.querySelector("[data-upload-logo]")?.addEventListener("click", () => logoInput.click());
+    const customerLogo = customer as Customer & { logo_url?: string; logo_asset_id?: string; visiting_card_asset_id?: string };
+    let logoAsset: Record<string, unknown> | null = customerLogo.logo_url ? { _id: customerLogo.logo_asset_id, url: customerLogo.logo_url, category: "logo" } : null;
+    let visitingAsset: Record<string, unknown> | null = null;
+    const removeLogoButton = assetActions.querySelector<HTMLButtonElement>("[data-remove-logo]");
+    const removeVisitingButton = assetActions.querySelector<HTMLButtonElement>("[data-remove-visiting]");
+    const logoAssetControl = document.createElement("div"); logoAssetControl.className = "customer-detail-asset-control";
+    const visitingAssetControl = document.createElement("div"); visitingAssetControl.className = "customer-detail-asset-control";
+    logoCluster.insertBefore(logoAssetControl, logoCluster.firstChild); logoCluster.insertBefore(visitingAssetControl, logoCluster.children[1] ?? null);
+    if (logoCircle) logoAssetControl.append(logoCircle); visitingAssetControl.append(visitingTile);
+    if (removeLogoButton) logoAssetControl.append(removeLogoButton);
+    if (removeVisitingButton) visitingAssetControl.append(removeVisitingButton);
+    assetActions.remove();
+    const visitingFileError = (file: File) => !["image/png", "image/jpeg", "image/webp", "application/pdf"].includes(file.type) ? "Use PNG, JPG, WEBP or PDF." : file.size > 5 * 1024 * 1024 ? "Visiting card must be no larger than 5 MB." : "";
+    const validLogo = (file: File) => {
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return "Use a PNG, JPG or WEBP image.";
+      if (file.size > 2 * 1024 * 1024) return "Logo must be no larger than 2 MB.";
+      return "";
+    };
+    const uploadLogo = async (file?: File) => {
+      if (!file) return;
+      const error = validLogo(file); if (error) { toast(error, "error"); return; }
+      if (logoCircle) { logoCircle.setAttribute("aria-busy", "true"); logoCircle.classList.add("is-uploading"); }
+      try { const result = await customerApi.uploadAsset(customerId, "logo", file); logoAsset = result as Record<string, unknown>; applyLogo(); toast("Company logo updated"); }
+      catch (uploadError) { toast(uploadError instanceof Error ? uploadError.message : "Company logo upload failed", "error"); }
+      finally { logoCircle?.removeAttribute("aria-busy"); logoCircle?.classList.remove("is-uploading"); logoInput.value = ""; }
+    };
+    const applyLogo = () => {
+      if (!logoCircle) return;
+      const nameInitials = escapeHtml(name.slice(0, 2).toUpperCase());
+      logoCircle.innerHTML = logoAsset?.url ? `<img src="${apiEndpoint(String(logoAsset.url))}" alt="${escapeHtml(name)} logo"><span class="customer-logo-overlay" aria-hidden="true"><i data-lucide="expand"></i></span>` : `${nameInitials}<span class="customer-logo-overlay" aria-hidden="true"><i data-lucide="upload"></i></span>`;
+      logoCircle.classList.toggle("has-logo", Boolean(logoAsset?.url)); logoCircle.classList.remove("logo-shape-wide", "logo-shape-square", "logo-shape-round"); logoCircle.setAttribute("role", "button"); logoCircle.setAttribute("tabindex", "0"); logoCircle.setAttribute("aria-label", logoAsset?.url ? "View company logo" : "Upload company logo");
+      const logoImage = logoCircle.querySelector<HTMLImageElement>("img");
+      if (logoImage) logoImage.addEventListener("load", () => { const ratio = logoImage.naturalWidth / Math.max(1, logoImage.naturalHeight); logoCircle.classList.add(ratio > 1.35 ? "logo-shape-wide" : ratio < .78 ? "logo-shape-round" : "logo-shape-square"); }, { once: true });
+      if (removeLogoButton) removeLogoButton.hidden = !logoAsset?.url;
+      refreshIcons(logoCircle);
+    };
+    const openLogoPreview = () => {
+      if (!logoAsset?.url) { logoInput.click(); return; }
+      const modal = document.createElement("div"); modal.className = "company-logo-lightbox"; modal.innerHTML = `<div class="company-logo-lightbox-card" role="dialog" aria-modal="true" aria-label="Company logo preview"><button type="button" class="icon-button" data-logo-close aria-label="Close logo preview">×</button><img src="${apiEndpoint(String(logoAsset.url))}" alt="${escapeHtml(name)} logo"><div><button type="button" class="button button-primary" data-logo-replace>Replace logo</button><button type="button" class="button button-danger" data-logo-delete>Delete logo</button></div></div>`;
+      const close = () => { modal.remove(); document.removeEventListener("keydown", onKey); };
+      const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+      modal.addEventListener("click", (event) => { if (event.target === modal) close(); }); modal.querySelector("[data-logo-close]")?.addEventListener("click", close); modal.querySelector("[data-logo-replace]")?.addEventListener("click", () => { close(); logoInput.click(); }); modal.querySelector("[data-logo-delete]")?.addEventListener("click", async () => { if (!window.confirm("Delete this company logo?")) return; await customerApi.removeAsset(customerId, String(logoAsset?._id)); logoAsset = null; close(); applyLogo(); toast("Company logo removed", "info"); }); document.addEventListener("keydown", onKey); document.body.append(modal);
+    };
+    logoCircle?.addEventListener("click", openLogoPreview); logoCircle?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openLogoPreview(); } }); logoInput.addEventListener("change", () => { void uploadLogo(logoInput.files?.[0]); });
+    logoCircle?.addEventListener("dragover", (event) => { if (logoAsset) return; event.preventDefault(); logoCircle.classList.add("is-dragging"); }); logoCircle?.addEventListener("dragleave", () => logoCircle.classList.remove("is-dragging")); logoCircle?.addEventListener("drop", (event) => { if (logoAsset) return; event.preventDefault(); logoCircle.classList.remove("is-dragging"); void uploadLogo(event.dataTransfer?.files?.[0]); });
+    const applyVisiting = () => { if (!visitingAsset?.url) { visitingTile.innerHTML = '<i data-lucide="contact"></i><span>Add card</span>'; visitingTile.classList.remove("has-card"); visitingTile.setAttribute("aria-label", "Add visiting card"); } else { const filename = String(visitingAsset.filename ?? "").toLowerCase(); const mime = String(visitingAsset.mime_type ?? "").toLowerCase(); const isPdf = mime === "application/pdf" || mime.includes("pdf") || filename.endsWith(".pdf"); const thumb = visitingAsset.thumbnail_url || (isPdf && visitingAsset._id ? `/customers/${encodeURIComponent(customerId)}/assets/${encodeURIComponent(String(visitingAsset._id))}/thumbnail` : ""); visitingTile.innerHTML = thumb ? `<img src="${apiEndpoint(String(thumb))}" alt="Visiting card first page"><i data-lucide="expand"></i>` : `<i data-lucide="file-text"></i><span>Open PDF</span>`; visitingTile.classList.add("has-card"); visitingTile.setAttribute("aria-label", isPdf ? "Open visiting card PDF" : "View visiting card"); } refreshIcons(visitingTile); };
+    const uploadVisiting = async (file?: File, cardholderName = "") => { if (!file) return; const error = visitingFileError(file); if (error) { toast(error, "error"); return; } if (!cardholderName.trim()) { toast("Cardholder name is required", "error"); return; } try { visitingAsset = await customerApi.uploadAsset(customerId, "visiting_card", file, { cardholderName: cardholderName.trim() }) as Record<string, unknown>; applyVisiting(); if (removeVisitingButton) removeVisitingButton.hidden = false; toast("Visiting card updated"); } catch (uploadError) { toast(uploadError instanceof Error ? uploadError.message : "Visiting card upload failed", "error"); } finally { visitingInput.value = ""; } };
+    const openVisitingUploadDialog = () => {
+      const modal = document.createElement("div"); modal.className = "company-logo-lightbox";
+      modal.innerHTML = `<form class="company-logo-lightbox-card customer-asset-upload-dialog" role="dialog" aria-modal="true" aria-label="Upload visiting card"><button type="button" class="icon-button" data-card-upload-close aria-label="Close upload dialog">×</button><div><h2>Upload visiting card</h2><p class="muted">Add the cardholder name and select a PNG, JPG, WEBP, or PDF file.</p></div><label class="field"><span>Cardholder name</span><input name="cardholder_name" required maxlength="120" value="${escapeHtml(String(customer.contact_name ?? ""))}" autocomplete="name"></label><label class="field"><span>Visiting card file</span><input name="file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" required></label><p class="field-error" data-card-upload-error hidden></p><div class="customer-asset-upload-actions"><button type="button" class="button button-secondary" data-card-upload-cancel>Cancel</button><button type="submit" class="button button-primary">Upload</button></div></form>`;
+      const form = modal.querySelector<HTMLFormElement>("form")!; const error = modal.querySelector<HTMLElement>("[data-card-upload-error]")!; const submit = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+      const close = () => { modal.remove(); document.removeEventListener("keydown", onKey); };
+      const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+      document.addEventListener("keydown", onKey); modal.addEventListener("click", (event) => { if (event.target === modal) close(); }); modal.querySelector("[data-card-upload-close]")?.addEventListener("click", close); modal.querySelector("[data-card-upload-cancel]")?.addEventListener("click", close);
+      form.addEventListener("submit", async (event) => { event.preventDefault(); const data = new FormData(form); const cardholder = String(data.get("cardholder_name") ?? "").trim(); const file = data.get("file"); if (!cardholder || !(file instanceof File) || !file.name) { error.textContent = !cardholder ? "Cardholder name is required." : "Choose a visiting card file."; error.hidden = false; return; } const fileError = visitingFileError(file); if (fileError) { error.textContent = fileError; error.hidden = false; return; } error.hidden = true; submit.disabled = true; submit.textContent = "Uploading…"; await uploadVisiting(file, cardholder); if (visitingAsset?.url) close(); else { submit.disabled = false; submit.textContent = "Upload"; } });
+      document.body.append(modal); form.querySelector<HTMLInputElement>("input[name=cardholder_name]")?.focus();
+    };
+    assetsPanel.querySelector("[data-upload-card]")?.addEventListener("click", openVisitingUploadDialog);
+    visitingTile.addEventListener("click", () => { if (!visitingAsset?.url) { openVisitingUploadDialog(); return; } });
+    visitingTile.addEventListener("dragover", (event) => { event.preventDefault(); visitingTile.classList.add("is-dragging"); });
+    visitingTile.addEventListener("dragleave", () => visitingTile.classList.remove("is-dragging"));
+    visitingTile.addEventListener("drop", (event) => { event.preventDefault(); visitingTile.classList.remove("is-dragging"); openVisitingUploadDialog(); });
+    applyVisiting();
+    const removeAsset = async (asset: Record<string, unknown> | null, label: string, after: () => void) => { if (!asset?._id || !window.confirm(`Remove this ${label}?`)) return; try { await customerApi.removeAsset(customerId, String(asset._id)); after(); toast(`${label[0].toUpperCase()}${label.slice(1)} removed`, "info"); } catch (error) { toast(error instanceof Error ? error.message : `${label} could not be removed`, "error"); } };
+    removeLogoButton?.addEventListener("click", () => { void removeAsset(logoAsset, "company logo", () => { logoAsset = null; applyLogo(); }); });
+    removeVisitingButton?.addEventListener("click", () => { void removeAsset(visitingAsset, "visiting card", () => { visitingAsset = null; applyVisiting(); }); });
+    visitingTile.addEventListener("click", (event) => {
+      if (!visitingAsset?.url) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const filename = String(visitingAsset.filename ?? "").toLowerCase();
+      const mime = String(visitingAsset.mime_type ?? "").toLowerCase();
+      const isPdf = mime === "application/pdf" || mime.includes("pdf") || filename.endsWith(".pdf");
+      const modal = document.createElement("div");
+      modal.className = "company-logo-lightbox";
+      const content = isPdf ? `<iframe src="${apiEndpoint(String(visitingAsset.url))}" title="Visiting card PDF" loading="eager"></iframe>` : `<img src="${apiEndpoint(String(visitingAsset.url))}" alt="Visiting card">`;
+      modal.innerHTML = `<div class="company-logo-lightbox-card${isPdf ? " pdf-preview" : ""}" role="dialog" aria-modal="true" aria-label="Visiting card preview"><button type="button" class="icon-button" data-card-close aria-label="Close visiting card preview">×</button>${content}<div><button type="button" class="button button-primary" data-card-replace>Replace</button><button type="button" class="button button-danger" data-card-delete>Delete</button></div></div>`;
+      const close = () => { modal.remove(); document.removeEventListener("keydown", onKey); };
+      const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === "Escape") close(); };
+      document.addEventListener("keydown", onKey);
+      modal.querySelector("[data-card-close]")?.addEventListener("click", close);
+      modal.addEventListener("click", (closeEvent) => { if (closeEvent.target === modal) close(); });
+      modal.querySelector("[data-card-replace]")?.addEventListener("click", () => { close(); openVisitingUploadDialog(); });
+      modal.querySelector("[data-card-delete]")?.addEventListener("click", async () => { if (!window.confirm("Delete this visiting card?")) return; await customerApi.removeAsset(customerId, String(visitingAsset?._id)); visitingAsset = null; close(); applyVisiting(); toast("Visiting card removed", "info"); });
+      document.body.append(modal);
+    }, true);
+    applyLogo();
+    const renderAssets = async () => { const result = await customerApi.assets(customerId); const unique = result.items.filter((asset, index, all) => all.findIndex((candidate) => String(candidate._id) === String(asset._id)) === index); logoAsset = (unique.find((asset) => asset.category === "logo" && (!asset.superseded_at || String(asset._id) === String(customerLogo.logo_asset_id))) as Record<string, unknown> | undefined) ?? logoAsset; visitingAsset = (unique.find((asset) => asset.category === "visiting_card" && (!asset.superseded_at || String(asset._id) === String(customerLogo.visiting_card_asset_id))) as Record<string, unknown> | undefined) ?? null; applyLogo(); applyVisiting(); if (removeVisitingButton) removeVisitingButton.hidden = !visitingAsset?._id; const list = assetsPanel.querySelector<HTMLElement>("[data-assets-list]")!; const groups = [["Logos", "logo"], ["Visiting Cards", "visiting_card"], ["Orders and Quotes", "order"], ["Documents", "document"]] as const; list.innerHTML = unique.length ? groups.map(([title, category]) => { const items = unique.filter((asset) => category === "order" ? ["order", "quote", "order_confirmation"].includes(String(asset.category)) : asset.category === category); if (!items.length) return ""; return `<section class="company-assets-group"><h3>${title} <span>${items.length}</span></h3><div class="company-assets-list">${items.map((asset) => `<div class="company-asset-row"><a class="company-asset-filename" href="${apiEndpoint(String(asset.url))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(String(asset.filename ?? "Asset"))}">${escapeHtml(String(asset.filename ?? "Asset"))}</a><small class="company-asset-category">${escapeHtml(String(asset.category ?? "document"))}</small><button class="icon-button company-asset-delete" data-remove-asset="${escapeHtml(String(asset._id))}" aria-label="Remove ${escapeHtml(String(asset.filename ?? "asset"))}"><i data-lucide="trash-2"></i></button></div>`).join("")}</div></section>`; }).join("") : '<div class="company-assets-empty"><i data-lucide="folder-open"></i><strong>No company assets uploaded</strong><span>Add a logo, visiting card or document to get started.</span></div>'; refreshIcons(assetsPanel); list.querySelectorAll<HTMLButtonElement>("[data-remove-asset]").forEach((button) => button.addEventListener("click", async () => { if (!window.confirm("Remove this selected company asset?")) return; try { await customerApi.removeAsset(customerId, String(button.dataset.removeAsset)); await renderAssets(); } catch (error) { toast(error instanceof Error ? error.message : "Asset could not be removed", "error"); } })); }; void renderAssets().catch(() => { const list = assetsPanel.querySelector<HTMLElement>("[data-assets-list]"); if (list) list.innerHTML = '<div class="company-assets-empty field-error"><strong>Company assets unavailable</strong><span>Retry by refreshing this page.</span></div>'; });
+    const collapseAssetGroups = () => { assetsPanel.querySelectorAll<HTMLElement>(".company-assets-group").forEach((section) => { if (section.tagName === "DETAILS") return; const heading = section.querySelector("h3"); const list = section.querySelector(".company-assets-list"); if (!heading || !list) return; const details = document.createElement("details"); details.className = "company-assets-group"; const summary = document.createElement("summary"); summary.innerHTML = `<span>${heading.textContent?.replace(/\s+\d+$/, "") ?? "Assets"}</span><small>${heading.querySelector("span")?.textContent ?? "0"}</small><i data-lucide="chevron-down" aria-hidden="true"></i>`; details.append(summary, list); section.replaceWith(details); }); refreshIcons(assetsPanel); };
+    window.setTimeout(collapseAssetGroups, 250);
+    documentInput.addEventListener("change", async () => { for (const file of Array.from(documentInput.files ?? [])) { try { await customerApi.uploadAsset(customerId, "document", file); } catch (error) { toast(error instanceof Error ? error.message : "Asset upload failed", "error"); } } documentInput.value = ""; await renderAssets(); collapseAssetGroups(); });
+    assetsPanel.querySelector("[data-upload-document]")?.addEventListener("click", () => documentInput.click());
     const profileGrid = body.querySelector<HTMLElement>(".customer-profile-panel .detail-grid");
     if (profileGrid) {
       const typeField = document.createElement("div");

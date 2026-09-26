@@ -33,7 +33,7 @@ ZOHO_SCOPES = ("ZohoMail.messages.CREATE", "ZohoMail.accounts.READ")
 ZOHO_SCOPE = ",".join(ZOHO_SCOPES)
 WORKDRIVE_SCOPES = (
     "WorkDrive.team.READ", "WorkDrive.teamfolders.READ",
-    "WorkDrive.files.CREATE", "WorkDrive.files.READ",
+    "WorkDrive.files.CREATE", "WorkDrive.files.READ", "ZohoFiles.files.READ",
     "WorkDrive.files.UPDATE", "WorkDrive.files.DELETE",
 )
 WORKDRIVE_SCOPE = ",".join(WORKDRIVE_SCOPES)

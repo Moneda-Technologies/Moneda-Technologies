@@ -7,6 +7,20 @@ import re
 from xml.sax.saxutils import escape
 
 from flask import current_app
+from PIL import Image as PillowImage, UnidentifiedImageError
+
+
+def _signature_png(content: bytes) -> bytes | None:
+    """Normalize a stored signature snapshot for ReportLab without touching disk."""
+    try:
+        with PillowImage.open(BytesIO(content)) as source:
+            source.load()
+            normalized = source.convert("RGBA") if source.mode not in {"RGB", "RGBA"} else source.copy()
+            output = BytesIO()
+            normalized.save(output, format="PNG")
+            return output.getvalue()
+    except (OSError, UnidentifiedImageError, ValueError):
+        return None
 
 
 def _display_date(value: Any) -> str:
@@ -346,7 +360,24 @@ def _render_reportlab_pdf(quotation: dict[str, Any], logo_path: Path) -> bytes:
     ]
     commercial = Table(condition_rows, colWidths=[58 * mm, 58 * mm])
     commercial.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBEFORE", (0, 0), (-1, -1), 1.2, palette["line"]), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
-    signature = Table([[Paragraph("AUTHORIZATION", label)], [Spacer(1, 15 * mm)], [Paragraph("<b>For Moneda Technologies</b><br/><font color='#70706b' size='6'>Authorized signatory</font>", normal)]], colWidths=[58 * mm])
+    signature_snapshot = quotation.get("signature_snapshot") or {}
+    signature_content = signature_snapshot.get("content") if isinstance(signature_snapshot, dict) else None
+    signature_image: Any = Spacer(1, 15 * mm)
+    if isinstance(signature_content, bytes) and signature_content:
+        try:
+            normalized_signature = _signature_png(signature_content)
+            if not normalized_signature:
+                raise ValueError("Signature snapshot is not a supported image")
+            signature_image = Image(BytesIO(normalized_signature))
+            max_width, max_height = 50 * mm, 18 * mm
+            scale = min(max_width / signature_image.imageWidth, max_height / signature_image.imageHeight, 1)
+            signature_image.drawWidth = signature_image.imageWidth * scale
+            signature_image.drawHeight = signature_image.imageHeight * scale
+            signature_image.hAlign = "CENTER"
+        except Exception:
+            signature_image = Spacer(1, 15 * mm)
+    signatory_name = safe(signature_snapshot.get("actor_name")) if isinstance(signature_snapshot, dict) and signature_snapshot.get("actor_name") else "Authorized signatory"
+    signature = Table([[Paragraph("AUTHORIZATION", label)], [signature_image], [Paragraph(f"<b>For Moneda Technologies</b><br/><font color='#70706b' size='6'>{signatory_name}</font>", normal)]], colWidths=[58 * mm])
     signature.setStyle(TableStyle([("LINEABOVE", (0, -1), (0, -1), .7, palette["black"]), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     commercial_block: list[Any] = []
     if quotation.get("customer_notes"):

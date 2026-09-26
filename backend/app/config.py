@@ -112,6 +112,10 @@ class Config:
     ZOHO_WORKDRIVE_CLIENT_SECRET = os.getenv("ZOHO_WORKDRIVE_CLIENT_SECRET", "") or ZOHO_CLIENT_SECRET
     ZOHO_WORKDRIVE_REFRESH_TOKEN = os.getenv("ZOHO_WORKDRIVE_REFRESH_TOKEN", "")
     ZOHO_WORKDRIVE_ROOT_FOLDER_ID = os.getenv("ZOHO_WORKDRIVE_ROOT_FOLDER_ID", "")
+    # Optional persisted/configured sibling of Users for customer assets. When
+    # absent, WorkDriveService idempotently discovers/creates Companies under
+    # the configured Team Folder root and persists the returned ID per asset.
+    ZOHO_WORKDRIVE_COMPANIES_ROOT_FOLDER_ID = os.getenv("ZOHO_WORKDRIVE_COMPANIES_ROOT_FOLDER_ID", "")
     ZOHO_WORKDRIVE_TEAM_FOLDER_ID = os.getenv("ZOHO_WORKDRIVE_TEAM_FOLDER_ID", "")
     ZOHO_WORKDRIVE_API_BASE_URL = os.getenv("ZOHO_WORKDRIVE_API_BASE_URL", "https://www.zohoapis.in/workdrive/api/v1")
     ZOHO_WORKDRIVE_ACCOUNT_REGION = os.getenv("ZOHO_WORKDRIVE_ACCOUNT_REGION", "in").strip().lower()
@@ -157,4 +161,5 @@ class TestConfig(Config):
     ZOHO_WORKDRIVE_ENABLED = False
     ZOHO_WORKDRIVE_REFRESH_TOKEN = ""
     ZOHO_WORKDRIVE_ROOT_FOLDER_ID = ""
+    ZOHO_WORKDRIVE_COMPANIES_ROOT_FOLDER_ID = ""
     DEVICE_ACCESS_MODE = "any_authorized_device"
